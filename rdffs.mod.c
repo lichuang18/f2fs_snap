@@ -513,7 +513,6 @@ __used __section("__versions") = {
 	{ 0x1bd26a57, "dquot_commit_info" },
 	{ 0x7241cd70, "dquot_set_dqinfo" },
 	{ 0x6acfe2d8, "bpf_trace_run4" },
-	{ 0x6fd983f2, "notify_change" },
 	{ 0x6174bbc0, "clear_inode" },
 	{ 0x79ec8f93, "blk_start_plug" },
 	{ 0x49cd25ed, "alloc_workqueue" },
@@ -544,4 +543,4 @@ __used __section("__versions") = {
 MODULE_INFO(depends, "zstd_compress,lz4hc_compress,lz4_compress");
 
 
-MODULE_INFO(srcversion, "A5D6287DB3F3D1FAC99CC2A");
+MODULE_INFO(srcversion, "86AE2D36B2397A46A3259A7");

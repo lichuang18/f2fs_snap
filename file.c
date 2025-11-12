@@ -46,6 +46,57 @@
 #include <linux/ioctl.h>
 #include <linux/errno.h>
 #include <linux/stat.h>
+#include <linux/pagemap.h>
+#include <linux/slab.h>
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+#define MAX_NAME_LEN 255
+// #include "f2fs_fs.h"
+
+#define MAX_PAGES_TO_CHECK 64   /* 临时上限用于排错 */
+#define MAX_ENTRY_PRINT 1024    /* 最大打印项数，防止日志刷爆 */
+
+
+#define MAX_DENTRY_SLOT 128      /* F2FS 目录块最大 slot 数，根据版本可调整 */
+#define BITMAP_SIZE_BYTES 32     /* F2FS 目录块 bitmap 区大小，根据版本可调整 */
+#define F2FS_SLOT_LEN 256        /* 每个 slot 对应的最大文件名长度 */
+
+
+/* 替换 f2fs_init_dentry_ptr */
+static void f2fs_init_dentry_ptr(struct f2fs_dentry_ptr *d,
+                                 struct inode *inode,
+                                 struct page *page)
+{
+    void *kaddr;
+
+    if (!d || !inode || !page)
+        return;
+
+    /* 映射页到内核地址 */
+    kaddr = kmap(page);
+
+    /* 设置 inode 指针 */
+    d->inode = inode;
+
+    /* bitmap 区：页开头 */
+    d->bitmap = kaddr;  /* bitmap 占前 BITMAP_SIZE_BYTES bytes */
+
+    /* dentry 区紧随 bitmap */
+    d->dentry = (struct f2fs_dir_entry *)((char *)kaddr + BITMAP_SIZE_BYTES);
+
+    /* filename 区紧随 dentry 区 */
+    d->filename = (void *)((char *)d->dentry + MAX_DENTRY_SLOT * sizeof(struct f2fs_dir_entry));
+
+    /* 最大 slot 数 */
+    d->max = MAX_DENTRY_SLOT;
+
+    /* bitmap 字节数 */
+    d->nr_bitmap = BITMAP_SIZE_BYTES;
+
+    /* 注意：不在这里调用 kunmap，使用方遍历完再 kunmap(page) */
+}
+
 
 
 #define SNAP_PATHS_MAX 2
@@ -3446,6 +3497,15 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
     char *parent = NULL, *name = NULL;
     int err = 0;
     umode_t mode;
+	// struct address_space *mapping;
+	struct page *page, *ipage;
+	struct f2fs_dentry_ptr d;
+	unsigned long bit_pos;
+	// struct f2fs_dir_entry *de;
+	void *inline_dentry;
+	struct f2fs_dir_entry *de;
+	// const unsigned char *name;
+
     struct iattr new_attr;
 	char __user *user_paths[2];  // 从用户空间复制的指针数组
 	if (copy_from_user(user_paths, (char __user * __user *)arg, sizeof(user_paths)))
@@ -3471,7 +3531,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
         kfree(path1);
         return err;
     }
-	pr_info("[rdffs] path check success --  path1: %s, path2: %s\n",path1, path2);
+	pr_info("[rdffs] path1: %s, path2: %s\n",path1, path2);
 
     /* ---------- 检查 path1 是否存在 ---------- */
     err = kern_path(path1, LOOKUP_FOLLOW | LOOKUP_REVAL, &src_path);
@@ -3480,6 +3540,62 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
         goto out_free;
     }
     src_inode = src_path.dentry->d_inode; 
+	// dir_inode = d_inode(dir_path->dentry);
+	if (!src_inode) {
+        pr_warn("Invalid inode for path\n");
+        return -EINVAL;
+    }
+	// 检查是否是inline dir
+	struct f2fs_sb_info *sbi = F2FS_I_SB(src_inode);
+	if (f2fs_has_inline_dentry(src_inode)) {
+        pr_info("Dir(%lu) uses inline dentry, skip\n", src_inode->i_ino);
+		//获取该node的page
+		ipage = f2fs_get_node_page(sbi, src_inode->i_ino);
+		if (IS_ERR(ipage)) {
+			pr_err("f2fs: failed to get node page for inode %lu\n", src_inode->i_ino);
+			return -EINVAL;
+		}
+		// 计算该page中inline区的起始地址
+		inline_dentry = inline_data_addr(src_inode, ipage);
+		
+		// 填充目录项ptr结构体
+		make_dentry_ptr_inline(src_inode, &d, inline_dentry);
+
+
+		pr_info("---- f2fs inline dentry dump for inode %lu ----\n", src_inode->i_ino);
+		
+		for (bit_pos = 0; bit_pos < d.max; bit_pos++) {
+			// 仅处理有效bit对应的数据
+			if (!test_bit_le(bit_pos, d.bitmap))
+				continue;
+
+			de = &d.dentry[bit_pos];
+			name = d.filename[bit_pos];
+			
+			pr_info("  [%03u] ino=%u, name_len=%u, name=%.*s, type=%u\n",
+				bit_pos,
+				le32_to_cpu(de->ino),
+				le16_to_cpu(de->name_len),
+				le16_to_cpu(de->name_len),
+				name,
+				de->file_type);
+			if(de->name_len > 8){
+				// pr_info("now bit_pos show skip [%03u]",bit_pos+1);
+				bit_pos = bit_pos + de->name_len / 8;
+			}
+		}
+		pr_info("--------------------------------------------\n");
+		f2fs_put_page(ipage, 1);
+        // goto out_free;
+    }
+	/* ---------- 获取path1的目录块内容 ---------- */
+	// mapping = src_inode->i_mapping;
+	// if (!mapping) {
+	// 	pr_warn("[rdffs] no mapping for dir %s\n", path1);
+	// 	path_put(&src_path);
+	// 	return -EINVAL;
+	// }
+	pr_info("[rdffs] tpn");
     /* ---------- 分离 path2 的父目录与文件名 ---------- */
     {
         char *slash = strrchr(path2, '/');
@@ -3501,7 +3617,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
     /* ---------- 检查 path2 的父目录是否存在 ---------- */
     err = kern_path(parent, LOOKUP_FOLLOW | LOOKUP_REVAL, &parent_path);
     if (err) {
-        pr_info("f2fs_ioctl_copy_meta: parent '%s' of path2 not found\n", parent);
+        pr_info("f2fs_ioctl_snapshot: parent '%s' of path2 not found\n", parent);
         goto out_put_src;
     }
     parent_inode = parent_path.dentry->d_inode;
@@ -3511,7 +3627,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
         struct path tmp;
         if (!kern_path(path2, LOOKUP_FOLLOW | LOOKUP_REVAL, &tmp)) {
             path_put(&tmp);
-            pr_info("f2fs_ioctl_copy_meta: path2 '%s' already exists\n", path2);
+            pr_info("f2fs_ioctl_snapshot: path2 '%s' already exists\n", path2);
             err = -EEXIST;
             goto out_put_parent;
         }
@@ -3527,30 +3643,12 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 	
     err = vfs_mkdir(mnt_user_ns(parent_path.mnt), parent_inode, new_dentry, mode);
 	if (err) {
-		pr_info("f2fs_ioctl_copy_meta: mkdir '%s/%s' failed (%d)\n",
+		pr_info("f2fs_ioctl_snapshot: mkdir '%s/%s' failed (%d)\n",
 				parent, name, err);
 		goto out_dput;
 	}
-    /* ---------- 复制元数据 ---------- */
-    {
-        struct inode *dst = new_dentry->d_inode;
-        if (dst) {
-			memset(&new_attr, 0, sizeof(new_attr));
-			new_attr.ia_valid = ATTR_MODE | ATTR_UID | ATTR_GID |
-								ATTR_ATIME_SET | ATTR_MTIME_SET;
-			new_attr.ia_mode = mode;
-			new_attr.ia_uid = src_inode->i_uid;
-			new_attr.ia_gid = src_inode->i_gid;
-			new_attr.ia_atime = src_inode->i_atime;
-			new_attr.ia_mtime = src_inode->i_mtime;
+    // /* ---------- 复制元数据 ---------- */
 
-			/* Linux 5.12+ 需要传入 user_namespace 参数 */
-			notify_change(mnt_user_ns(parent_path.mnt), new_dentry, &new_attr, NULL);
-		}
-    }
-	pr_info("f7");
-    pr_info("f2fs_ioctl_copy_meta: created '%s', meta copied from '%s'\n",
-            path2, path1);
 
 out_dput:
     if (new_dentry)

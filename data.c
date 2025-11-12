@@ -444,10 +444,10 @@ static bool f2fs_crypt_mergeable_bio(struct bio *bio, const struct inode *inode,
 static inline void __submit_bio(struct f2fs_sb_info *sbi,
 				struct bio *bio, enum page_type type)
 {
-	if(type == DATA){
-		struct bvec_iter *iter = &bio->bi_iter;
-		pr_info("__submit_bio bio_iter: page_type:%ld, sec = %lu,bi_size =%lu,bi_idx=%lu,vi_c=%lu\n",type,iter->bi_sector, iter->bi_size,iter->bi_idx,iter->bi_bvec_done);
-	}
+	// if(type == DATA){
+	// 	struct bvec_iter *iter = &bio->bi_iter;
+	// 	pr_info("__submit_bio bio_iter: page_type:%ld, sec = %lu,bi_size =%lu,bi_idx=%lu,vi_c=%lu\n",type,iter->bi_sector, iter->bi_size,iter->bi_idx,iter->bi_bvec_done);
+	// }
 	if (!is_read_io(bio_op(bio))) {
 		unsigned int start;
 
