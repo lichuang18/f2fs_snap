@@ -543,4 +543,4 @@ __used __section("__versions") = {
 MODULE_INFO(depends, "zstd_compress,lz4hc_compress,lz4_compress");
 
 
-MODULE_INFO(srcversion, "86AE2D36B2397A46A3259A7");
+MODULE_INFO(srcversion, "12CEF7780C2528039A24A16");
