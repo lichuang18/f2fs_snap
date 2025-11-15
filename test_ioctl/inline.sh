@@ -1,8 +1,9 @@
 #!/bin/bash
 set -e
 
-DIR="/mnt/test1"
-SNAP_DIR="/mnt/snap1"
+DIR="/mnt/test_inline"
+SNAP_DIR="/mnt/ttt/tre/snap_inline"
+# SNAP_DIR="/mnt/snap_inline"
 
 STR=$(head -c 4096 /dev/urandom | base64 | tr -d '\n' | cut -c1-4096)
 
@@ -10,7 +11,7 @@ STR=$(head -c 4096 /dev/urandom | base64 | tr -d '\n' | cut -c1-4096)
 mkdir -p $DIR
 cd $DIR
 
-for i in $(seq 0 190); do
+for i in $(seq 0 29); do
     touch "f$i"
     echo $STR > f$i
 done
