@@ -10,7 +10,7 @@ STR=$(head -c 4096 /dev/urandom | base64 | tr -d '\n' | cut -c1-4096)
 mkdir -p $DIR
 cd $DIR
 
-for i in $(seq 0 49); do
+for i in $(seq 0 190); do
     touch "f$i"
     echo $STR > f$i
 done

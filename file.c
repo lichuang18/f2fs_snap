@@ -3911,18 +3911,31 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 						name,
 						de->file_type);
 				}
+				
+				if(bit_pos == 10){
+					const char *newname = "hello";
+					int len = strlen(newname);
+
+					memcpy(d.filename[bit_pos], newname, len);
+					de->name_len = cpu_to_le32(len);
+				}
+
 				if(de->name_len > 8){
 					// pr_info("now bit_pos show skip [%03u]",bit_pos+1);
 					bit_pos = bit_pos + de->name_len / 8;
 				}
 			}
+
 			pr_info("--------------------dump--------------------\n");
+			set_page_dirty(ipage);
+			
 			f2fs_put_page(ipage, 1);
 			f2fs_put_dnode(&dn_src);
 			// f2fs_put_page(tpage, 1);
 			idxx++;
 			pr_info("--------------------over-------------------\n");
 		}
+
 	}
 	end = ktime_get_ns();
 	delta_ns = end - start;

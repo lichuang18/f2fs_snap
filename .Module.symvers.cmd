@@ -1,1 +1,0 @@
-cmd_/home/lch/workspace/f2fs_snap/Module.symvers := sed 's/\.ko$$/\.o/' /home/lch/workspace/f2fs_snap/modules.order | scripts/mod/modpost -m -a  -o /home/lch/workspace/f2fs_snap/Module.symvers -e -i Module.symvers   -T -
