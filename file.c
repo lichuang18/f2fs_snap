@@ -3876,9 +3876,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 					return err;
 			}
 			src_blk = f2fs_data_blkaddr(&dn_src);
-			pr_info("[1]:method src_blk addr: %u",src_blk);
 			if (src_blk == NULL_ADDR) {
-				pr_info("are you here?");
 				f2fs_put_dnode(&dn_src);
 				continue;
 			}
@@ -3890,9 +3888,9 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 			// 	pr_err("f2fs_snap: get tpage idx=%d failed: %d\n", idxx, err);
 			// 	return -EINVAL;
 			// }
+
 			// inline_dentry = inline_data_addr(src_inode, ipage);
 			inline_dentry = page_address(ipage);
-			pr_info("[2]:method page1 addr: %u",inline_dentry);
 			// inline_dentry2 = page_address(tpage);
 			// memcpy(inline_dentry2, inline_dentry, PAGE_SIZE);
 			// set_page_dirty(tpage);
@@ -3904,13 +3902,15 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 					continue;
 				de = &d.dentry[bit_pos];
 				name = d.filename[bit_pos];
-				pr_info("  [%03u] ino=%u, name_len=%u, name=%.*s, type=%u\n",
-					bit_pos,
-					le32_to_cpu(de->ino),
-					le16_to_cpu(de->name_len),
-					le16_to_cpu(de->name_len),
-					name,
-					de->file_type);
+				if(bit_pos % 10 == 0){
+					pr_info("  [%03u] ino=%u, name_len=%u, name=%.*s, type=%u\n",
+						bit_pos,
+						le32_to_cpu(de->ino),
+						le16_to_cpu(de->name_len),
+						le16_to_cpu(de->name_len),
+						name,
+						de->file_type);
+				}
 				if(de->name_len > 8){
 					// pr_info("now bit_pos show skip [%03u]",bit_pos+1);
 					bit_pos = bit_pos + de->name_len / 8;
