@@ -310,7 +310,7 @@ static int __f2fs_write_meta_page(struct page *page,
 {
 	struct f2fs_sb_info *sbi = F2FS_P_SB(page);
 	trace_f2fs_writepage(page, META);
-
+	pr_info("are you here?");
 	if (unlikely(f2fs_cp_error(sbi))) {
 		if (is_sbi_flag_set(sbi, SBI_IS_CLOSE)) {
 			ClearPageUptodate(page);

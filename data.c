@@ -1034,7 +1034,6 @@ static int f2fs_submit_page_read(struct inode *inode, struct page *page,
 {
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	struct bio *bio;
-
 	bio = f2fs_grab_read_bio(inode, blkaddr, 1, op_flags,
 					page->index, for_write);
 	if (IS_ERR(bio))
@@ -1140,13 +1139,17 @@ int f2fs_reserve_block(struct dnode_of_data *dn, pgoff_t index)
 	int err;
 
 	err = f2fs_get_dnode_of_data(dn, index, ALLOC_NODE);
-	if (err)
+	if (err){
+		pr_info("f2fs_reserve_block: 1 err [%d]",err);
 		return err;
+	}
 
-	if (dn->data_blkaddr == NULL_ADDR)
+	if (dn->data_blkaddr == NULL_ADDR){
 		err = f2fs_reserve_new_block(dn);
-	if (err || need_put)
+	}
+	if (err || need_put){
 		f2fs_put_dnode(dn);
+	}
 	return err;
 }
 
@@ -1173,10 +1176,10 @@ struct page *f2fs_get_read_data_page(struct inode *inode, pgoff_t index,
 	int err;
 
 	page = f2fs_grab_cache_page(mapping, index, for_write);
-	if (!page)
+	if (!page){
 		return ERR_PTR(-ENOMEM);
-
-	if (f2fs_lookup_extent_cache(inode, index, &ei)) {
+	}
+	if (f2fs_lookup_extent_cache(inode, index, &ei)) {// no 
 		dn.data_blkaddr = ei.blk + index - ei.fofs;
 		if (!f2fs_is_valid_blkaddr(F2FS_I_SB(inode), dn.data_blkaddr,
 						DATA_GENERIC_ENHANCE_READ)) {
@@ -1185,18 +1188,17 @@ struct page *f2fs_get_read_data_page(struct inode *inode, pgoff_t index,
 		}
 		goto got_it;
 	}
-
 	set_new_dnode(&dn, inode, NULL, NULL, 0);
 	err = f2fs_get_dnode_of_data(&dn, index, LOOKUP_NODE);
 	if (err)
 		goto put_err;
 	f2fs_put_dnode(&dn);
 
-	if (unlikely(dn.data_blkaddr == NULL_ADDR)) {
+	if (unlikely(dn.data_blkaddr == NULL_ADDR)) {//no
 		err = -ENOENT;
 		goto put_err;
 	}
-	if (dn.data_blkaddr != NEW_ADDR &&
+	if (dn.data_blkaddr != NEW_ADDR && //no
 			!f2fs_is_valid_blkaddr(F2FS_I_SB(inode),
 						dn.data_blkaddr,
 						DATA_GENERIC_ENHANCE)) {
@@ -1216,21 +1218,20 @@ got_it:
 	 * see, f2fs_add_link -> f2fs_get_new_data_page ->
 	 * f2fs_init_inode_metadata.
 	 */
-	if (dn.data_blkaddr == NEW_ADDR) {
+	if (dn.data_blkaddr == NEW_ADDR) {//no
 		zero_user_segment(page, 0, PAGE_SIZE);
 		if (!PageUptodate(page))
 			SetPageUptodate(page);
 		unlock_page(page);
 		return page;
 	}
-
 	err = f2fs_submit_page_read(inode, page, dn.data_blkaddr,
 						op_flags, for_write);
 	if (err)
 		goto put_err;
 	return page;
 
-put_err:
+put_err:	
 	f2fs_put_page(page, 1);
 	return ERR_PTR(err);
 }
@@ -1355,7 +1356,7 @@ static int __allocate_data_block(struct dnode_of_data *dn, int seg_type)
 	block_t old_blkaddr;
 	blkcnt_t count = 1;
 	int err;
-
+	pr_info("__allocate_data_block: old[%x]",dn->data_blkaddr);
 	if (unlikely(is_inode_flag_set(dn->inode, FI_NO_ALLOC)))
 		return -EPERM;
 
@@ -1381,6 +1382,7 @@ alloc:
 		f2fs_invalidate_compress_page(sbi, old_blkaddr);
 	}
 	f2fs_update_data_blkaddr(dn, dn->data_blkaddr);
+	pr_info("__allocate_data_block: new[%x]",dn->data_blkaddr);
 
 	/*
 	 * i_size will be updated by direct_IO. Otherwise, we'll get stale

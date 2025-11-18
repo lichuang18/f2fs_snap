@@ -110,7 +110,7 @@ extern const char *f2fs_fault_name[FAULT_MAX];
 
 
 #define F2FS_IOC_SNAPSHOT   _IOW(F2FS_IOCTL_MAGIC, 28, char*[2])
-
+#define F2FS_IOC_READDIR   _IOW(F2FS_IOCTL_MAGIC, 29, char*[2])
 #define ver_after(a, b)	(typecheck(unsigned long long, a) &&		\
 		typecheck(unsigned long long, b) &&			\
 		((long long)((a) - (b)) > 0))
@@ -3101,7 +3101,6 @@ static inline void *inline_data_addr(struct inode *inode, struct page *page)
 {
 	struct f2fs_inode *ri = F2FS_INODE(page);
 	int extra_size = get_extra_isize(inode);
-
 	return (void *)&(ri->i_addr[extra_size + DEF_INLINE_RESERVED_SIZE]);
 }
 
