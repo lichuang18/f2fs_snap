@@ -1111,7 +1111,7 @@ static int f2fs_readdir(struct file *file, struct dir_context *ctx)
 	struct f2fs_dentry_ptr d;
 	struct fscrypt_str fstr = FSTR_INIT(NULL, 0);
 	int err = 0;
-
+	pr_info("caonima de ls. ");
 	if (IS_ENCRYPTED(inode)) {
 		err = fscrypt_prepare_readdir(inode);
 		if (err)

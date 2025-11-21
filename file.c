@@ -3556,49 +3556,42 @@ static int f2fs_write_data_page_compat(struct inode *inode, void *buf, unsigned 
     return ret;
 }
 // 非inline目录的copy  regular dentry
-static int f2fs_clone_regular_dentry(struct inode *src_inode, struct inode *new_inode)
+static void f2fs_snap_dump_dentry(struct inode *src_inode, int idx, char *target)
 {
-    struct f2fs_sb_info *sbi = F2FS_I_SB(src_inode);
-    struct page *page = NULL;
-    unsigned int idx = 0;
-    struct f2fs_dentry_block *src_blk, *dst_blk;
-	int ret = 0;
-	pr_info("are you ready for non-inline");
-    while (true) {
-        page = f2fs_get_lock_data_page(src_inode, idx, false);
-        if (IS_ERR(page)) {
-            if (PTR_ERR(page) == -ENOENT)
-                break;  /* no more blocks */
-            pr_err("Error reading dir block %u: %ld\n", idx, PTR_ERR(page));
-            ret = PTR_ERR(page);
-            break;
-        }
-        src_blk = (struct f2fs_dentry_block *)page_address(page);
-        /* 申请新的数据块并写入 */
-        dst_blk = kzalloc(sizeof(*dst_blk), GFP_KERNEL);
-		if (!dst_blk) {
-            pr_err("OOM allocating dst_blk\n");
-            f2fs_put_page(page, 1);
-            ret = -ENOMEM;
-            break;
-        }
-        memcpy(dst_blk, src_blk, sizeof(*dst_blk));
-		pr_info("are you OK?");
-        /* 把数据写入 new_inode 的对应页（此处仍调用你的写函数） */
-        ret = f2fs_write_data_page_compat(new_inode, (void *)dst_blk, idx, page);
-        pr_info("are you OK 2?  fuck!?");
-		kfree(dst_blk);
-        f2fs_put_page(page, 1);
+	struct page *src_ipage;
+	void *page_addr; // inline数据
+	int bit_pos;
+	char *name = NULL;
+	struct f2fs_dir_entry *de;
+	struct f2fs_dentry_ptr d;
+	struct f2fs_inode *src_fi;
+	
 
-        if (ret) {
-            pr_err("write data page failed idx=%u err=%d\n", idx, ret);
-            break;
-        }
-        idx++;
-    }
-    pr_info("Copied %u directory blocks from %lu -> %lu\n",
-            idx, src_inode->i_ino, new_inode->i_ino);
-    return ret;
+	pr_info("--------------------src dump start %s--------------------\n",target);
+	src_ipage = f2fs_get_lock_data_page(src_inode, idx, false);
+	src_fi = F2FS_INODE(src_ipage);
+	page_addr = page_address(src_ipage);
+	f2fs_put_page(src_ipage, 1);
+	make_dentry_ptr_block(src_inode, &d, page_addr);
+	for (bit_pos = 0; bit_pos < d.max; bit_pos++) { //max = 214？
+		if (!test_bit_le(bit_pos, d.bitmap))
+			continue;
+		de = &d.dentry[bit_pos];
+		name = d.filename[bit_pos];
+		if(bit_pos % 20 == 0){
+			pr_info("  [%03u] ino=%u, name_len=%u, name=%.*s, type=%u\n",
+				bit_pos,
+				le32_to_cpu(de->ino),
+				le16_to_cpu(de->name_len),
+				le16_to_cpu(de->name_len),
+				name,
+				de->file_type);
+		}
+		if(de->name_len > 8){
+			bit_pos = bit_pos + de->name_len / 8;
+		}
+	}
+	pr_info("--------------------src dump finish %s i_addr[%d]:%x--------------------\n",target,idx,src_fi->i_addr[idx]);
 }
 static int f2fs_read_dir_dump(struct file *filp, unsigned long arg)
 {
@@ -3939,7 +3932,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		// int idxx = 0;
 		int idx = 0;
 		struct page *src_ipage, *new_ipage;
-		struct page *src_dpage;
+		struct page *src_dpage, *new_dpage;
 		struct f2fs_inode *src_fi, *new_fi;
 		// struct writeback_control wbc;
 
@@ -3957,15 +3950,9 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 			// 获取inline区域的地址
 		inline_dentry = inline_data_addr(new_inode, new_ipage);
 		f2fs_put_page(new_ipage, 1);
-			// 执行convert， 主要是删除inline数据区域
-			// 清除inline flag
+			// 执行convert， 主要是删除inline数据区域和清除inline flag
 		err = f2fs_snap_inline_to_dirents(new_inode, inline_dentry);
 
-
-
-		src_dpage = f2fs_get_lock_data_page(src_inode, idx, false);
-		f2fs_put_page(src_dpage, 1);
-		// 
 		// 下面需要获取src_inode指向的数据页
 		// 如果等于null没必要再管了，因为说明这里没数据
 		// 如果等于new_addr，需要写回确保落盘，有对应的addr分配出来，并于page建立联系
@@ -3973,21 +3960,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		for (idx = 0; idx < DEF_ADDRS_PER_INODE; idx++) {
 			if (src_fi->i_addr[idx] != NULL_ADDR && src_fi->i_addr[idx] != NEW_ADDR) {
 				// 让snap也指向这个数据块
-				pr_info("i_addr[%3d] = 0x%08x", idx, src_fi->i_addr[idx]);
-				pr_info("valid_addr try write back");
-				// src_dpage = f2fs_get_lock_data_page(src_inode, idx, false);
-				{
-					// fsync
-					err = filemap_fdatawrite(src_inode->i_mapping);
-					if (err)
-						return err;
-					filemap_fdatawait(src_inode->i_mapping);
-				}
-				new_fi->i_addr[idx] = src_fi->i_addr[idx];
-			} else if(src_fi->i_addr[idx] == NEW_ADDR){
-				pr_info("i_addr[%3d] = NEW_ADDR", idx);
-				// 如果addr是new，标明刚分配的，缓存页需要写回
-				pr_info("new_addr try write back");
+				pr_info("i_addr[%3d] = 0x%08x, valid_addr try wb", idx, src_fi->i_addr[idx]);
 				// src_dpage = f2fs_get_lock_data_page(src_inode, idx, false);
 				{
 					// fsync
@@ -3997,10 +3970,40 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 					filemap_fdatawait(src_inode->i_mapping);
 				}
 				
+				// new_dpage = f2fs_grab_cache_page(new_inode->i_mapping, idx, true);
+				// f2fs_put_page(new_dpage, 1);
+
+				new_fi->i_addr[idx] = src_fi->i_addr[idx];
+				invalidate_mapping_pages(new_inode->i_mapping, idx, idx);
+
+				new_inode->i_size = src_inode->i_size;
+				// err = write_inode_now(new_inode,1);
+				// f2fs_snap_dump_dentry(src_inode, idx, "test");
+				// f2fs_snap_dump_dentry(new_inode, idx, "snap");
+
+			} else if(src_fi->i_addr[idx] == NEW_ADDR){
+				pr_info("i_addr[%3d] = NEW_ADDR", idx);
+				// 如果addr是new，标明刚分配的，缓存页需要写回
+				pr_info("new_addr try write back");
+				// src_dpage = f2fs_get_lock_data_page(src_inode, idx, false);
+				{
+					err = filemap_fdatawrite(src_inode->i_mapping);
+					if (err)
+						return err;
+					filemap_fdatawait(src_inode->i_mapping);
+				}
 				if(src_fi->i_addr[idx] != NEW_ADDR){
 					pr_info("get real addr");
 					pr_info("wb i_addr[%3d] = 0x%08x", idx, src_fi->i_addr[idx]);
+
+					// new_dpage = f2fs_grab_cache_page(new_inode->i_mapping, idx, true);
+					// f2fs_put_page(new_dpage, 1);
 					new_fi->i_addr[idx] = src_fi->i_addr[idx];
+					invalidate_mapping_pages(new_inode->i_mapping, idx, idx);
+					new_inode->i_size = src_inode->i_size;
+					// err = write_inode_now(new_inode,1);
+					// f2fs_snap_dump_dentry(src_inode, idx, "test");
+					// f2fs_snap_dump_dentry(new_inode, idx, "snap");
 				} else {
 					pr_info("still not get real addr");
 				}
@@ -4009,132 +4012,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		}
 		
 
-		// 适合不需要对页进行写入的情况
-		// ipage = f2fs_find_data_page(src_inode, idx);
-
 		// 这里目前只考虑使用直接数据块的情况，也就是支持最大19W=213*923个目录或者文件
-		
-    
-
-		// src_ipage = f2fs_get_node_page(sbi, src_inode->i_ino);
-		// if (IS_ERR(src_ipage)) {
-		// 	pr_err("Failed to get inode page: %ld\n", PTR_ERR(src_ipage));
-		// 	return -EINVAL;
-		// }
-
-		// fi = F2FS_INODE(src_ipage);
-		// f2fs_put_page(src_ipage, 1);
-
-		// convert
-		// x. snap目录是inline,需要转换. +  3. 与对应的page进行指针复制
-		// tpage = f2fs_get_node_page(sbi, new_inode->i_ino);
-		// inline_dentry = inline_data_addr(new_inode, tpage);
-		// new_fi = F2FS_INODE(tpage);
-		// f2fs_put_page(src_ipage, 1);
-		// f2fs_put_page(tpage, 1);
-		// err = f2fs_snap_inline_to_dirents(new_inode, inline_dentry);
-
-		// // set i_addr
-		// f2fs_i_depth_write(new_inode, F2FS_I(src_inode)->i_current_depth);
-
-
-		
-		// while (true) {
-		// 	// 1. 被快照目录是non-inline,但是有多少块不知道
-		// 	//  尝试用while
-		// 	pr_info("start page[%d]",idxx);
-		// 	ipage = f2fs_get_lock_data_page(src_inode, idxx, false);
-		// 	if (IS_ERR(ipage)) {
-		// 		err = PTR_ERR(ipage);
-		// 		pr_info("page[%d] GG simida",idxx);
-		// 		if (err == -ENOENT)
-		// 			break; 
-		// 		pr_err("f2fs_snap: get ipage idx=%d failed: %d\n", idxx, err);
-		// 		return -EINVAL;
-		// 	}
-		// 	inline_dentry = inline_data_addr(src_inode, ipage);
-		// 	// if (fi->i_addr[idxx] == NEW_ADDR){
-		// 	// 	pr_info("tsssi_addr[%d]: %x", idxx, fi->i_addr[idxx]);
-		// 	// 	if (ipage) {
-		// 	// 		
-		// 	// 		// 
-		// 	// 		if (!PageUptodate(ipage)){
-        //     //     		SetPageUptodate(ipage);
-		// 	// 		}
-		// 	// 		set_page_dirty(ipage);
-		// 	// 		pr_info("First. [%d]: %x", idxx, fi->i_addr[idxx]);
-		// 	// 		// lock_page(ipage);
-		// 	// 		f2fs_wait_on_page_writeback(ipage, DATA, true, true);
-		// 	// 		err = write_one_page(ipage);
-		// 	// 		// if (err)
-		// 	// 		// 	pr_err("write_one_page failed: %d\n", err);
-		// 	// 		// unlock_page(ipage);
-		// 	// 		pr_info("Second. [%d]: %x", idxx, fi->i_addr[idxx]);
-		// 	// 		// f2fs_write_data_page(ipage, &wbc);
-		// 	// 		// writepage(ipage); // 或通过 f2fs 的 writepage API
-		// 	// 		new_fi->i_addr[idxx] = fi->i_addr[idxx];
-		// 	// 		f2fs_put_page(ipage, 1);
-		// 	// 	}
-		// 	// } 
-		// 	// else if(fi->i_addr[idxx] != NEW_ADDR && fi->i_addr[idxx] != NULL_ADDR){
-		// 	// 	pr_info("data block exist, tyr write back");
-		// 	// 	if (ipage) {
-		// 	// 		
-		// 	// 		f2fs_wait_on_page_writeback(ipage, DATA, true, true);
-		// 	// 		if (!PageUptodate(ipage))
-        //     //     		SetPageUptodate(ipage);
-		// 	// 		set_page_dirty(ipage);
-		// 	// 		pr_info("[old addr] First. [%d]: %x", idxx, fi->i_addr[idxx]);
-
-		// 	// 		lock_page(ipage);
-		// 	// 		err = write_one_page(ipage);
-		// 	// 		if (err)
-		// 	// 			pr_err("write_one_page failed: %d\n", err);
-
-		// 	// 		unlock_page(ipage);
-		// 	// 		pr_info("[old addr] Second. [%d]: %x", idxx, fi->i_addr[idxx]);
-		// 	// 		// f2fs_write_data_page(ipage, &wbc);
-		// 	// 		// writepage(ipage); // 或通过 f2fs 的 writepage API
-		// 	// 		new_fi->i_addr[idxx] = fi->i_addr[idxx];
-		// 	// 		pr_info("over2?");
-		// 	// 		invalidate_mapping_pages(META_MAPPING(sbi),new_fi->i_addr[idxx], new_fi->i_addr[idxx]);
-		// 	// 		pr_info("over1?");
-		// 	// 		f2fs_invalidate_compress_page(sbi, new_fi->i_addr[idxx]);
-		// 	// 		f2fs_put_page(ipage, 1);
-		// 	// 		pr_info("over?");
-		// 	// 	}
-				
-		// 	// }
-		// 	pr_info("Second fi->i_addr[%d]: %x", idxx, fi->i_addr[idxx]);
-		// 	f2fs_put_page(ipage, 1);
-		// 	// dump
-			
-		// 	make_dentry_ptr_block(src_inode, &d, inline_dentry);
-		// 	for (bit_pos = 0; bit_pos < d.max; bit_pos++) { //max = 214？
-		// 		if (!test_bit_le(bit_pos, d.bitmap))
-		// 			continue;
-		// 		de = &d.dentry[bit_pos];
-		// 		name = d.filename[bit_pos];
-		// 		if(bit_pos % 10 == 0){
-		// 			pr_info("  [%03u] ino=%u, name_len=%u, name=%.*s, type=%u\n",
-		// 				bit_pos,
-		// 				le32_to_cpu(de->ino),
-		// 				le16_to_cpu(de->name_len),
-		// 				le16_to_cpu(de->name_len),
-		// 				name,
-		// 				de->file_type);
-		// 		}
-		// 		if(de->name_len > 8){
-		// 			bit_pos = bit_pos + de->name_len / 8;
-		// 		}
-		// 	}
-		// 	pr_info("--------------------dump--------------------\n");
-		// 	// set_page_dirty(ipage);
-		// 	// f2fs_put_page(ipage, 1);
-		// 	idxx++; 
-		// 	pr_info("--------------------over-------------------\n");
-			
-		// }
 	}
 	end = ktime_get_ns();
 	delta_ns = end - start;
