@@ -593,7 +593,10 @@ struct page *f2fs_init_inode_metadata(struct inode *inode, struct inode *dir,
 	int err;
 
 	if (is_inode_flag_set(inode, FI_NEW_INODE)) {
-		page = f2fs_new_inode_page(inode);
+		// 新创建的文件inode，就需要创建新的inode page，
+		// 拿到对应的page页面，才能接着去处理inode对应的nat的更新
+
+		page = f2fs_new_inode_page(inode); //核心处理函数
 		if (IS_ERR(page))
 			return page;
 
@@ -1111,7 +1114,6 @@ static int f2fs_readdir(struct file *file, struct dir_context *ctx)
 	struct f2fs_dentry_ptr d;
 	struct fscrypt_str fstr = FSTR_INIT(NULL, 0);
 	int err = 0;
-	pr_info("caonima de ls. ");
 	if (IS_ENCRYPTED(inode)) {
 		err = fscrypt_prepare_readdir(inode);
 		if (err)

@@ -558,6 +558,7 @@ make_now:
 	f2fs_set_inode_flags(inode);
 	unlock_new_inode(inode);
 	trace_f2fs_iget(inode);
+	pr_info("inode mode: %lu",inode->i_mode);
 	return inode;
 
 bad_inode:

@@ -460,10 +460,12 @@ static void set_node_addr(struct f2fs_sb_info *sbi, struct node_info *ni,
 	struct nat_entry *new = __alloc_nat_entry(sbi, ni->nid, true);
 
 	down_write(&nm_i->nat_tree_lock);
+	// 根据nid查找对应的nat记录
 	e = __lookup_nat_cache(nm_i, ni->nid);
 	if (!e) {
 		e = __init_nat_entry(nm_i, new, NULL, true);
 		copy_node_info(&e->ni, ni);
+		// 第一次创建，是null
 		f2fs_bug_on(sbi, ni->blk_addr == NEW_ADDR);
 	} else if (new_blkaddr == NEW_ADDR) {
 		/*
@@ -493,6 +495,17 @@ static void set_node_addr(struct f2fs_sb_info *sbi, struct node_info *ni,
 
 		nat_set_version(e, inc_node_version(version));
 	}
+
+	// 强制目录version = 222
+	// struct super_block *sb = sbi->sb;
+	// struct inode *inode;
+	// inode = f2fs_iget(sb, ni->ino);
+
+	// pr_info("OK?");
+	// pr_info("OK2?");
+	// pr_info("OK3?");
+	// // if(S_ISDIR(inode->i_mode)){
+	// // }
 
 	/* change address */
 	nat_set_blkaddr(e, new_blkaddr);
@@ -1285,9 +1298,9 @@ struct page *f2fs_new_node_page(struct dnode_of_data *dn, unsigned int ofs)
 {
 	struct f2fs_sb_info *sbi = F2FS_I_SB(dn->inode);
 	struct node_info new_ni;
-	struct page *page;
+	struct page *page; 
 	int err;
-
+	// 检查，一般出错大概率是权限问题
 	if (unlikely(is_inode_flag_set(dn->inode, FI_NO_ALLOC)))
 		return ERR_PTR(-EPERM);
 
@@ -1316,8 +1329,13 @@ struct page *f2fs_new_node_page(struct dnode_of_data *dn, unsigned int ofs)
 	new_ni.blk_addr = NULL_ADDR;
 	new_ni.flag = 0;
 	new_ni.version = 0;
+	// set version
+	if(S_ISDIR(dn->inode->i_mode)){
+		pr_info("set dir version [222]\n");
+		new_ni.version = 222;
+	}
+	// set new_addr， 表示未分配有效块地址
 	set_node_addr(sbi, &new_ni, NEW_ADDR, false);
-
 	f2fs_wait_on_page_writeback(page, NODE, true, true);
 	fill_node_footer(page, dn->nid, dn->inode->i_ino, ofs, true);
 	set_cold_node(page, S_ISDIR(dn->inode->i_mode));

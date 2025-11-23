@@ -4981,6 +4981,23 @@ static ssize_t f2fs_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 	return ret;
 }
 
+static struct nat_entry *__loup_nat_cache(struct f2fs_nm_info *nm_i, nid_t n)
+{
+	struct nat_entry *ne;
+
+	ne = radix_tree_lookup(&nm_i->nat_root, n);
+
+	/* for recent accessed nat entry, move it to tail of lru list */
+	if (ne && !get_nat_flag(ne, IS_DIRTY)) {
+		spin_lock(&nm_i->nat_list_lock);
+		if (!list_empty(&ne->list))
+			list_move_tail(&ne->list, &nm_i->nat_entries);
+		spin_unlock(&nm_i->nat_list_lock);
+	}
+
+	return ne;
+}
+
 static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
 	struct file *file = iocb->ki_filp;
@@ -4988,6 +5005,70 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	const loff_t orig_pos = iocb->ki_pos;
 	const size_t orig_count = iov_iter_count(from);
 	ssize_t ret;
+
+
+	// 我添加的私货
+	// 我需要判断文件inode 是否是一个快照目录下的文件
+	// 目前的方法是循环往上找父节点信息
+	struct nat_entry *e;
+	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
+	struct f2fs_nm_info *nm_i = NM_I(sbi);
+	struct inode *parent_inode;
+
+	struct writeback_control wbc = {
+		.sync_mode = WB_SYNC_ALL,
+		.nr_to_write = LONG_MAX,
+		.for_reclaim = 0,
+	};
+
+	struct dentry *parent_dentry, *dentry;
+	struct super_block *sb = inode->i_sb;  // 获取 inode 所在的超级块
+	// struct dentry *dentry = d_find_any_alias(inode);
+	while (inode){
+		dentry = d_find_any_alias(inode);  // 获取 inode 对应的 dentry
+		if (!dentry) {
+            pr_err("Failed to find dentry for inode %lu\n", inode->i_ino);
+            break;
+        }
+		parent_dentry = dget_parent(dentry);
+		// pr_info("Current inode: %lu, Parent inode: %lu\n", inode->i_ino, parent_dentry->d_inode->i_ino);
+
+		e = __loup_nat_cache(nm_i, parent_dentry->d_inode->i_ino);
+		// pr_info("pra dir name: %s [%d]", parent_dentry->d_name.name, nat_get_version(e));
+
+		if(nat_get_version(e) == 222){
+			// pr_info("addr: %x, version: %d",nat_get_blkaddr(e), nat_get_version(e));
+			// ret = f2fs_fsync_node_pages(sbi, parent_dentry->d_inode, &wbc, true, 0);
+			// pr_info("after addr: %x, version: %d",nat_get_blkaddr(e), nat_get_version(e));
+			goto start_snap;
+		}
+		
+		// 拿到了爷爷，开始判断爷爷是不是挂载根
+		if (parent_dentry == sb->s_root) {
+            // pr_info("Reached root inode: %lu\n", parent_dentry->d_inode->i_ino);
+            break;
+        }
+		inode = parent_dentry->d_inode;
+		
+	}
+	inode = file_inode(file);
+	dput(dentry);
+	dput(parent_dentry);
+	// pr_info("未发现该文件是快照文件, 正常处理流程");
+	goto normal;
+	
+start_snap:
+	pr_info("发现该文件是快照文件, 应该要触发COW特殊处理\n");
+	
+normal:
+	// pr_info("正常写入流程");	
+
+	// e = __loup_nat_cache(nm_i, inode->i_ino);
+	// pr_info("addr: %x, version: %d",nat_get_blkaddr(e), nat_get_version(e));
+	// ret = f2fs_fsync_node_pages(sbi, inode, &wbc, true, 0);
+	// pr_info("after addr: %x, version: %d\n",nat_get_blkaddr(e), nat_get_version(e));
+
+
 
 	if (unlikely(f2fs_cp_error(F2FS_I_SB(inode)))) {
 		ret = -EIO;
