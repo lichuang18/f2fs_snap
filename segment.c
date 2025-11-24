@@ -3401,10 +3401,8 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 		f2fs_bug_on(sbi, IS_NODESEG(se->type));
 	}
 	*new_blkaddr = NEXT_FREE_BLKADDR(sbi, curseg);
-	// pr_info("[rdffs]: new_blkaddr(type %ld):%llu(sec %llu)",type ,*new_blkaddr,(*new_blkaddr)*8);
+	pr_info("[%lu] new_blkaddr: %x\n", fio->ino, *new_blkaddr);
 	f2fs_bug_on(sbi, curseg->next_blkoff >= sbi->blocks_per_seg);
-	
-	// pr_info("START_BLOCK: %lu (seg:%lu),new:%lu\n",START_BLOCK(sbi, (curseg)->segno),(curseg)->segno,*new_blkaddr);
 	f2fs_wait_discard_bio(sbi, *new_blkaddr);
 
 	/*
@@ -3430,13 +3428,16 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	 * SIT information should be updated before segment allocation,
 	 * since SSR needs latest valid block information.
 	 */
+	// 夹带私货
+	// 如果是快照，旧块不能减1
 	update_sit_entry(sbi, *new_blkaddr, 1);
 	update_sit_entry(sbi, old_blkaddr, -1);
-
+	// 段空间管理，如果当前段空间不足
 	if (!__has_curseg_space(sbi, curseg)) {
 		/*
 		 * Flush out current segment and replace it with new segment.
 		 */
+		// GC情况，获取新段
 		if (from_gc) {
 			get_atssr_segment(sbi, type, se->type,
 						AT_SSR, se->mtime);
@@ -3453,11 +3454,12 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	 * so we just need to update status only one time after previous
 	 * segment being closed.
 	 */
+	// 定位脏段
 	locate_dirty_segment(sbi, GET_SEGNO(sbi, old_blkaddr));
 	locate_dirty_segment(sbi, GET_SEGNO(sbi, *new_blkaddr));
 
 	up_write(&sit_i->sentry_lock);
-
+	// 页节点更新
 	if (page && IS_NODESEG(type)) {
 		fill_node_footer_blkaddr(page, NEXT_FREE_BLKADDR(sbi, curseg));
 
@@ -3518,6 +3520,7 @@ static void do_write_page(struct f2fs_summary *sum, struct f2fs_io_info *fio)
 	if (keep_order)
 		down_read(&fio->sbi->io_order_lock);
 reallocate:
+	// 这里是不是可能出现更新sit的地方呢？
 	f2fs_allocate_data_block(fio->sbi, fio->page, fio->old_blkaddr,
 			&fio->new_blkaddr, sum, type, fio);
 	if (GET_SEGNO(fio->sbi, fio->old_blkaddr) != NULL_SEGNO) {
@@ -3569,7 +3572,6 @@ void f2fs_do_write_meta_page(struct f2fs_sb_info *sbi, struct page *page,
 void f2fs_do_write_node_page(unsigned int nid, struct f2fs_io_info *fio)
 {
 	struct f2fs_summary sum;
-	// pr_info("[rdffs]: write_node_page -> do_write_page\n");
 	set_summary(&sum, nid, 0, 0);
 	do_write_page(&sum, fio);
 
@@ -3581,7 +3583,8 @@ void f2fs_outplace_write_data(struct dnode_of_data *dn,
 {
 	struct f2fs_sb_info *sbi = fio->sbi;
 	struct f2fs_summary sum;
-	// pr_info("[rdffs]: f2fs_outplace_write_data -> do_write_page\n");
+	// 添加我的私货
+	// 修改ssa
 	f2fs_bug_on(sbi, dn->data_blkaddr == NULL_ADDR);
 	set_summary(&sum, dn->nid, dn->ofs_in_node, fio->version);
 	do_write_page(&sum, fio);
@@ -3595,7 +3598,6 @@ int f2fs_inplace_write_data(struct f2fs_io_info *fio)
 	int err;
 	struct f2fs_sb_info *sbi = fio->sbi;
 	unsigned int segno;
-	pr_info("[rdffs]: f2fs_inplace_write_data -> do_write_page\n");
 	fio->new_blkaddr = fio->old_blkaddr;
 	/* i/o temperature is needed for passing down write hints */
 	__get_segment_type(fio);

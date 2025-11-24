@@ -444,10 +444,6 @@ static bool f2fs_crypt_mergeable_bio(struct bio *bio, const struct inode *inode,
 static inline void __submit_bio(struct f2fs_sb_info *sbi,
 				struct bio *bio, enum page_type type)
 {
-	// if(type == DATA){
-	// 	struct bvec_iter *iter = &bio->bi_iter;
-	// 	pr_info("__submit_bio bio_iter: page_type:%ld, sec = %lu,bi_size =%lu,bi_idx=%lu,vi_c=%lu\n",type,iter->bi_sector, iter->bi_size,iter->bi_idx,iter->bi_bvec_done);
-	// }
 	if (!is_read_io(bio_op(bio))) {
 		unsigned int start;
 
@@ -1116,7 +1112,6 @@ int f2fs_reserve_new_blocks(struct dnode_of_data *dn, blkcnt_t count)
 			count--;
 		}
 	}
-
 	if (set_page_dirty(dn->node_page))
 		dn->node_changed = true;
 	return 0;
@@ -1140,7 +1135,6 @@ int f2fs_reserve_block(struct dnode_of_data *dn, pgoff_t index)
 
 	err = f2fs_get_dnode_of_data(dn, index, ALLOC_NODE);
 	if (err){
-		pr_info("f2fs_reserve_block: 1 err [%d]",err);
 		return err;
 	}
 
@@ -1356,7 +1350,6 @@ static int __allocate_data_block(struct dnode_of_data *dn, int seg_type)
 	block_t old_blkaddr;
 	blkcnt_t count = 1;
 	int err;
-	pr_info("__allocate_data_block: old[%x]",dn->data_blkaddr);
 	if (unlikely(is_inode_flag_set(dn->inode, FI_NO_ALLOC)))
 		return -EPERM;
 
@@ -1382,7 +1375,6 @@ alloc:
 		f2fs_invalidate_compress_page(sbi, old_blkaddr);
 	}
 	f2fs_update_data_blkaddr(dn, dn->data_blkaddr);
-	pr_info("__allocate_data_block: new[%x]",dn->data_blkaddr);
 
 	/*
 	 * i_size will be updated by direct_IO. Otherwise, we'll get stale
@@ -1398,6 +1390,9 @@ int f2fs_preallocate_blocks(struct kiocb *iocb, struct iov_iter *from)
 	int flag;
 	int err = 0;
 	bool direct_io = iocb->ki_flags & IOCB_DIRECT;
+
+	// pr_info("preallocate activate\n");
+	if(direct_io) pr_info("direct preallocate activate\n");
 
 	map.m_lblk = F2FS_BLK_ALIGN(iocb->ki_pos);
 	map.m_len = F2FS_BYTES_TO_BLK(iocb->ki_pos + iov_iter_count(from));
@@ -1473,7 +1468,6 @@ int f2fs_map_blocks(struct inode *inode, struct f2fs_map_blocks *map,
 	block_t blkaddr;
 	unsigned int start_pgofs;
 	int bidx = 0;
-
 	if (!maxblocks)
 		return 0;
 
@@ -1488,7 +1482,7 @@ int f2fs_map_blocks(struct inode *inode, struct f2fs_map_blocks *map,
 	pgofs =	(pgoff_t)map->m_lblk;
 	end = pgofs + maxblocks;
 
-	if (!create && f2fs_lookup_extent_cache(inode, pgofs, &ei)) {
+	if (!create && f2fs_lookup_extent_cache(inode, pgofs, &ei)) {// no
 		if (f2fs_lfs_mode(sbi) && flag == F2FS_GET_BLOCK_DIO &&
 							map->m_may_create)
 			goto next_dnode;
@@ -1524,7 +1518,7 @@ int f2fs_map_blocks(struct inode *inode, struct f2fs_map_blocks *map,
 next_dnode:
 	if (map->m_may_create)
 		f2fs_do_map_lock(sbi, flag, true);
-
+	// 1
 	/* When reading holes, we need its node page */
 	set_new_dnode(&dn, inode, NULL, NULL, 0);
 	err = f2fs_get_dnode_of_data(&dn, pgofs, mode);
@@ -1564,14 +1558,14 @@ next_dnode:
 
 next_block:
 	blkaddr = f2fs_data_blkaddr(&dn);
-
+	// 2
 	if (__is_valid_data_blkaddr(blkaddr) &&
 		!f2fs_is_valid_blkaddr(sbi, blkaddr, DATA_GENERIC_ENHANCE)) {
 		err = -EFSCORRUPTED;
 		goto sync_out;
 	}
 
-	if (__is_valid_data_blkaddr(blkaddr)) {
+	if (__is_valid_data_blkaddr(blkaddr)) {//no
 		/* use out-place-update for driect IO under LFS mode */
 		if (f2fs_lfs_mode(sbi) && flag == F2FS_GET_BLOCK_DIO &&
 							map->m_may_create) {
@@ -1583,16 +1577,18 @@ next_block:
 		}
 	} else {
 		if (create) {
+			// 3
 			if (unlikely(f2fs_cp_error(sbi))) {
 				err = -EIO;
 				goto sync_out;
 			}
 			if (flag == F2FS_GET_BLOCK_PRE_AIO) {
+				// 4
 				if (blkaddr == NULL_ADDR) {
 					prealloc++;
 					last_ofs_in_node = dn.ofs_in_node;
 				}
-			} else {
+			} else {// no
 				WARN_ON(flag != F2FS_GET_BLOCK_PRE_DIO &&
 					flag != F2FS_GET_BLOCK_DIO);
 				err = __allocate_data_block(&dn,
@@ -1602,8 +1598,10 @@ next_block:
 			}
 			if (err)
 				goto sync_out;
+			// 5
 			map->m_flags |= F2FS_MAP_NEW;
 			blkaddr = dn.data_blkaddr;
+
 		} else {
 			if (f2fs_compressed_file(inode) &&
 					f2fs_sanity_check_cluster(&dn) &&
@@ -1633,7 +1631,7 @@ next_block:
 		}
 	}
 
-	if (flag == F2FS_GET_BLOCK_PRE_AIO)
+	if (flag == F2FS_GET_BLOCK_PRE_AIO)// go in
 		goto skip;
 
 	if (map->m_multidev_dio)
@@ -1665,7 +1663,7 @@ next_block:
 skip:
 	dn.ofs_in_node++;
 	pgofs++;
-
+	// 6
 	/* preallocate blocks in batch for one dnode page */
 	if (flag == F2FS_GET_BLOCK_PRE_AIO &&
 			(pgofs == end || dn.ofs_in_node == end_offset)) {
@@ -1705,14 +1703,15 @@ skip:
 		f2fs_balance_fs(sbi, dn.node_changed);
 	}
 	goto next_dnode;
-
+	// no
 sync_out:
 
-	if (flag == F2FS_GET_BLOCK_DIO && map->m_flags & F2FS_MAP_MAPPED) {
+	if (flag == F2FS_GET_BLOCK_DIO && map->m_flags & F2FS_MAP_MAPPED) {// no
 		/*
 		 * for hardware encryption, but to avoid potential issue
 		 * in future
 		 */
+		
 		f2fs_wait_on_block_writeback_range(inode,
 						map->m_pblk, map->m_len);
 
@@ -1733,7 +1732,7 @@ sync_out:
 		}
 	}
 
-	if (flag == F2FS_GET_BLOCK_PRECACHE) {
+	if (flag == F2FS_GET_BLOCK_PRECACHE) {// no
 		if (map->m_flags & F2FS_MAP_MAPPED) {
 			unsigned int ofs = start_pgofs - map->m_lblk;
 
@@ -1744,6 +1743,7 @@ sync_out:
 		if (map->m_next_extent)
 			*map->m_next_extent = pgofs + 1;
 	}
+	// 7
 	f2fs_put_dnode(&dn);
 unlock_out:
 	if (map->m_may_create) {
@@ -2678,7 +2678,6 @@ int f2fs_do_write_data_page(struct f2fs_io_info *fio)
 	struct node_info ni;
 	bool ipu_force = false;
 	int err = 0;
-	// pr_info("[rdffs]: f2fs_do_write_data_page -> do_write_page\n");
 	set_new_dnode(&dn, inode, NULL, NULL, 0);
 	if (need_inplace_update(fio) &&
 			f2fs_lookup_extent_cache(inode, page->index, &ei)) {
@@ -2894,7 +2893,7 @@ write:
 	}
 
 	if (err == -EAGAIN) {
-		err = f2fs_do_write_data_page(&fio);
+		err = f2fs_do_write_data_page(&fio);// here
 		if (err == -EAGAIN) {
 			f2fs_bug_on(sbi, compr_blocks);
 			fio.need_lock = LOCK_REQ;
@@ -2942,7 +2941,6 @@ out:
 
 	if (submitted)
 		*submitted = fio.submitted;
-	// pr_info("[rdffs]: write data 1 page\n");
 	return 0;
 
 redirty_out:
@@ -2976,7 +2974,6 @@ static int f2fs_write_data_page(struct page *page,
 	}
 out:
 #endif
-
 	return f2fs_write_single_data_page(page, NULL, NULL, NULL,
 						wbc, FS_DATA_IO, 0, true);
 }
@@ -3314,7 +3311,6 @@ static int __f2fs_write_data_pages(struct address_space *mapping,
 skip_write:
 	wbc->pages_skipped += get_dirty_pages(inode);
 	trace_f2fs_writepages(mapping->host, wbc, DATA);
-	// pr_info("[rdffs]: write data pages\n");
 	return 0;
 }
 
@@ -3322,7 +3318,6 @@ static int f2fs_write_data_pages(struct address_space *mapping,
 			    struct writeback_control *wbc)
 {
 	struct inode *inode = mapping->host;
-
 	return __f2fs_write_data_pages(mapping, wbc,
 			F2FS_I(inode)->cp_task == current ?
 			FS_CP_DATA_IO : FS_DATA_IO);
@@ -3662,7 +3657,6 @@ static void f2fs_dio_submit_bio(struct bio *bio, struct inode *inode,
 	struct f2fs_private_dio *dio;
 	bool write = (bio_op(bio) == REQ_OP_WRITE);
 	struct bvec_iter *iter = &bio->bi_iter;
-	pr_info("f2fs_dio_submit_bio bio_iter: sec = %lu,bi_size =%lu,bi_idx=%lu,vi_c=%lu\n",iter->bi_sector, iter->bi_size,iter->bi_idx,iter->bi_bvec_done);
 	dio = f2fs_kzalloc(F2FS_I_SB(inode),
 			sizeof(struct f2fs_private_dio), GFP_NOFS);
 	if (!dio)
@@ -3731,13 +3725,11 @@ static ssize_t f2fs_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 		if (do_opu)
 			down_read(&fi->i_gc_rwsem[READ]);
 	}
-	pr_info("write real size:%llu\n",count);
 	err = __blockdev_direct_IO(iocb, inode, inode->i_sb->s_bdev,
 			iter, rw == WRITE ? get_data_block_dio_write :
 			get_data_block_dio, NULL, f2fs_dio_submit_bio,
 			rw == WRITE ? DIO_LOCKING | DIO_SKIP_HOLES :
 			DIO_SKIP_HOLES);
-	pr_info("write real2 size:%llu\n",count);
 	if (do_opu)
 		up_read(&fi->i_gc_rwsem[READ]);
 

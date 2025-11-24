@@ -3486,39 +3486,6 @@ static int f2fs_get_compress_blocks(struct file *filp, unsigned long arg)
 	return put_user(blocks, (u64 __user *)arg);
 }
 
-
-
-// inline目录的copy  regular dentry
-// static int f2fs_clone_inline_data(struct inode *src_inode, struct inode *new_inode)
-// {
-//     struct f2fs_sb_info *sbi = F2FS_I_SB(src_inode);
-//     struct page *ipage, *tpage;
-//     void *src_inline, *dst_inline;
-//     size_t inline_size = MAX_INLINE_DATA;
-
-//     ipage = f2fs_get_node_page(sbi, src_inode->i_ino);
-//     if (IS_ERR(ipage))
-//         return PTR_ERR(ipage);
-
-//     tpage = f2fs_get_node_page(sbi, new_inode->i_ino);
-//     if (IS_ERR(tpage)) {
-//         f2fs_put_page(ipage, 1);
-//         return PTR_ERR(tpage);
-//     }
-
-//     src_inline = inline_data_addr(src_inode, ipage);
-//     dst_inline = inline_data_addr(new_inode, tpage);
-
-//     memcpy(dst_inline, src_inline, inline_size);
-//     set_page_dirty(tpage);
-
-//     f2fs_put_page(ipage, 1);
-//     f2fs_put_page(tpage, 1);
-
-//     pr_info("Copied inline dentry from inode %lu -> %lu\n",
-//             src_inode->i_ino, new_inode->i_ino);
-//     return 0;
-// }
 static int f2fs_write_data_page_compat(struct inode *inode, void *buf, unsigned int idx, struct page *ipage)
 {
     struct page *page;
@@ -3605,7 +3572,6 @@ static int f2fs_read_dir_dump(struct file *filp, unsigned long arg)
 	void *inline_dentry; // inline数据
 	char __user *user_paths[2];  // 从用户空间复制的指针数组
 
-	pr_info("f2fs_read_dir_dump: start \n");
 	if (copy_from_user(user_paths, (char __user * __user *)arg, sizeof(user_paths)))
 		return -EFAULT;
 	/* ---------- 从用户态复制路径字符串 ---------- */
@@ -3620,12 +3586,10 @@ static int f2fs_read_dir_dump(struct file *filp, unsigned long arg)
 
 	err = kern_path(path1, LOOKUP_FOLLOW | LOOKUP_REVAL, &src_path);
     if (err) {
-        pr_info("f2fs_ioctl_snapshot: path1 '%s' not found\n", path1);
         goto out_free;
     }
     src_inode = src_path.dentry->d_inode; 
 	if (!src_inode) {
-        pr_warn("Invalid inode for path\n");
         return -EINVAL;
     }
 	struct f2fs_sb_info *sbi = F2FS_I_SB(src_inode);
@@ -3637,7 +3601,6 @@ static int f2fs_read_dir_dump(struct file *filp, unsigned long arg)
 	struct page *src_ipage;
 	src_ipage = f2fs_get_node_page(sbi, src_inode->i_ino);
     if (IS_ERR(src_ipage)) {
-        pr_err("Failed to get inode page: %ld\n", PTR_ERR(src_ipage));
         return -EINVAL;
     }
     
@@ -3658,8 +3621,6 @@ static int f2fs_read_dir_dump(struct file *filp, unsigned long arg)
             used_count++;
         }
     }
-    pr_info("Total used i_addr entries: %d / %d\n", 
-           used_count, DEF_ADDRS_PER_INODE);
     f2fs_put_page(src_ipage, 1);
 
 
@@ -3689,22 +3650,18 @@ static int f2fs_read_dir_dump(struct file *filp, unsigned long arg)
 				name,
 				de->file_type);
 			if(de->name_len > 8){
-				// pr_info("now bit_pos show skip [%03u]",bit_pos+1);
 				bit_pos = bit_pos + de->name_len / 8;
 			}
 		}
-		pr_info("--------------------------------------------\n");
 		f2fs_put_page(ipage, 1);
     } else{
 		pr_info("Dir(%lu) uses non-inline dentry\n", src_inode->i_ino);
 		int idxx = 0;
 		while (true) {
-			pr_info("start page[%d]",idxx);
 			ipage = f2fs_get_lock_data_page(src_inode, idxx, false);
 			if (IS_ERR(ipage)) {
 				err = PTR_ERR(ipage);
 				if(ipage) f2fs_put_page(ipage, 1);
-				pr_info("page[%d] GG simida",idxx);
 				if (err == -ENOENT)
 					break; /* no more blocks */
 				pr_err("f2fs_snap: get ipage idx=%d failed: %d\n", idxx, err);
@@ -3728,17 +3685,13 @@ static int f2fs_read_dir_dump(struct file *filp, unsigned long arg)
 						de->file_type);
 				}
 				if(de->name_len > 8){
-					// pr_info("now bit_pos show skip [%03u]",bit_pos+1);
 					bit_pos = bit_pos + de->name_len / 8;
 				}
 			}
-			pr_info("--------------------dump--------------------\n");
 			f2fs_put_page(ipage, 1);
 			idxx++;
 		}
-		pr_info("non inline over");
 	}
-	pr_info("bug?");
     path_put(&src_path);
     kfree(name);
 out_free:
@@ -3822,7 +3775,6 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 			return err;
 		}
 		
-		// pr_info("[rdffs] path1: %s, src_path: %s\n",path1, path2);
 		/* ---------- 检查 path1 是否存在 ---------- */
 		err = kern_path(path1, LOOKUP_FOLLOW | LOOKUP_REVAL, &src_path);
 		if (err) {
@@ -3834,7 +3786,6 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 			pr_warn("Invalid inode for path\n");
 			return -EINVAL;
 		}
-		// pr_info("[rdffs] tp1");
 		/* ---------- 分离 path2 的父目录与文件名 ---------- */
 		{
 			char *slash = strrchr(path2, '/');
@@ -3889,7 +3840,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 			goto out_dput;
 		}
 		new_inode = new_dentry->d_inode;
-		pr_info("[rdffs] tp4");
+		pr_info("[rdffs] tp4\n");
 		// 检查是否是inline dir
 		int entry_cnt = NR_INLINE_DENTRY(src_inode);
 		int bitmap_size = INLINE_DENTRY_BITMAP_SIZE(src_inode);
@@ -3960,7 +3911,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		for (idx = 0; idx < DEF_ADDRS_PER_INODE; idx++) {
 			if (src_fi->i_addr[idx] != NULL_ADDR && src_fi->i_addr[idx] != NEW_ADDR) {
 				// 让snap也指向这个数据块
-				pr_info("i_addr[%3d] = 0x%08x, valid_addr try wb", idx, src_fi->i_addr[idx]);
+				pr_info("i_addr[%3d] = 0x%08x, valid_addr try wb\n", idx, src_fi->i_addr[idx]);
 				// src_dpage = f2fs_get_lock_data_page(src_inode, idx, false);
 				{
 					// fsync
@@ -3982,9 +3933,9 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 				// f2fs_snap_dump_dentry(new_inode, idx, "snap");
 
 			} else if(src_fi->i_addr[idx] == NEW_ADDR){
-				pr_info("i_addr[%3d] = NEW_ADDR", idx);
+				pr_info("i_addr[%3d] = NEW_ADDR\n", idx);
 				// 如果addr是new，标明刚分配的，缓存页需要写回
-				pr_info("new_addr try write back");
+				pr_info("new_addr try write back\n");
 				// src_dpage = f2fs_get_lock_data_page(src_inode, idx, false);
 				{
 					err = filemap_fdatawrite(src_inode->i_mapping);
@@ -3993,8 +3944,8 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 					filemap_fdatawait(src_inode->i_mapping);
 				}
 				if(src_fi->i_addr[idx] != NEW_ADDR){
-					pr_info("get real addr");
-					pr_info("wb i_addr[%3d] = 0x%08x", idx, src_fi->i_addr[idx]);
+					pr_info("get real addr\n");
+					pr_info("wb i_addr[%3d] = 0x%08x\n", idx, src_fi->i_addr[idx]);
 
 					// new_dpage = f2fs_grab_cache_page(new_inode->i_mapping, idx, true);
 					// f2fs_put_page(new_dpage, 1);
@@ -4005,7 +3956,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 					// f2fs_snap_dump_dentry(src_inode, idx, "test");
 					// f2fs_snap_dump_dentry(new_inode, idx, "snap");
 				} else {
-					pr_info("still not get real addr");
+					pr_info("still not get real addr\n");
 				}
 					
 			}
@@ -4017,33 +3968,14 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 	end = ktime_get_ns();
 	delta_ns = end - start;
 	pr_info("[rdffs]: mk snap time: %lld ns\n", delta_ns);
+	// todo
+	// 设置 magic page flag等信息
+	// 首先： 找到被快照目录的"version", 如果version是0，就说明不支持快照
+	// 其次： 高级实现，如果version为0，触发强制操作，再给被快照目录分配一个inode呗，更新就行了
+	// 主要是写入flag，以及记录snapshot的inode
 
-    // struct page *src_ipage;
-	// src_ipage = f2fs_get_node_page(sbi, src_inode->i_ino);
-    // if (IS_ERR(src_ipage)) {
-    //     pr_err("Failed to get inode page: %ld\n", PTR_ERR(src_ipage));
-    //     return -EINVAL;
-    // }
-    
-	// struct f2fs_inode *fi;
-    // fi = F2FS_INODE(src_ipage);
-    // int i;
-	// int used_count=0;
-    // pr_info("=== Used i_addr pointers for inode %lu ===\n", src_inode->i_ino);
-    // pr_info("File size: %llu, Blocks: %u\n", fi->i_size, fi->i_blocks);
-    
-	// fi = F2FS_INODE(src_ipage);
-	// pr_info("i_addr[0] = 0x%08x", fi->i_addr[0]);
-	// pr_info("i_addr[1] = 0x%08x", fi->i_addr[1]);
-    // for (i = 0; i < DEF_ADDRS_PER_INODE; i++) {
-    //     if (fi->i_addr[i] != NULL_ADDR && fi->i_addr[i] != NEW_ADDR) {
-    //         pr_info("i_addr[%3d] = 0x%08x", i, fi->i_addr[i]);
-    //         used_count++;
-    //     }
-    // }
-    // pr_info("Total used i_addr entries: %d / %d\n", 
-    //        used_count, DEF_ADDRS_PER_INODE);
-    // f2fs_put_page(src_ipage, 1);
+	// todo
+	// 创建完快照，记得要更新ssa
 
 out_dput:
     if (new_dentry)
@@ -4932,23 +4864,6 @@ static long __f2fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return f2fs_create_snapshot(filp, arg);
 	case F2FS_IOC_READDIR:
 		return f2fs_read_dir_dump(filp, arg);
-	//  {
-		
-	// 	char __user *user_paths[2];  // 从用户空间复制的指针数组
-	// 	char path1[PATH_MAX];
-	// 	char path2[PATH_MAX];
-
-	// 	if (copy_from_user(user_paths, (char __user * __user *)arg, sizeof(user_paths)))
-	// 		return -EFAULT;
-
-	// 	if (strncpy_from_user(path1, user_paths[0], sizeof(path1)) < 0)
-	// 		return -EFAULT;
-	// 	if (strncpy_from_user(path2, user_paths[1], sizeof(path2)) < 0)
-	// 		return -EFAULT;
-
-	// 	pr_info("[rdffs]: ioctl received args: arg1=%s, arg2=%s\n", path1, path2);
-	// 	return 0;
-	// }
 	default:
 		return -ENOTTY;
 	}
@@ -5006,10 +4921,9 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	const size_t orig_count = iov_iter_count(from);
 	ssize_t ret;
 
-
 	// 我添加的私货
 	// 我需要判断文件inode 是否是一个快照目录下的文件
-	// 目前的方法是循环往上找父节点信息
+	// 目前的方法是循环往上找父节点信息,要遍历到挂载根节点
 	struct nat_entry *e;
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	struct f2fs_nm_info *nm_i = NM_I(sbi);
@@ -5022,8 +4936,9 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	};
 
 	struct dentry *parent_dentry, *dentry;
-	struct super_block *sb = inode->i_sb;  // 获取 inode 所在的超级块
-	// struct dentry *dentry = d_find_any_alias(inode);
+	struct super_block *sb = inode->i_sb;
+	int magic_oft = 0;
+
 	while (inode){
 		dentry = d_find_any_alias(inode);  // 获取 inode 对应的 dentry
 		if (!dentry) {
@@ -5031,35 +4946,31 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
             break;
         }
 		parent_dentry = dget_parent(dentry);
-		// pr_info("Current inode: %lu, Parent inode: %lu\n", inode->i_ino, parent_dentry->d_inode->i_ino);
-
 		e = __loup_nat_cache(nm_i, parent_dentry->d_inode->i_ino);
-		// pr_info("pra dir name: %s [%d]", parent_dentry->d_name.name, nat_get_version(e));
-
-		if(nat_get_version(e) == 222){
-			// pr_info("addr: %x, version: %d",nat_get_blkaddr(e), nat_get_version(e));
-			// ret = f2fs_fsync_node_pages(sbi, parent_dentry->d_inode, &wbc, true, 0);
-			// pr_info("after addr: %x, version: %d",nat_get_blkaddr(e), nat_get_version(e));
+		if(nat_get_version(e) != 0){
 			goto start_snap;
 		}
-		
-		// 拿到了爷爷，开始判断爷爷是不是挂载根
 		if (parent_dentry == sb->s_root) {
-            // pr_info("Reached root inode: %lu\n", parent_dentry->d_inode->i_ino);
             break;
         }
 		inode = parent_dentry->d_inode;
-		
 	}
 	inode = file_inode(file);
 	dput(dentry);
 	dput(parent_dentry);
-	// pr_info("未发现该文件是快照文件, 正常处理流程");
 	goto normal;
 	
 start_snap:
 	pr_info("发现该文件是快照文件, 应该要触发COW特殊处理\n");
-	
+	// 读magic page
+	// magic_entry = read_from_magic(buf,magic_oft), 假设得到了一个这样的flag 和 snap的inode
+	// snap_ino = magic_entry.ino;
+	// struct inode *inode;
+	// snap_inode = f2fs_iget(sb, snap_ino);
+	// 到这里我已经获得了快照的inode信息
+	// todo
+	// 接下来就需要更改对应的sit和ssa，nat
+
 normal:
 	// pr_info("正常写入流程");	
 
@@ -5067,8 +4978,6 @@ normal:
 	// pr_info("addr: %x, version: %d",nat_get_blkaddr(e), nat_get_version(e));
 	// ret = f2fs_fsync_node_pages(sbi, inode, &wbc, true, 0);
 	// pr_info("after addr: %x, version: %d\n",nat_get_blkaddr(e), nat_get_version(e));
-
-
 
 	if (unlikely(f2fs_cp_error(F2FS_I_SB(inode)))) {
 		ret = -EIO;
@@ -5123,7 +5032,9 @@ normal:
 
 		if (is_inode_flag_set(inode, FI_NO_PREALLOC))
 			goto write;
-
+		
+		// direct IO 需要直接分配数据块
+		// 这里可能影响sit和ssa nat
 		if (iocb->ki_flags & IOCB_DIRECT) {
 			/*
 			 * Convert inline data for Direct I/O before entering
@@ -5144,6 +5055,8 @@ normal:
 		preallocated = true;
 		target_size = iocb->ki_pos + iov_iter_count(from);
 
+		// 如果使用page cache，会预分配块，分配空间给即将写入的数据
+		// 这里可能影响sit和ssa nat
 		err = f2fs_preallocate_blocks(iocb, from);
 		if (err) {
 out_err:
@@ -5174,8 +5087,6 @@ out:
 	trace_f2fs_file_write_iter(inode, orig_pos, orig_count, ret);
 	if (ret > 0)
 		ret = generic_write_sync(iocb, ret);
-	// pr_info("[rdffs]: write_iter ino=%llu pos=%llu count=%llu flags=0x%lx %s, ret=%lld\n",\
-	// 	inode->i_ino,iocb->ki_pos,orig_count,iocb->ki_flags,(iocb->ki_flags & IOCB_DIRECT) ? "Direct" : "Buffered",ret);
 	return ret;
 }
 

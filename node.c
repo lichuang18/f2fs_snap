@@ -500,10 +500,6 @@ static void set_node_addr(struct f2fs_sb_info *sbi, struct node_info *ni,
 	// struct super_block *sb = sbi->sb;
 	// struct inode *inode;
 	// inode = f2fs_iget(sb, ni->ino);
-
-	// pr_info("OK?");
-	// pr_info("OK2?");
-	// pr_info("OK3?");
 	// // if(S_ISDIR(inode->i_mode)){
 	// // }
 
@@ -1328,11 +1324,27 @@ struct page *f2fs_new_node_page(struct dnode_of_data *dn, unsigned int ofs)
 	new_ni.ino = dn->inode->i_ino;
 	new_ni.blk_addr = NULL_ADDR;
 	new_ni.flag = 0;
-	new_ni.version = 0;
+	// new_ni.version = 0;
+
 	// set version
+	// 这里需要对记录快照位置，目前假设只支持对256个目录进行快照
+	// 那么这里就要对256个目录进行写入不同的偏移，这个偏移指向另一片空间
+	// 256写完了怎么半？  假设写完就不写了（后续可以考虑有策略的回收）
+	// 要有一个地方记录已经用了多少个偏移了, 比如magic_usecount
+	// 目前使用checkpoint区域保存一个magic_usecount
+	// 假设magic_usecount=0
 	if(S_ISDIR(dn->inode->i_mode)){
-		pr_info("set dir version [222]\n");
-		new_ni.version = 222;
+		__le16 magic_count = sbi->ckpt->magic_count;
+		pr_info("ino[%llu] get magic_usecount [%lu]\n",dn->inode->i_ino, magic_count);
+		if(magic_count <= 256){// 假设一定能写入
+		 // 假设写入了111
+			new_ni.version = magic_count + 1;
+			sbi->ckpt->magic_count = magic_count + 1;
+		} else{
+			// todo. 可以设置回收机制, 有选择的更新一些目录的version字段
+			pr_info("can't do snapshot");
+			new_ni.version = 0;
+		}
 	}
 	// set new_addr， 表示未分配有效块地址
 	set_node_addr(sbi, &new_ni, NEW_ADDR, false);
@@ -1705,7 +1717,6 @@ redirty_out:
 int f2fs_move_node_page(struct page *node_page, int gc_type)
 {
 	int err = 0;
-	// pr_info("[rdffs]: move node pages\n");
 	if (gc_type == FG_GC) {
 		struct writeback_control wbc = {
 			.sync_mode = WB_SYNC_ALL,
@@ -1743,7 +1754,6 @@ release_page:
 static int f2fs_write_node_page(struct page *page,
 				struct writeback_control *wbc)
 {
-	pr_info("[rdffs]: write node page\n");
 	return __write_node_page(page, false, NULL, wbc, false,
 						FS_NODE_IO, NULL);
 }
@@ -1760,7 +1770,6 @@ int f2fs_fsync_node_pages(struct f2fs_sb_info *sbi, struct inode *inode,
 	nid_t ino = inode->i_ino;
 	int nr_pages;
 	int nwritten = 0;
-	pr_info("[rdffs]: fsync node pages\n");
 	if (atomic) {
 		last_page = last_fsync_dnode(sbi, ino);
 		if (IS_ERR_OR_NULL(last_page))
@@ -1967,7 +1976,6 @@ int f2fs_sync_node_pages(struct f2fs_sb_info *sbi,
 
 next_step:
 	index = 0;
-	// pr_info("[rdffs]: sync node pages\n");
 	while (!done && (nr_pages = pagevec_lookup_tag(&pvec,
 			NODE_MAPPING(sbi), &index, PAGECACHE_TAG_DIRTY))) {
 		int i;

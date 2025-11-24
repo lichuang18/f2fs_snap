@@ -174,8 +174,10 @@ int f2fs_convert_inline_page(struct dnode_of_data *dn, struct page *page)
 	/* write data page to try to make data consistent */
 	set_page_writeback(page);
 	ClearPageError(page);
+	// 这里的old addr是指inode的地址？ 因为确保不丢失数据并保持一致性
 	fio.old_blkaddr = dn->data_blkaddr;
 	set_inode_flag(dn->inode, FI_HOT_DATA);
+	// 更新ssa？
 	f2fs_outplace_write_data(dn, &fio);
 	f2fs_wait_on_page_writeback(page, DATA, true, true);
 	if (dirty) {
@@ -202,9 +204,10 @@ int f2fs_convert_inline_inode(struct inode *inode)
 	struct dnode_of_data dn;
 	struct page *ipage, *page;
 	int err = 0;
-
+	// 注释是从direct IO的写入进来的,  也有可能是从preallocate来的
 	if (f2fs_hw_is_readonly(sbi) || f2fs_readonly(sbi->sb))
 		return -EROFS;
+	// 如果没有inline数据，直接返回0
 
 	if (!f2fs_has_inline_data(inode))
 		return 0;
@@ -227,8 +230,9 @@ int f2fs_convert_inline_inode(struct inode *inode)
 
 	set_new_dnode(&dn, inode, ipage, ipage, 0);
 
-	if (f2fs_has_inline_data(inode))
+	if (f2fs_has_inline_data(inode)){
 		err = f2fs_convert_inline_page(&dn, page);
+	}
 
 	f2fs_put_dnode(&dn);
 out:

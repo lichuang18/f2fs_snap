@@ -960,8 +960,8 @@ int f2fs_get_valid_checkpoint(struct f2fs_sb_info *sbi)
 
 	cp_block = (struct f2fs_checkpoint *)page_address(cur_page);
 	memcpy(sbi->ckpt, cp_block, blk_size);
-
-	if (cur_page == cp1)
+	// sbi->ckpt->magic_count
+	if (cur_page == cp1) 
 		sbi->cur_cp_pack = 1;
 	else
 		sbi->cur_cp_pack = 2;
@@ -1462,7 +1462,6 @@ static int do_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	struct curseg_info *seg_i = CURSEG_I(sbi, CURSEG_HOT_NODE);
 	u64 kbytes_written;
 	int err;
-	// pr_info("[rdffs]: do_checkpoint\n");
 	/* Flush all the NAT/SIT pages */
 	f2fs_sync_meta_pages(sbi, META, LONG_MAX, FS_CP_META_IO);
 

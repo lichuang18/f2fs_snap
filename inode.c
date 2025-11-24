@@ -558,7 +558,6 @@ make_now:
 	f2fs_set_inode_flags(inode);
 	unlock_new_inode(inode);
 	trace_f2fs_iget(inode);
-	pr_info("inode mode: %lu",inode->i_mode);
 	return inode;
 
 bad_inode:
@@ -747,7 +746,7 @@ void f2fs_evict_inode(struct inode *inode)
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	nid_t xnid = F2FS_I(inode)->i_xattr_nid;
 	int err = 0;
-
+	pr_info("f2fs_evict_inode [%lu]\n",inode->i_ino);
 	/* some remained atomic pages should discarded */
 	if (f2fs_is_atomic_file(inode))
 		f2fs_drop_inmem_pages(inode);

@@ -1,6 +1,7 @@
 {
     "files.associations": {
         "limits": "c",
-        "typeinfo": "c"
+        "typeinfo": "c",
+        "f2fs_format_utils.h": "c"
     }
 }

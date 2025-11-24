@@ -1387,7 +1387,6 @@ retry:
 		}
 
 		set_page_private_gcing(page);
-
 		err = f2fs_do_write_data_page(&fio);
 		if (err) {
 			clear_page_private_gcing(page);
@@ -1723,7 +1722,7 @@ int f2fs_gc(struct f2fs_sb_info *sbi, bool sync,
 	unsigned long long last_skipped = sbi->skipped_atomic_files[FG_GC];
 	unsigned long long first_skipped;
 	unsigned int skipped_round = 0, round = 0;
-	// pr_info("[rdffs]: f2fs_gc\n");	
+
 	trace_f2fs_gc_begin(sbi->sb, sync, background,
 				get_pages(sbi, F2FS_DIRTY_NODES),
 				get_pages(sbi, F2FS_DIRTY_DENTS),
