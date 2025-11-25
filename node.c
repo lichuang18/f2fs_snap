@@ -493,15 +493,8 @@ static void set_node_addr(struct f2fs_sb_info *sbi, struct node_info *ni,
 	if (nat_get_blkaddr(e) != NEW_ADDR && new_blkaddr == NULL_ADDR) {
 		unsigned char version = nat_get_version(e);
 
-		nat_set_version(e, inc_node_version(version));
+		//  nat_set_version(e, inc_node_version(version));
 	}
-
-	// 强制目录version = 222
-	// struct super_block *sb = sbi->sb;
-	// struct inode *inode;
-	// inode = f2fs_iget(sb, ni->ino);
-	// // if(S_ISDIR(inode->i_mode)){
-	// // }
 
 	/* change address */
 	nat_set_blkaddr(e, new_blkaddr);
@@ -1335,14 +1328,15 @@ struct page *f2fs_new_node_page(struct dnode_of_data *dn, unsigned int ofs)
 	// 假设magic_usecount=0
 	if(S_ISDIR(dn->inode->i_mode)){
 		__le16 magic_count = sbi->ckpt->magic_count;
-		pr_info("ino[%llu] get magic_usecount [%lu]\n",dn->inode->i_ino, magic_count);
+		// pr_info("dir ino[%llu] get magic_usecount [%lu]\n",dn->inode->i_ino, magic_count);
 		if(magic_count <= 256){// 假设一定能写入
 		 // 假设写入了111
 			new_ni.version = magic_count + 1;
 			sbi->ckpt->magic_count = magic_count + 1;
 		} else{
 			// todo. 可以设置回收机制, 有选择的更新一些目录的version字段
-			pr_info("can't do snapshot");
+			// update nat
+			pr_info("can't do snapshot, reach max snapshot dir record");
 			new_ni.version = 0;
 		}
 	}

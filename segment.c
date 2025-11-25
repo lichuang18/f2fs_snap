@@ -5182,6 +5182,10 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	sm_info->ovp_segments = le32_to_cpu(ckpt->overprov_segment_count);
 	sm_info->main_segments = le32_to_cpu(raw_super->segment_count_main);
 	sm_info->ssa_blkaddr = le32_to_cpu(raw_super->ssa_blkaddr);
+	// lichuang
+	sm_info->magic_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);
+	pr_info("i have get magic addr : %x\n",sm_info->magic_blkaddr);
+	
 	sm_info->rec_prefree_segments = sm_info->main_segments *
 					DEF_RECLAIM_PREFREE_SEGMENTS / 100;
 	if (sm_info->rec_prefree_segments > DEF_MAX_RECLAIM_PREFREE_SEGMENTS)

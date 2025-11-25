@@ -3193,11 +3193,14 @@ static inline bool sanity_check_area_boundary(struct f2fs_sb_info *sbi,
 	u32 segment_count_main = le32_to_cpu(raw_super->segment_count_main);
 	u32 segment_count = le32_to_cpu(raw_super->segment_count);
 	u32 log_blocks_per_seg = le32_to_cpu(raw_super->log_blocks_per_seg);
+
+	u32 magic_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);
+	u32 segment_count_magic = le32_to_cpu(raw_super->segment_count_magic);
+
 	u64 main_end_blkaddr = main_blkaddr +
 				((u64)segment_count_main << log_blocks_per_seg);
 	u64 seg_end_blkaddr = segment0_blkaddr +
 				((u64)segment_count << log_blocks_per_seg);
-
 	if (segment0_blkaddr != cp_blkaddr) {
 		f2fs_info(sbi, "Mismatch start address, segment0(%u) cp_blkaddr(%u)",
 			  segment0_blkaddr, cp_blkaddr);
@@ -3219,12 +3222,19 @@ static inline bool sanity_check_area_boundary(struct f2fs_sb_info *sbi,
 			  segment_count_sit << log_blocks_per_seg);
 		return true;
 	}
-
 	if (nat_blkaddr + (segment_count_nat << log_blocks_per_seg) !=
+							magic_blkaddr) {
+		f2fs_info(sbi, "Wrong NAT boundary, start(%u) end(%u) blocks(%u)",
+			  nat_blkaddr, magic_blkaddr,
+			  segment_count_nat << log_blocks_per_seg);
+		return true;
+	}
+
+	if (magic_blkaddr + (segment_count_magic << log_blocks_per_seg) !=
 							ssa_blkaddr) {
 		f2fs_info(sbi, "Wrong NAT boundary, start(%u) end(%u) blocks(%u)",
-			  nat_blkaddr, ssa_blkaddr,
-			  segment_count_nat << log_blocks_per_seg);
+			  magic_blkaddr, ssa_blkaddr,
+			  segment_count_magic << log_blocks_per_seg);
 		return true;
 	}
 
@@ -3235,7 +3245,6 @@ static inline bool sanity_check_area_boundary(struct f2fs_sb_info *sbi,
 			  segment_count_ssa << log_blocks_per_seg);
 		return true;
 	}
-
 	if (main_end_blkaddr > seg_end_blkaddr) {
 		f2fs_info(sbi, "Wrong MAIN_AREA boundary, start(%u) end(%llu) block(%u)",
 			  main_blkaddr, seg_end_blkaddr,
@@ -3329,7 +3338,6 @@ static int sanity_check_raw_super(struct f2fs_sb_info *sbi,
 			  le32_to_cpu(raw_super->log_sectorsize));
 		return -EFSCORRUPTED;
 	}
-
 	segment_count = le32_to_cpu(raw_super->segment_count);
 	segment_count_main = le32_to_cpu(raw_super->segment_count_main);
 	segs_per_sec = le32_to_cpu(raw_super->segs_per_sec);
@@ -3390,7 +3398,6 @@ static int sanity_check_raw_super(struct f2fs_sb_info *sbi,
 			return -EFSCORRUPTED;
 		}
 	}
-
 	if (secs_per_zone > total_sections || !secs_per_zone) {
 		f2fs_info(sbi, "Wrong secs_per_zone / total_sections (%u, %u)",
 			  secs_per_zone, total_sections);
@@ -3416,7 +3423,6 @@ static int sanity_check_raw_super(struct f2fs_sb_info *sbi,
 			  NR_CURSEG_PERSIST_TYPE);
 		return -EFSCORRUPTED;
 	}
-
 	/* check reserved ino info */
 	if (le32_to_cpu(raw_super->node_ino) != 1 ||
 		le32_to_cpu(raw_super->meta_ino) != 2 ||
@@ -3427,11 +3433,10 @@ static int sanity_check_raw_super(struct f2fs_sb_info *sbi,
 			  le32_to_cpu(raw_super->root_ino));
 		return -EFSCORRUPTED;
 	}
-
+	
 	/* check CP/SIT/NAT/SSA/MAIN_AREA area boundary */
 	if (sanity_check_area_boundary(sbi, bh))
 		return -EFSCORRUPTED;
-
 	return 0;
 }
 
@@ -3754,7 +3759,6 @@ static int read_raw_super_block(struct f2fs_sb_info *sbi,
 	struct buffer_head *bh;
 	struct f2fs_super_block *super;
 	int err = 0;
-
 	super = kzalloc(sizeof(struct f2fs_super_block), GFP_KERNEL);
 	if (!super)
 		return -ENOMEM;
@@ -3768,7 +3772,6 @@ static int read_raw_super_block(struct f2fs_sb_info *sbi,
 			*recovery = 1;
 			continue;
 		}
-
 		/* sanity checking of raw super */
 		err = sanity_check_raw_super(sbi, bh);
 		if (err) {
@@ -3778,7 +3781,6 @@ static int read_raw_super_block(struct f2fs_sb_info *sbi,
 			*recovery = 1;
 			continue;
 		}
-
 		if (!*raw_super) {
 			memcpy(super, bh->b_data + F2FS_SUPER_OFFSET,
 							sizeof(*super));
@@ -3787,7 +3789,6 @@ static int read_raw_super_block(struct f2fs_sb_info *sbi,
 		}
 		brelse(bh);
 	}
-
 	/* No valid superblock */
 	if (!*raw_super)
 		kfree(super);
@@ -4002,7 +4003,6 @@ static int rdffs_fill_super(struct super_block *sb, void *data, int silent)
 	int recovery, i, valid_super_block;
 	struct curseg_info *seg_i;
 	int retry_cnt = 1;
-
 try_onemore:
 	err = -EINVAL;
 	raw_super = NULL;
@@ -4030,7 +4030,6 @@ try_onemore:
 		f2fs_err(sbi, "unable to set blocksize");
 		goto free_sbi;
 	}
-
 	err = read_raw_super_block(sbi, &raw_super, &valid_super_block,
 								&recovery);
 	if (err)
@@ -4051,7 +4050,6 @@ try_onemore:
 		err = -ENOMEM;
 		goto free_sb_buf;
 	}
-
 	err = parse_options(sb, options, false);
 	if (err)
 		goto free_options;
@@ -4100,7 +4098,6 @@ try_onemore:
 	init_rwsem(&sbi->cp_global_sem);
 	init_rwsem(&sbi->node_write);
 	init_rwsem(&sbi->node_change);
-
 	/* disallow all the data/node/meta page writes */
 	set_sbi_flag(sbi, SBI_POR_DOING);
 	spin_lock_init(&sbi->stat_lock);
@@ -4134,7 +4131,6 @@ try_onemore:
 	init_rwsem(&sbi->quota_sem);
 	init_waitqueue_head(&sbi->cp_wait);
 	init_sb_info(sbi);
-
 	err = f2fs_init_iostat(sbi);
 	if (err)
 		goto free_bio_info;
@@ -4180,7 +4176,6 @@ try_onemore:
 		set_sbi_flag(sbi, SBI_CP_DISABLED_QUICK);
 		sbi->interval_time[DISABLE_TIME] = DEF_DISABLE_QUICK_INTERVAL;
 	}
-
 	if (__is_set_ckpt_flags(F2FS_CKPT(sbi), CP_FSCK_FLAG))
 		set_sbi_flag(sbi, SBI_NEED_FSCK);
 
@@ -4221,7 +4216,6 @@ try_onemore:
 	f2fs_init_ino_entry_info(sbi);
 
 	f2fs_init_fsync_node_info(sbi);
-
 	/* setup checkpoint request control and start checkpoint issue thread */
 	f2fs_init_ckpt_req_control(sbi);
 	if (!f2fs_readonly(sb) && !test_opt(sbi, DISABLE_CHECKPOINT) &&
@@ -4248,7 +4242,6 @@ try_onemore:
 			 err);
 		goto free_nm;
 	}
-
 	err = adjust_reserved_segment(sbi);
 	if (err)
 		goto free_nm;

@@ -1021,6 +1021,8 @@ struct f2fs_sm_info {
 	block_t main_blkaddr;		/* start block address of main area */
 	block_t ssa_blkaddr;		/* start block address of SSA area */
 
+	block_t magic_blkaddr;		/* start block address of magic area */
+
 	unsigned int segment_count;	/* total # of segments */
 	unsigned int main_segments;	/* # of segments in main area */
 	unsigned int reserved_segments;	/* # of reserved segments */
