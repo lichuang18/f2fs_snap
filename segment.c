@@ -5186,6 +5186,7 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 
 	struct f2fs_magic_info *magic_info;
 	magic_info = f2fs_kzalloc(sbi, sizeof(struct f2fs_magic_info), GFP_KERNEL);
+	sbi->magic_info = magic_info;
 	magic_info->magic_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);
 	magic_info->segment_count_magic = le32_to_cpu(raw_super->segment_count_magic);
 	

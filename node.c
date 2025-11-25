@@ -1336,7 +1336,7 @@ struct page *f2fs_new_node_page(struct dnode_of_data *dn, unsigned int ofs)
 		} else{
 			// todo. 可以设置回收机制, 有选择的更新一些目录的version字段
 			// update nat
-			pr_info("can't do snapshot, reach max snapshot dir record");
+			pr_info("OK, new dir can't do snapshot(reach max snapshot dir record)\n");
 			new_ni.version = 0;
 		}
 	}

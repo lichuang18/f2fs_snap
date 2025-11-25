@@ -1026,8 +1026,8 @@ struct f2fs_mulref_block { // 13 Byte * 312 + 40 Byte = 4096 K Byte
 
 
 struct f2fs_magic_entry { // 5B
-    __u8 flag;       /* snapshot version control*/
     __le32 snap_ino;     /* snap inode number */
+	__u8 flag;       /* snapshot version control*/
 } __packed;
 
 struct f2fs_magic_block {
@@ -1601,6 +1601,7 @@ struct decompress_io_ctx {
 #define MAX_COMPRESS_LOG_SIZE		8
 #define MAX_COMPRESS_WINDOW_SIZE(log_size)	((PAGE_SIZE) << (log_size))
 
+
 struct f2fs_sb_info {
 	struct super_block *sb;			/* pointer to VFS super block */
 	struct proc_dir_entry *s_proc;		/* proc entry */
@@ -2024,6 +2025,12 @@ static inline struct f2fs_sm_info *SM_I(struct f2fs_sb_info *sbi)
 {
 	return (struct f2fs_sm_info *)(sbi->sm_info);
 }
+// sihuo
+static inline struct f2fs_magic_info *MAGIC_I(struct f2fs_sb_info *sbi)
+{
+	return (struct f2fs_magic_info *)(sbi->magic_info);
+}
+
 
 static inline struct sit_info *SIT_I(struct f2fs_sb_info *sbi)
 {
