@@ -1669,6 +1669,12 @@ static void f2fs_put_super(struct super_block *sb)
 #ifdef CONFIG_UNICODE
 	utf8_unload(sb->s_encoding);
 #endif
+
+	if (sbi->magic_info) {
+        kvfree(sbi->magic_info);  // or kfree(sbi->magic_info);
+        sbi->magic_info = NULL;    // Avoid dangling pointer
+    }
+	
 	kfree(sbi);
 }
 

@@ -5168,7 +5168,6 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	struct f2fs_checkpoint *ckpt = F2FS_CKPT(sbi);
 	struct f2fs_sm_info *sm_info;
 	int err;
-
 	sm_info = f2fs_kzalloc(sbi, sizeof(struct f2fs_sm_info), GFP_KERNEL);
 	if (!sm_info)
 		return -ENOMEM;
@@ -5184,8 +5183,17 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	sm_info->ssa_blkaddr = le32_to_cpu(raw_super->ssa_blkaddr);
 	// lichuang
 	sm_info->magic_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);
-	pr_info("i have get magic addr : %x\n",sm_info->magic_blkaddr);
+
+	struct f2fs_magic_info *magic_info;
+	magic_info = f2fs_kzalloc(sbi, sizeof(struct f2fs_magic_info), GFP_KERNEL);
+	magic_info->magic_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);
+	magic_info->segment_count_magic = le32_to_cpu(raw_super->segment_count_magic);
 	
+	pr_info("i have get magic: addr[%x], count[%llu]\n",sm_info->magic_blkaddr,magic_info->segment_count_magic);
+	magic_info->mul_blocks =kmalloc_array(512 * magic_info->segment_count_magic,
+                  sizeof(struct f2fs_mulref_block),
+                  GFP_KERNEL);
+
 	sm_info->rec_prefree_segments = sm_info->main_segments *
 					DEF_RECLAIM_PREFREE_SEGMENTS / 100;
 	if (sm_info->rec_prefree_segments > DEF_MAX_RECLAIM_PREFREE_SEGMENTS)

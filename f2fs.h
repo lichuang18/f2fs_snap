@@ -1009,6 +1009,41 @@ struct flush_cmd_control {
 	struct llist_node *dispatch_list;	/* list for command dispatch */
 };
 
+
+struct f2fs_mulref_entry { // 13 Bytes
+	__le32 inoa;	/* inode number */
+	__le16 a_offset;		/* inode offset */
+	__le32 inob;	/* inode number */
+	__le16 b_offset;		/* inode offset */
+	__u8 vesion_offset;	/* next mrentry */
+} __packed;
+
+/* 4KB-sized multi ref entry block */
+struct f2fs_mulref_block { // 13 Byte * 312 + 40 Byte = 4096 K Byte
+	__u8 multi_bitmap[40]; // 40 Byte * 8 bit = 320 bit
+	struct f2fs_mulref_entry mrentry[312];
+} __packed;
+
+
+struct f2fs_magic_entry { // 5B
+    __u8 flag;       /* snapshot version control*/
+    __le32 snap_ino;     /* snap inode number */
+} __packed;
+
+struct f2fs_magic_block {
+	__u8 multi_bitmap[100]; // 100 Byte
+    struct f2fs_magic_entry entries[799];//799 * 5Byte = 3995 Byte < 3996 Byte
+	__u8 rsv; 
+} __packed;
+
+struct f2fs_magic_info {
+	block_t magic_blkaddr;		/* start block address of magic area */
+	__le32 segment_count_magic; // 2MB * segment_count_magic
+	struct f2fs_magic_block magic_blocks[83];  // 记录64K个record，就需要83个块
+	struct f2fs_mulref_block *mul_blocks; // 512 * segment_count_magic;
+};
+
+
 struct f2fs_sm_info {
 	struct sit_info *sit_info;		/* whole segment information */
 	struct free_segmap_info *free_info;	/* free segment information */
@@ -1586,6 +1621,9 @@ struct f2fs_sb_info {
 
 	/* for segment-related operations */
 	struct f2fs_sm_info *sm_info;		/* segment manager */
+
+	/* for magic-related operations */
+	struct f2fs_magic_info *magic_info;		/* segment manager */
 
 	/* for bio operations */
 	struct f2fs_bio_info *write_io[NR_PAGE_TYPE];	/* for write bios */
