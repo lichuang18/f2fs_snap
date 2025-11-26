@@ -3935,7 +3935,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 
 
 				// 更新当前和父目录的dentry信息
-				if(idx = 0){
+				if(idx == 0){
 					// 实际命令应该是new_dpage
 					src_ipage = f2fs_get_lock_data_page(new_inode, idx, false);
 					page_addr = page_address(src_ipage);
@@ -3975,7 +3975,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 					// f2fs_snap_dump_dentry(src_inode, idx, "test");
 					// f2fs_snap_dump_dentry(new_inode, idx, "snap");
 					// 更新当前和父目录的dentry信息
-					if(idx = 0){
+					if(idx == 0){
 						// 实际命令应该是new_dpage
 						src_ipage = f2fs_get_lock_data_page(new_inode, idx, false);
 						page_addr = page_address(src_ipage);
