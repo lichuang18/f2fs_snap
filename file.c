@@ -3801,6 +3801,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		pr_info("f2fs_ioctl_snapshot: parent '%s' of path2 not found\n", parent);
 		goto out_put_src;
 	}
+	// pr_info("kern_path参数  parent [%s]\n",parent);
 	parent_inode = parent_path.dentry->d_inode;
 	/* ---------- 检查 path2 是否已存在 ---------- */
 	
@@ -4924,7 +4925,7 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		.nr_to_write = LONG_MAX,
 		.for_reclaim = 0,
 	};
-	struct inode *pra_inode, *son_inode;
+	struct inode *pra_inode, *son_inode, *snap_inode;
 	struct dentry *parent_dentry, *dentry;
 	struct super_block *sb = inode->i_sb;
 	// int magic_oft = 0;
@@ -4932,7 +4933,7 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	size_t ver, loc_block, loc_oft_in_block;
 	struct f2fs_magic_block *block = NULL;// &magic_i->magic_blocks[loc_block];
 	struct f2fs_magic_entry *entry = NULL;// &block->entries[loc_oft_in_block];
-	size_t pra_ino,son_ino;
+	size_t pra_ino, son_ino, snap_ino;
 
     snap_initStack(&stack);
 	snap_push(&stack, inode->i_ino);
@@ -4959,6 +4960,7 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		if(ver != 0 && entry->flag != 0 && entry->snap_ino != 0){
 			pr_info("Find snapshot, magic-flag-snap_nid[%lu,%lu.%lu], should COW\n",
 				ver,entry->flag,entry->snap_ino);
+			snap_ino = entry->snap_ino;
 			goto start_snap;
 		}
 		if (parent_dentry == sb->s_root) {
@@ -4973,7 +4975,9 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	goto normal;
 	
 start_snap:
-	pr_info("发现该文件是快照文件, 应该要触发COW特殊处理\n");
+	snap_inode = f2fs_iget(sb, snap_ino);
+	dentry = d_find_any_alias(snap_inode);
+	pr_info("快照触发COW特殊处理,nid:name[%lu,%s]\n",snap_ino, dentry->d_name.name);
     while (!snap_isEmpty(&stack)) {
         // pr_info("ino[%lu]\n", snap_pop(&stack));
 		ret = snap_pop2(&stack, &pra_ino, &son_ino);
@@ -4985,7 +4989,66 @@ start_snap:
 		dentry = d_find_any_alias(son_inode);
 		pr_info("pra_ino/name [%lu,%s],son_ino/name [%lu,%s]\n", pra_ino, 
 			parent_dentry->d_name.name, son_ino, dentry->d_name.name);
-		
+
+		struct page *pra_ipage, *snap_ipage;
+		void *inline_dentry; // inline数据
+
+		if (f2fs_has_inline_dentry(pra_inode)) {
+			pr_info("Dir(%lu) uses inline dentry\n", src_inode->i_ino);
+			//获取该node的page
+			snap_ipage = f2fs_get_node_page(sbi, snap_inode->i_ino);
+			if (IS_ERR(snap_ipage)) {
+				pr_err("f2fs: failed to snap_ipage [%lu]\n", snap_inode->i_ino);
+				return -EINVAL;
+			}
+
+			// 计算该page中inline区的起始地址
+			inline_dentry = inline_data_addr(snap_inode, snap_ipage);
+
+			
+
+			// 	pr_info("--------------------src dump start %s--------------------\n",target);
+			// 	src_ipage = f2fs_get_lock_data_page(src_inode, idx, false);
+			// 	src_fi = F2FS_INODE(src_ipage);
+			// 	page_addr = page_address(src_ipage);
+			// 	f2fs_put_page(src_ipage, 1);
+			// 	make_dentry_ptr_block(src_inode, &d, page_addr);
+			// 	for (bit_pos = 0; bit_pos < d.max; bit_pos++) { //max = 214？
+			// 		if (!test_bit_le(bit_pos, d.bitmap))
+			// 			continue;
+			// 		de = &d.dentry[bit_pos];
+			// 		name = d.filename[bit_pos];
+			// 		if(bit_pos % 20 == 0){
+			// 			pr_info("  [%03u] ino=%u, name_len=%u, name=%.*s, type=%u\n",
+			// 				bit_pos,
+			// 				le32_to_cpu(de->ino),
+			// 				le16_to_cpu(de->name_len),
+			// 				le16_to_cpu(de->name_len),
+			// 				name,
+			// 				de->file_type);
+			// 		}
+			// 		if(de->name_len > 8){
+			// 			bit_pos = bit_pos + de->name_len / 8;
+			// 		}
+			// 	}
+			// 	pr_info("--------------------src dump finish %s i_addr[%d]:%x--------------------\n",target,idx,src_fi->i_addr[idx]);
+			//
+
+
+
+
+
+
+			memcpy(inline_dentry2, inline_dentry, inline_size);
+			/* 标记目标页为脏页，准备写回 */
+			set_page_dirty(tpage);
+			f2fs_put_page(ipage, 1);
+			f2fs_put_page(tpage, 1);
+		}
+
+			// pra_inode 被快照的目录
+		// son_inode 子目录
+		// 
 		// 为最找到的快照的inode更新数据
 		// 获取snap_inode的目录数据块
 		// 创建新的目录, 在snap_inode的目录数据块中找到对应的
