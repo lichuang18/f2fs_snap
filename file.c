@@ -3728,6 +3728,10 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 	struct f2fs_magic_block *block = NULL; //&magic_info->magic_blocks[loc_block];
 	struct f2fs_magic_entry *entry = NULL;// &block->entries[loc_oft_in_block];
 
+	struct fscrypt_str dot = FSTR_INIT(".", 1);
+	struct fscrypt_str dotdot = FSTR_INIT("..", 2);
+	struct f2fs_dentry_ptr d;
+	void *page_addr;
 
 
 	if (copy_from_user(user_paths, (char __user * __user *)arg, sizeof(user_paths)))
@@ -3856,6 +3860,16 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		inline_dentry = inline_data_addr(src_inode, ipage);
 		inline_dentry2 = inline_data_addr(new_inode, tpage);
 		memcpy(inline_dentry2, inline_dentry, inline_size);
+
+		
+		// 更新生成的快照目录的当前和父目录的dentry
+		make_dentry_ptr_inline(new_inode, &d, inline_dentry2);
+		/* update dirent of "." */
+		f2fs_update_dentry(new_inode->i_ino, new_inode->i_mode, &d, &dot, 0, 0);
+		/* update dirent of ".." */
+		f2fs_update_dentry(parent_inode->i_ino, parent_inode->i_mode, &d, &dotdot, 0, 1);
+
+
 		/* 标记目标页为脏页，准备写回 */
 		set_page_dirty(tpage);
 		f2fs_put_page(ipage, 1);
@@ -3917,6 +3931,25 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 				// err = write_inode_now(new_inode,1);
 				// f2fs_snap_dump_dentry(src_inode, idx, "test");
 				// f2fs_snap_dump_dentry(new_inode, idx, "snap");
+				
+
+
+				// 更新当前和父目录的dentry信息
+				if(idx = 0){
+					// 实际命令应该是new_dpage
+					src_ipage = f2fs_get_lock_data_page(new_inode, idx, false);
+					page_addr = page_address(src_ipage);
+					make_dentry_ptr_block(new_inode, &d, page_addr);
+					f2fs_put_page(src_ipage, 1);
+
+					/* update dirent of "." */
+					f2fs_update_dentry(new_inode->i_ino, new_inode->i_mode, &d, &dot, 0, 0);
+					/* update dirent of ".." */
+					f2fs_update_dentry(parent_inode->i_ino, parent_inode->i_mode, &d, &dotdot, 0, 1);
+				}
+
+
+
 
 			} else if(src_fi->i_addr[idx] == NEW_ADDR){
 				pr_info("i_addr[%3d] = NEW_ADDR\n", idx);
@@ -3941,9 +3974,23 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 					// err = write_inode_now(new_inode,1);
 					// f2fs_snap_dump_dentry(src_inode, idx, "test");
 					// f2fs_snap_dump_dentry(new_inode, idx, "snap");
+					// 更新当前和父目录的dentry信息
+					if(idx = 0){
+						// 实际命令应该是new_dpage
+						src_ipage = f2fs_get_lock_data_page(new_inode, idx, false);
+						page_addr = page_address(src_ipage);
+						make_dentry_ptr_block(new_inode, &d, page_addr);
+						f2fs_put_page(src_ipage, 1);
+
+						/* update dirent of "." */
+						f2fs_update_dentry(new_inode->i_ino, new_inode->i_mode, &d, &dot, 0, 0);
+						/* update dirent of ".." */
+						f2fs_update_dentry(parent_inode->i_ino, parent_inode->i_mode, &d, &dotdot, 0, 1);
+					}
 				} else {
 					pr_info("still not get real addr\n");
 				}
+
 					
 			}
 		}
@@ -4992,9 +5039,12 @@ start_snap:
 
 		struct page *pra_ipage, *snap_ipage;
 		void *inline_dentry; // inline数据
+		struct f2fs_dentry_ptr d;
+		struct f2fs_dir_entry *de;
+		size_t bit_pos;
 
 		if (f2fs_has_inline_dentry(pra_inode)) {
-			pr_info("Dir(%lu) uses inline dentry\n", src_inode->i_ino);
+			pr_info("Dir(%lu) uses inline dentry\n", pra_inode->i_ino);
 			//获取该node的page
 			snap_ipage = f2fs_get_node_page(sbi, snap_inode->i_ino);
 			if (IS_ERR(snap_ipage)) {
@@ -5004,8 +5054,62 @@ start_snap:
 
 			// 计算该page中inline区的起始地址
 			inline_dentry = inline_data_addr(snap_inode, snap_ipage);
+			f2fs_put_page(snap_ipage, 1);
+			make_dentry_ptr_inline(snap_inode, &d, inline_dentry);
+
+
+
+			// 删除指定目录项
+			// 添加目录项
+
+			// struct fscrypt_str dot = FSTR_INIT(".", 1);
+			// struct fscrypt_str dotdot = FSTR_INIT("..", 2);
+			// /* update dirent of "." */
+			// f2fs_update_dentry(inode->i_ino, inode->i_mode, d, &dot, 0, 0);
+
+			// /* update dirent of ".." */
+			// f2fs_update_dentry(parent->i_ino, parent->i_mode, d, &dotdot, 0, 1);
 
 			
+
+			// f2fs_add_regular_entry  ->  f2fs_update_dentry
+
+			// f2fs_add_inline_entries  ->  f2fs_update_dentry 
+			
+			// __f2fs_find_entry
+
+
+		
+
+
+			pr_info("---- inline dentry dump[%lu] ----\n", snap_inode->i_ino);
+			
+			for (bit_pos = 0; bit_pos < d.max; bit_pos++) {
+				// 仅处理有效bit对应的数据
+				if (!test_bit_le(bit_pos, d.bitmap))
+					continue;
+
+				de = &d.dentry[bit_pos];
+				
+				pr_info("  [%03u] ino=%u, name_len=%u, name=%.*s, type=%u\n",
+					bit_pos,
+					le32_to_cpu(de->ino),
+					le16_to_cpu(de->name_len),
+					le16_to_cpu(de->name_len),
+					d.filename[bit_pos],
+					de->file_type);
+				if(de->name_len > 8){
+					// pr_info("now bit_pos show skip [%03u]",bit_pos+1);
+					bit_pos = bit_pos + de->name_len / 8;
+				}
+			}
+			pr_info("--------------------------------------------\n");
+
+			// memcpy(inline_dentry2, inline_dentry, inline_size);
+			/* 标记目标页为脏页，准备写回 */
+			// set_page_dirty(tpage);
+			
+		
 
 			// 	pr_info("--------------------src dump start %s--------------------\n",target);
 			// 	src_ipage = f2fs_get_lock_data_page(src_inode, idx, false);
@@ -5039,11 +5143,7 @@ start_snap:
 
 
 
-			memcpy(inline_dentry2, inline_dentry, inline_size);
-			/* 标记目标页为脏页，准备写回 */
-			set_page_dirty(tpage);
-			f2fs_put_page(ipage, 1);
-			f2fs_put_page(tpage, 1);
+
 		}
 
 			// pra_inode 被快照的目录
