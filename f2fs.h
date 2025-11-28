@@ -2622,8 +2622,9 @@ static inline struct page *f2fs_grab_cache_page(struct address_space *mapping,
 		}
 	}
 
-	if (!for_write)
+	if (!for_write){
 		return grab_cache_page(mapping, index);
+	}
 	return grab_cache_page_write_begin(mapping, index, AOP_FLAG_NOFS);
 }
 
