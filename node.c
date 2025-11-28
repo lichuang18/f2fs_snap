@@ -1398,7 +1398,6 @@ static int read_node_page(struct page *page, int op_flags)
 		ClearPageUptodate(page);
 		return -ENOENT;
 	}
-
 	fio.new_blkaddr = fio.old_blkaddr = ni.blk_addr;
 
 	err = f2fs_submit_page_bio(&fio);
@@ -1439,7 +1438,6 @@ static struct page *__get_node_page(struct f2fs_sb_info *sbi, pgoff_t nid,
 {
 	struct page *page;
 	int err;
-
 	if (!nid)
 		return ERR_PTR(-ENOENT);
 	if (f2fs_check_nid_range(sbi, nid))
@@ -1448,7 +1446,6 @@ repeat:
 	page = f2fs_grab_cache_page(NODE_MAPPING(sbi), nid, false);
 	if (!page)
 		return ERR_PTR(-ENOMEM);
-
 	err = read_node_page(page, 0);
 	if (err < 0) {
 		f2fs_put_page(page, 1);
@@ -1457,10 +1454,8 @@ repeat:
 		err = 0;
 		goto page_hit;
 	}
-
 	if (parent)
 		f2fs_ra_node_pages(parent, start + 1, MAX_RA_NODE);
-
 	lock_page(page);
 
 	if (unlikely(page->mapping != NODE_MAPPING(sbi))) {
