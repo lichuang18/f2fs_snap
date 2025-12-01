@@ -175,3 +175,6 @@ static inline bool has_enough_invalid_blocks(struct f2fs_sb_info *sbi)
 		return true;
 	return false;
 }
+
+bool is_alive_blk(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
+		struct node_info *dni, block_t blkaddr, unsigned int *nofs);

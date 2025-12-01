@@ -4991,6 +4991,7 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 
 	struct path parent_path;
 	ret = kern_path("/mnt/", LOOKUP_FOLLOW | LOOKUP_REVAL, &parent_path);
+
 	// pr_info("write iter\n");
 	// f2fs_mark_inode_dirty_sync(inode, true);
 	// // ret = filemap_fdatawrite(inode->i_mapping);
@@ -5013,30 +5014,16 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	// 	for (idx = 0; idx < 10; idx++) {
 	// 		pr_info("%02x\n", ((unsigned char *)page_addr)[idx]);
 	// 	}
+	// 	unsigned char *data = (unsigned char *)page_addr;
+	// 	for (idx = 0; idx < 10; idx++) {
+	// 		data[idx] = "a" + idx;
+	// 		pr_info("%02x\n", ((unsigned char *)page_addr)[idx]);
+	// 	}
 	// }else{
 	// 	pr_info("noninline dta\n");
 	// }
 	// f2fs_put_page(ipage, 1);
 	
-
-	// size_t idx;
-	// struct f2fs_inode *src_fi;
-	// struct page *niage;
-	// niage = f2fs_get_node_page(sbi, inode->i_ino);
-	// src_fi = F2FS_INODE(niage);
-	// f2fs_put_page(niage, 1);
-
-	// for(idx = 0 ; idx < 4096; idx= idx +8){
-	// 	pr_info("%02x %02x %02x %02x %02x %02x %02x %02x\n",((unsigned char *)src_fi)[idx],
-	// 	((unsigned char *)src_fi)[idx+1],
-	// 	((unsigned char *)src_fi)[idx+2],
-	// 	((unsigned char *)src_fi)[idx+3],
-	// 	((unsigned char *)src_fi)[idx+4],
-	// 	((unsigned char *)src_fi)[idx+5],
-	// 	((unsigned char *)src_fi)[idx+6],
-	// 	((unsigned char *)src_fi)[idx+7]);
-	// }
-
     snap_initStack(&stack);
 	snap_push(&stack, inode->i_ino);
 	while (inode){

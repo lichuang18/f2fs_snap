@@ -1015,7 +1015,7 @@ struct f2fs_mulref_entry { // 13 Bytes
 	__le16 a_offset;		/* inode offset */
 	__le32 inob;	/* inode number */
 	__le16 b_offset;		/* inode offset */
-	__u8 vesion_offset;	/* next mrentry */
+	__u8 rsv;	/* next double */
 } __packed;
 
 /* 4KB-sized multi ref entry block */
@@ -1040,6 +1040,7 @@ struct f2fs_magic_info {
 	block_t magic_blkaddr;		/* start block address of magic area */
 	__le32 segment_count_magic; // 2MB * segment_count_magic
 	struct f2fs_magic_block magic_blocks[83];  // 记录64K个record，就需要83个块
+	// size_t curblk_mulref; // max = 512 * segment_count_magic;  //8 Bytes
 	struct f2fs_mulref_block *mul_blocks; // 512 * segment_count_magic;
 };
 
