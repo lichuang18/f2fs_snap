@@ -3468,20 +3468,46 @@ lookup_next_blk:
 		}
 		sbi->ckpt->cur_brf_blk++;
 		if(cur_brf_blk > (sbi->magic_info->segment_count_magic * 512 - 83))
-			goto normal_add_summary;
+			goto normal;
 		goto lookup_next_blk;
-		// set_summary(&sum, magic_addr, 0, inc_node_version(sum->version));
-	}
+	
+	normal_add_summary:
+		/*
+		* __add_sum_entry should be resided under the curseg_mutex
+		* because, this function updates a summary entry in the
+		* current summary block.
+		*/
+		__add_sum_entry(sbi, type, sum);
 
-normal_add_summary:
+		__refresh_next_blkoff(sbi, curseg);
 
+		stat_inc_block_count(sbi, curseg);
+
+		if (from_gc) {
+			old_mtime = get_segment_mtime(sbi, old_blkaddr);
+		} else {
+			update_segment_mtime(sbi, old_blkaddr, 0);
+			old_mtime = 0;
+		}
+		update_segment_mtime(sbi, *new_blkaddr, old_mtime);
+
+		/*
+		* SIT information should be updated before segment allocation,
+		* since SSR needs latest valid block information.
+		*/
+		// 夹带私货
+		// 如果是快照，旧块不能减1
+		update_sit_entry(sbi, *new_blkaddr, 1);
+		// update_sit_entry(sbi, old_blkaddr, -1);
+		goto skip_normal;
+	}	
+normal:
 	/*
 	 * __add_sum_entry should be resided under the curseg_mutex
 	 * because, this function updates a summary entry in the
 	 * current summary block.
 	 */
 	__add_sum_entry(sbi, type, sum);
-
 	__refresh_next_blkoff(sbi, curseg);
 
 	stat_inc_block_count(sbi, curseg);
@@ -3502,6 +3528,8 @@ normal_add_summary:
 	// 如果是快照，旧块不能减1
 	update_sit_entry(sbi, *new_blkaddr, 1);
 	update_sit_entry(sbi, old_blkaddr, -1);
+
+skip_normal:
 	// 段空间管理，如果当前段空间不足
 	if (!__has_curseg_space(sbi, curseg)) {
 		/*
@@ -3835,19 +3863,27 @@ lookup_next_blk:
 						sum->nid = cur_brf_blk;
 						sum->ofs_in_node = multi_addr + entry_index;
 						inc_node_version(sum->version);
-						goto normal_add_summary;
+						goto normal_add_summary_replace;
 					}
 				}
 			}
 		}
 		sbi->ckpt->cur_brf_blk++;
 		if(cur_brf_blk > (sbi->magic_info->segment_count_magic * 512 - 83))
-			goto normal_add_summary;
+			goto normal_replace;
 		goto lookup_next_blk;
-		// set_summary(&sum, magic_addr, 0, inc_node_version(sum->version));
+	normal_add_summary_replace:
+		__add_sum_entry(sbi, type, sum);
+
+		if (!recover_curseg || recover_newaddr) {
+			if (!from_gc)
+				update_segment_mtime(sbi, new_blkaddr, 0);
+			update_sit_entry(sbi, new_blkaddr, 1);
+		}
+		goto skip_normal_replace;
 	}
 
-normal_add_summary:
+normal_replace:
 	__add_sum_entry(sbi, type, sum);
 
 	if (!recover_curseg || recover_newaddr) {
@@ -3864,6 +3900,7 @@ normal_add_summary:
 		update_sit_entry(sbi, old_blkaddr, -1);
 	}
 
+skip_normal_replace:
 	locate_dirty_segment(sbi, GET_SEGNO(sbi, old_blkaddr));
 	locate_dirty_segment(sbi, GET_SEGNO(sbi, new_blkaddr));
 
