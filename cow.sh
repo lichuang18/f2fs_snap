@@ -13,4 +13,4 @@ echo 444 > /mnt/df/t12/df2/fgh/234/file3
 
 
 
-echo sshshfdjsdjfhsdhjfjsdjhfs > /mnt/df/t12/df2/fgh/234/file1
+echo abcdef > /mnt/df/t12/df2/fgh/234/file1

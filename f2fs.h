@@ -38,6 +38,12 @@
 	} while (0)
 #endif
 
+struct f2fs_delayed_truncate {
+	loff_t original_size;
+	bool truncate_pending;
+};
+
+
 enum {
 	FAULT_KMALLOC,
 	FAULT_KVMALLOC,

@@ -3,6 +3,8 @@
         "limits": "c",
         "typeinfo": "c",
         "f2fs_format_utils.h": "c",
-        "stat.h": "c"
+        "stat.h": "c",
+        "fs.h": "c",
+        "f2fs.h": "c"
     }
 }
