@@ -4991,58 +4991,13 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 
 	struct path parent_path;
 	ret = kern_path("/mnt/", LOOKUP_FOLLOW | LOOKUP_REVAL, &parent_path);
-	// pr_info("write iter\n");
-	// f2fs_mark_inode_dirty_sync(inode, true);
-	// // ret = filemap_fdatawrite(inode->i_mapping);
-	// // if (ret)
-	// // 	return ret;
-	// // filemap_fdatawait(inode->i_mapping);
-	
-	// struct f2fs_inode *src_fi;
-	// // struct inode *snap_inode, *new_inode;
-	// void *page_addr;
-	// struct page *ipage;
-	// size_t idx;
-	// dentry = d_find_any_alias(inode);
-	// pr_info("write file [%lu,%s]\n",inode->i_ino,dentry->d_name.name); 
-	// // smp_rmb();
-	// ipage = f2fs_get_node_page(sbi, inode->i_ino);
-	// if (f2fs_has_inline_data(inode)){
-	// 	page_addr = inline_data_addr(inode, ipage);
-	// 	// pr_info("inline data addr, %x\n",page_addr); 
-	// 	for (idx = 0; idx < 10; idx++) {
-	// 		pr_info("%02x\n", ((unsigned char *)page_addr)[idx]);
-	// 	}
-	// }else{
-	// 	pr_info("noninline dta\n");
-	// }
-	// f2fs_put_page(ipage, 1);
-	
-
-	// size_t idx;
-	// struct f2fs_inode *src_fi;
-	// struct page *niage;
-	// niage = f2fs_get_node_page(sbi, inode->i_ino);
-	// src_fi = F2FS_INODE(niage);
-	// f2fs_put_page(niage, 1);
-
-	// for(idx = 0 ; idx < 4096; idx= idx +8){
-	// 	pr_info("%02x %02x %02x %02x %02x %02x %02x %02x\n",((unsigned char *)src_fi)[idx],
-	// 	((unsigned char *)src_fi)[idx+1],
-	// 	((unsigned char *)src_fi)[idx+2],
-	// 	((unsigned char *)src_fi)[idx+3],
-	// 	((unsigned char *)src_fi)[idx+4],
-	// 	((unsigned char *)src_fi)[idx+5],
-	// 	((unsigned char *)src_fi)[idx+6],
-	// 	((unsigned char *)src_fi)[idx+7]);
-	// }
 
     snap_initStack(&stack);
 	snap_push(&stack, inode->i_ino);
 	while (inode){
 		dentry = d_find_any_alias(inode);  // 获取 inode 对应的 dentry
 		if (!dentry) {
-            pr_err("Failed to find dentry for inode %lu\n", inode->i_ino);
+            pr_err("[COW] Failed to find dentry for inode %lu\n", inode->i_ino);
             break;
         }
 		parent_dentry = dget_parent(dentry);
@@ -5054,13 +5009,13 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		block = &magic_i->magic_blocks[loc_block];
 		entry = &block->entries[loc_oft_in_block];
 		if(!magic_i){
-			pr_info("magic_i is null\n");
+			pr_info("[COW] magic_i is null\n");
 			freeStacksnap(&stack);
 			goto normal;
 		}
 
 		if(ver != 0 && entry->flag != 0 && entry->snap_ino != 0){
-			pr_info("Find snapshot, magic-flag-snap_nid[%lu,%lu.%lu], should COW\n",
+			pr_info("[COW] Find snapshot, magic-flag-snap_nid[%lu,%lu.%lu], should COW\n",
 				ver,entry->flag,entry->snap_ino);
 			snap_ino = entry->snap_ino;
 			goto start_snap;
@@ -5079,10 +5034,10 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 start_snap:
 	snap_inode = f2fs_iget(sb, snap_ino);
 	dentry = d_find_any_alias(snap_inode);
-	pr_info("快照触发COW特殊处理,nid:name[%lu,%s]\n",snap_ino, dentry->d_name.name);
+	pr_info("[COW] activate, nid:name[%lu,%s]\n",snap_ino, dentry->d_name.name);
 	
     while (!snap_isEmpty(&stack)) {
-        pr_info("ino null empty\n");
+	gen_snap:
 		ret = snap_pop2(&stack, &pra_ino, &son_ino);
 		if(ret) break;
 		pra_ino = snap_pop(&stack);
@@ -5090,10 +5045,10 @@ start_snap:
 		son_inode = f2fs_iget(sb, son_ino); 
 		parent_dentry = d_find_any_alias(pra_inode);
 		dentry = d_find_any_alias(son_inode);
-		pr_info("pra_ino/name [%lu,%s],son_ino/name [%lu,%s]\n", pra_ino, 
+		pr_info("[COW] pra_ino/name [%lu,%s],son_ino/name [%lu,%s]\n", pra_ino, 
 			parent_dentry->d_name.name, son_ino, dentry->d_name.name);
 
-		struct page *pra_ipage, *snap_ipage, *page;
+		struct page *ndpage, *page;
 		void *inline_dentry, *inline_dentry2; // inline数据
 		struct f2fs_dentry_ptr d;
 		struct f2fs_dir_entry *de;
@@ -5105,263 +5060,261 @@ start_snap:
 		struct f2fs_inode *src_fi, *new_fi;
 
 		if (S_ISDIR(pra_inode->i_mode)) {
-			pr_info("COW (%lu) start create new\n", pra_inode->i_ino);
-			// 删除指定目录项
-			// dentry ?
-			pr_info("COW gen:snap[%lu,%s],copy:son[%lu,%s]\n",snap_inode->i_ino, 
+			pr_info("[COW] pra[%lu,%s],gen[%lu,%s],son[%lu,%s]\n", pra_inode->i_ino, parent_dentry->d_name.name, snap_inode->i_ino, 
 				d_find_any_alias(snap_inode)->d_name.name, son_inode->i_ino, dentry->d_name.name);
+			
 			de = f2fs_find_entry(snap_inode, &dentry->d_name, &page);
 			if(!de){
-				pr_info("not found [%s]dentry\n",dentry->d_name.name);
+				pr_info("[COW] dentry[%s] not found\n",dentry->d_name.name);
 				goto normal;
 			}
 			f2fs_delete_entry(de, page, snap_inode, son_inode);
-			
 			// 判断删除是否成功
 			de = f2fs_find_entry(snap_inode, &dentry->d_name, &page);
-			if(!de){
-				pr_info("[%s]dentry del success!!!\n",dentry->d_name.name);
-			}else{
-				pr_info("[%s]dentry del failed!!!\n",dentry->d_name.name);
+			if(de){
+				pr_info("[COW] [%s]dentry del failed!!!\n",dentry->d_name.name);
 			}
-			// 查询dentry是否存在
+			// 查询要创建的dentry是否存在
 			tmp_dentry = lookup_one_len(dentry->d_name.name, d_find_any_alias(snap_inode), strlen(dentry->d_name.name));
-			// tmp_dentry = lookup_one_len("fx", d_find_any_alias(snap_inode), strlen(dentry->d_name.name));
 			if (IS_ERR(tmp_dentry)) {
 				ret = PTR_ERR(tmp_dentry);
 				tmp_dentry = NULL;
-				pr_info("lookup_one_len failed!!!\n");
+				pr_info("[COW] lookup_one_len failed!!!\n");
 			}
 			// 添加目录项
 			// 在snap_inode下创建一个新的inode，mode保持和被快照目录下的inode一致
 			mode = pra_inode->i_mode;
 			// ret = f2fs_mkdir(NULL, pra_inode, dentry, mode);
+			dentry = d_find_any_alias(snap_inode); 
+			pr_info("[COW] gen snap_inode: [%lu, %s]\n",snap_inode->i_ino, dentry->d_name.name);
 			if(S_ISDIR(son_inode->i_mode)){
 				ret = vfs_mkdir(mnt_user_ns(parent_path.mnt), pra_inode, tmp_dentry, mode);
+				new_inode = tmp_dentry->d_inode;
+				pr_info("[COW] create new dir[%lu, %s]\n",new_inode->i_ino, tmp_dentry->d_name.name);
+				if(!new_inode){
+					pr_info("[COW] new_inode failed!!!\n");
+					goto normal;
+				}
+				
+				dentry = d_find_any_alias(new_inode); 
+				// 处理子目录 , son_inode是要复制的对象，new_inode是新生成
+				// 这里需要更新一下当前和上一级目录dentry
+				if (f2fs_has_inline_dentry(son_inode)){
+					pr_info("[COW] copy subdir with inline data\n");
+					set_inode_flag(new_inode, FI_INLINE_DENTRY);
+
+					tipage = f2fs_get_node_page(sbi, son_inode->i_ino);
+					src_fi = F2FS_INODE(tipage);
+					nipage = f2fs_get_node_page(sbi, new_inode->i_ino);
+					inline_dentry = inline_data_addr(son_inode, tipage);
+					inline_dentry2 = inline_data_addr(new_inode, nipage);
+				
+					f2fs_truncate_inline_inode(new_inode, nipage, 0);
+					memcpy(inline_dentry2, inline_dentry, MAX_INLINE_DATA(son_inode));
+					// 更新.和..
+					make_dentry_ptr_inline(new_inode, &d, inline_dentry2);
+					/* update dirent of "." */
+					f2fs_update_dentry(new_inode->i_ino, new_inode->i_mode, &d, &dot, 0, 0);
+					/* update dirent of ".." */
+					f2fs_update_dentry(snap_inode->i_ino, snap_inode->i_mode, &d, &dotdot, 0, 1);
+					
+					// set_page_writeback(nipage);
+					flush_dcache_page(nipage);
+					set_page_dirty(nipage);
+					// ret = filemap_fdatawrite(new_inode->i_mapping);
+					// if (ret)
+					// 	return ret;
+					// filemap_fdatawait(new_inode->i_mapping);
+					new_inode->i_size = son_inode->i_size;
+					f2fs_put_page(nipage, 1);
+					f2fs_put_page(tipage, 1);
+					// make_dentry_ptr_inline(new_inode, &d, inline_dentry2);
+					// err = write_inode_now(new_inode,1);
+					// 更新当前和父目录的dentry信息
+					// if(idx == 0){
+					// 	// 实际命令应该是new_dpage
+					// 	ndpage = f2fs_get_lock_data_page(new_inode, idx, false);
+					// 	page_addr = page_address(ndpage);
+					// 	make_dentry_ptr_block(new_inode, &d, page_addr);
+					// 	f2fs_put_page(ndpage, 1);
+
+					// 	f2fs_update_dentry(new_inode->i_ino, new_inode->i_mode, &d, &dot, 0, 0);
+
+					// 	f2fs_update_dentry(parent_inode->i_ino, parent_inode->i_mode, &d, &dotdot, 0, 1);
+					// }
+					snap_inode = new_inode;
+					goto gen_snap;
+				} else if(!f2fs_has_inline_dentry(son_inode)) {
+					pr_info("[COW] subdir without inline data\n");
+					tipage = f2fs_get_node_page(sbi, son_inode->i_ino);
+					src_fi = F2FS_INODE(tipage);
+					set_page_writeback(tipage);
+					f2fs_put_page(tipage, 1);
+					// 同上，获取new_inode的 i_addr, 这里需要将支持inline的inode转换一下
+					nipage = f2fs_get_node_page(sbi, new_inode->i_ino);
+					new_fi = F2FS_INODE(nipage);
+						// 获取inline区域的地址
+					inline_dentry = inline_data_addr(new_inode, nipage);
+					f2fs_put_page(nipage, 1);
+						// 执行convert， 主要是删除inline数据区域和清除inline flag
+					ret = f2fs_snap_inline_to_dirents(new_inode, inline_dentry);
+
+					// 下面需要获取src_inode指向的数据页
+					// 如果等于null没必要再管了，因为说明这里没数据
+					// 如果等于new_addr，需要写回确保落盘，有对应的addr分配出来，并于page建立联系
+					// 如果既不等于null也不等于new_addr, 正常的数据块访问
+					for (idx = 0; idx < DEF_ADDRS_PER_INODE; idx++) {
+						if (src_fi->i_addr[idx] != NULL_ADDR && src_fi->i_addr[idx] != NEW_ADDR) {
+							// 让snap也指向这个数据块
+							pr_info("[COW] i_addr[%3d]=0x%08x, valid_addr\n", idx, src_fi->i_addr[idx]);
+							{
+								ret = filemap_fdatawrite(son_inode->i_mapping);
+								if (ret)
+									return ret;
+								filemap_fdatawait(son_inode->i_mapping);
+							}
+							new_fi->i_addr[idx] = src_fi->i_addr[idx];
+							invalidate_mapping_pages(new_inode->i_mapping, idx, idx);
+
+							new_inode->i_size = son_inode->i_size;
+						
+							// 更新当前和父目录的dentry信息
+							// 更新.和..
+							if(idx == 0){
+								// 实际命令应该是new_dpage
+								ndpage = f2fs_get_lock_data_page(new_inode, idx, false);
+								page_addr = page_address(ndpage);
+								make_dentry_ptr_block(new_inode, &d, page_addr);
+								f2fs_put_page(ndpage, 1);
+								f2fs_update_dentry(new_inode->i_ino, new_inode->i_mode, &d, &dot, 0, 0);
+								f2fs_update_dentry(snap_inode->i_ino, snap_inode->i_mode, &d, &dotdot, 0, 1);
+							}
+						} else if(src_fi->i_addr[idx] == NEW_ADDR){
+							// 如果addr是new，标明刚分配的，缓存页需要写回
+							pr_info("[COW] new_addr try write back\n");
+							// src_dpage = f2fs_get_lock_data_page(src_inode, idx, false);
+							{
+								ret = filemap_fdatawrite(son_inode->i_mapping);
+								if (ret)
+									return ret;
+								filemap_fdatawait(son_inode->i_mapping);
+							}
+							if(src_fi->i_addr[idx] != NEW_ADDR){
+								pr_info("[COW] get real addr\n");
+								pr_info("[COW] wb i_addr[%3d] = 0x%08x\n", idx, src_fi->i_addr[idx]);
+								new_fi->i_addr[idx] = src_fi->i_addr[idx];
+								invalidate_mapping_pages(new_inode->i_mapping, idx, idx);
+								new_inode->i_size = son_inode->i_size;
+
+								// 更新当前和父目录的dentry信息
+								if(idx == 0){
+									// 实际命令应该是new_dpage
+									ndpage = f2fs_get_lock_data_page(new_inode, idx, false);
+									page_addr = page_address(ndpage);
+									make_dentry_ptr_block(new_inode, &d, page_addr);
+									f2fs_put_page(ndpage, 1);
+									f2fs_update_dentry(new_inode->i_ino, new_inode->i_mode, &d, &dot, 0, 0);
+									f2fs_update_dentry(snap_inode->i_ino, snap_inode->i_mode, &d, &dotdot, 0, 1);
+								}
+							} else {
+								pr_info("[COW] still not get real addr\n");
+							}							
+						}
+					}
+					snap_inode = new_inode;
+					goto gen_snap;
+				}
 			}else if(S_ISREG(son_inode->i_mode)){
-				pr_info("create new file\n");
 				ret = vfs_create(mnt_user_ns(parent_path.mnt), pra_inode, tmp_dentry, mode, true);
-			}
+				new_inode = tmp_dentry->d_inode;
+				pr_info("[COW] create new file[%lu, %s]\n",new_inode->i_ino, tmp_dentry->d_name.name);
+				if(!new_inode){
+					pr_info("[COW] new_inode failed!!!\n");
+					goto normal;
+				}
+				dentry = d_find_any_alias(new_inode); 
+				// 处理子文件 son_inode是要复制的对象，new_inode是新生成
+				if (f2fs_has_inline_data(son_inode)){
+					pr_info("[COW] subfile with inline data\n");
+					set_inode_flag(new_inode, FI_INLINE_DATA);
+					ret = filemap_fdatawrite(son_inode->i_mapping);
+					if (ret)
+						return ret;
+					filemap_fdatawait(son_inode->i_mapping);
 
-			new_inode = tmp_dentry->d_inode;
-			if(!new_inode){
-				pr_info("new_inode failed!!!\n");
-				goto normal;
-			}
-			dentry = d_find_any_alias(new_inode); 
-			// pr_info("cow tp3 new inode[%lu],name[%s]\n",new_inode->i_ino,dentry->d_name.name);
-			// dentry = d_find_any_alias(son_inode); 
-			// pr_info("cow tp3 copy inode[%lu],name[%s]\n",son_inode->i_ino,dentry->d_name.name);
-
-			// 处理子文件
-			if (f2fs_has_inline_data(son_inode) && S_ISREG(son_inode->i_mode)){
-				pr_info("son(new) is file with inline data\n");
-				set_inode_flag(new_inode, FI_INLINE_DATA);
-
-				tipage = f2fs_get_node_page(sbi, son_inode->i_ino);
-				src_fi = F2FS_INODE(tipage);
-
-				nipage = f2fs_get_node_page(sbi, new_inode->i_ino);
-				inline_dentry = inline_data_addr(son_inode, tipage);
-				inline_dentry2 = inline_data_addr(new_inode, nipage);
-			
-				f2fs_truncate_inline_inode(new_inode, nipage, 0);
-				memcpy(inline_dentry2, inline_dentry, MAX_INLINE_DATA(son_inode));
-				// set_page_writeback(nipage);
-				flush_dcache_page(nipage);
-				set_page_dirty(nipage);
-				f2fs_put_page(nipage, 1);
-				f2fs_put_page(tipage, 1);
-				// make_dentry_ptr_inline(new_inode, &d, inline_dentry2);
-			} else if(!f2fs_has_inline_dentry(pra_inode) && S_ISREG(pra_inode->i_mode)) {
-				pr_info("son(new) is file without inline data\n");
-				
-				tipage = f2fs_get_node_page(sbi, son_inode->i_ino);
-				src_fi = F2FS_INODE(tipage);
-				set_page_writeback(tipage);
-				f2fs_put_page(tipage, 1);
-				// 同上，获取new_inode的 i_addr, 这里需要将支持inline的inode转换一下
-				nipage = f2fs_get_node_page(sbi, new_inode->i_ino);
-				new_fi = F2FS_INODE(nipage);
-					// 获取inline区域的地址
-				inline_dentry = inline_data_addr(new_inode, nipage);
-				f2fs_put_page(nipage, 1);
+					tipage = f2fs_get_node_page(sbi, son_inode->i_ino);
+					// src_fi = F2FS_INODE(tipage);
+					nipage = f2fs_get_node_page(sbi, new_inode->i_ino);
+					inline_dentry = inline_data_addr(son_inode, tipage);
+					inline_dentry2 = inline_data_addr(new_inode, nipage);
+					f2fs_truncate_inline_inode(new_inode, nipage, 0);
+					memcpy(inline_dentry2, inline_dentry, MAX_INLINE_DATA(son_inode));
+					// set_page_writeback(nipage);
+					flush_dcache_page(nipage);
+					set_page_dirty(nipage);
+					new_inode->i_size = son_inode->i_size;
+					f2fs_put_page(nipage, 1);
+					f2fs_put_page(tipage, 1);
+					snap_inode = new_inode;
+					goto gen_snap;
+					// make_dentry_ptr_inline(new_inode, &d, inline_dentry2);
+				} else if(!f2fs_has_inline_data(pra_inode)) {
+					pr_info("[COW] subfile without inline data\n");
+					tipage = f2fs_get_node_page(sbi, son_inode->i_ino);
+					src_fi = F2FS_INODE(tipage);
+					set_page_writeback(tipage);
+					f2fs_put_page(tipage, 1);
+					// 同上，获取new_inode的 i_addr, 这里需要将支持inline的inode转换一下
+					nipage = f2fs_get_node_page(sbi, new_inode->i_ino);
+					new_fi = F2FS_INODE(nipage);
+					inline_dentry = inline_data_addr(new_inode, nipage);
+					f2fs_put_page(nipage, 1);
 					// 执行convert， 主要是删除inline数据区域和清除inline flag
-				ret = f2fs_snap_inline_to_dirents(new_inode, inline_dentry);
+					ret = f2fs_snap_inline_to_dirents(new_inode, inline_dentry);
 
-				// 下面需要获取src_inode指向的数据页
-				// 如果等于null没必要再管了，因为说明这里没数据
-				// 如果等于new_addr，需要写回确保落盘，有对应的addr分配出来，并于page建立联系
-				// 如果既不等于null也不等于new_addr, 正常的数据块访问
-				for (idx = 0; idx < DEF_ADDRS_PER_INODE; idx++) {
-					if (src_fi->i_addr[idx] != NULL_ADDR && src_fi->i_addr[idx] != NEW_ADDR) {
-						// 让snap也指向这个数据块
-						pr_info("COW i_addr[%3d]=0x%08x, valid_addr\n", idx, src_fi->i_addr[idx]);
-						{
-							ret = filemap_fdatawrite(son_inode->i_mapping);
-							if (ret)
-								return ret;
-							filemap_fdatawait(son_inode->i_mapping);
-						}
-						new_fi->i_addr[idx] = src_fi->i_addr[idx];
-						invalidate_mapping_pages(new_inode->i_mapping, idx, idx);
-
-						new_inode->i_size = son_inode->i_size;
-						// err = write_inode_now(new_inode,1);
-						// f2fs_snap_dump_dentry(src_inode, idx, "test");
-						// f2fs_snap_dump_dentry(new_inode, idx, "snap");
-
-						// 更新当前和父目录的dentry信息
-						// if(idx == 0){
-						// 	// 实际命令应该是new_dpage
-						// 	src_ipage = f2fs_get_lock_data_page(new_inode, idx, false);
-						// 	page_addr = page_address(src_ipage);
-						// 	make_dentry_ptr_block(new_inode, &d, page_addr);
-						// 	f2fs_put_page(src_ipage, 1);
-
-						// 	f2fs_update_dentry(new_inode->i_ino, new_inode->i_mode, &d, &dot, 0, 0);
-
-						// 	f2fs_update_dentry(parent_inode->i_ino, parent_inode->i_mode, &d, &dotdot, 0, 1);
-						// }
-
-					} else if(src_fi->i_addr[idx] == NEW_ADDR){
-						// 如果addr是new，标明刚分配的，缓存页需要写回
-						pr_info("COW new_addr try write back\n");
-						// src_dpage = f2fs_get_lock_data_page(src_inode, idx, false);
-						{
-							ret = filemap_fdatawrite(son_inode->i_mapping);
-							if (ret)
-								return ret;
-							filemap_fdatawait(son_inode->i_mapping);
-						}
-						if(src_fi->i_addr[idx] != NEW_ADDR){
-							pr_info("COW get real addr\n");
-							pr_info("COW wb i_addr[%3d] = 0x%08x\n", idx, src_fi->i_addr[idx]);
+					// 下面需要获取src_inode指向的数据页
+					// 如果等于null没必要再管了，因为说明这里没数据，可能存在空洞页
+					// 如果等于new_addr，需要写回确保落盘，有对应的addr分配出来，并于page建立联系
+					// 如果既不等于null也不等于new_addr, 正常的数据块访问
+					for (idx = 0; idx < DEF_ADDRS_PER_INODE; idx++) {
+						if (src_fi->i_addr[idx] != NULL_ADDR && src_fi->i_addr[idx] != NEW_ADDR) {
+							// 让snap也指向这个数据块
+							pr_info("[COW] subfile, i_addr[%3d]=0x%08x, valid_addr\n", idx, src_fi->i_addr[idx]);
+							{
+								ret = filemap_fdatawrite(son_inode->i_mapping);
+								if (ret)
+									return ret;
+								filemap_fdatawait(son_inode->i_mapping);
+							}
 							new_fi->i_addr[idx] = src_fi->i_addr[idx];
 							invalidate_mapping_pages(new_inode->i_mapping, idx, idx);
 							new_inode->i_size = son_inode->i_size;
-
-							// 更新当前和父目录的dentry信息
-							// if(idx == 0){
-							// 	// 实际命令应该是new_dpage
-							// 	page = f2fs_get_lock_data_page(new_inode, idx, false);
-							// 	page_addr = page_address(page);
-							// 	make_dentry_ptr_block(new_inode, &d, page_addr);
-							// 	f2fs_put_page(page, 1);
-							// 	f2fs_update_dentry(new_inode->i_ino, new_inode->i_mode, &d, &dot, 0, 0);
-							// 	f2fs_update_dentry(parent_inode->i_ino, parent_inode->i_mode, &d, &dotdot, 0, 1);
-							// }
-						} else {
-							pr_info("COW still not get real addr\n");
-						}							
+							
+						} else if(src_fi->i_addr[idx] == NEW_ADDR){
+							// 如果addr是new，标明刚分配的，缓存页需要写回
+							pr_info("[COW] subfile, new_addr\n");
+							// src_dpage = f2fs_get_lock_data_page(src_inode, idx, false);
+							{
+								ret = filemap_fdatawrite(son_inode->i_mapping);
+								if (ret)
+									return ret;
+								filemap_fdatawait(son_inode->i_mapping);
+							}
+							if(src_fi->i_addr[idx] != NEW_ADDR){
+								pr_info("[COW] subfile, new_addr -> valid_addr(i_addr[%3d] = 0x%08x)\n", idx, src_fi->i_addr[idx]);
+								new_fi->i_addr[idx] = src_fi->i_addr[idx];
+								invalidate_mapping_pages(new_inode->i_mapping, idx, idx);
+								new_inode->i_size = son_inode->i_size;
+							} else {
+								pr_info("[COW] subfile, new_addr -> valid_addr(failed)\n");
+							}							
+						}
 					}
+					snap_inode = new_inode;
+					goto gen_snap;
 				}
 			}
-			// 处理子目录
-			if (f2fs_has_inline_data(son_inode) && S_ISDIR(son_inode->i_mode)){
-				pr_info("son(new) is dir with inline data\n");
-				set_inode_flag(new_inode, FI_INLINE_DATA);
-
-				tipage = f2fs_get_node_page(sbi, son_inode->i_ino);
-				src_fi = F2FS_INODE(tipage);
-
-				nipage = f2fs_get_node_page(sbi, new_inode->i_ino);
-				inline_dentry = inline_data_addr(son_inode, tipage);
-				inline_dentry2 = inline_data_addr(new_inode, nipage);
-			
-				f2fs_truncate_inline_inode(new_inode, nipage, 0);
-				memcpy(inline_dentry2, inline_dentry, MAX_INLINE_DATA(son_inode));
-				// set_page_writeback(nipage);
-				flush_dcache_page(nipage);
-				set_page_dirty(nipage);
-				f2fs_put_page(nipage, 1);
-				f2fs_put_page(tipage, 1);
-				// make_dentry_ptr_inline(new_inode, &d, inline_dentry2);
-			} else if(!f2fs_has_inline_dentry(pra_inode) && S_ISDIR(pra_inode->i_mode)) {
-				pr_info("son(new) is dir without inline data\n");
-				
-				tipage = f2fs_get_node_page(sbi, son_inode->i_ino);
-				src_fi = F2FS_INODE(tipage);
-				set_page_writeback(tipage);
-				f2fs_put_page(tipage, 1);
-				// 同上，获取new_inode的 i_addr, 这里需要将支持inline的inode转换一下
-				nipage = f2fs_get_node_page(sbi, new_inode->i_ino);
-				new_fi = F2FS_INODE(nipage);
-					// 获取inline区域的地址
-				inline_dentry = inline_data_addr(new_inode, nipage);
-				f2fs_put_page(nipage, 1);
-					// 执行convert， 主要是删除inline数据区域和清除inline flag
-				ret = f2fs_snap_inline_to_dirents(new_inode, inline_dentry);
-
-				// 下面需要获取src_inode指向的数据页
-				// 如果等于null没必要再管了，因为说明这里没数据
-				// 如果等于new_addr，需要写回确保落盘，有对应的addr分配出来，并于page建立联系
-				// 如果既不等于null也不等于new_addr, 正常的数据块访问
-				for (idx = 0; idx < DEF_ADDRS_PER_INODE; idx++) {
-					if (src_fi->i_addr[idx] != NULL_ADDR && src_fi->i_addr[idx] != NEW_ADDR) {
-						// 让snap也指向这个数据块
-						pr_info("COW i_addr[%3d]=0x%08x, valid_addr\n", idx, src_fi->i_addr[idx]);
-						{
-							ret = filemap_fdatawrite(son_inode->i_mapping);
-							if (ret)
-								return ret;
-							filemap_fdatawait(son_inode->i_mapping);
-						}
-						new_fi->i_addr[idx] = src_fi->i_addr[idx];
-						invalidate_mapping_pages(new_inode->i_mapping, idx, idx);
-
-						new_inode->i_size = son_inode->i_size;
-						// err = write_inode_now(new_inode,1);
-						// f2fs_snap_dump_dentry(src_inode, idx, "test");
-						// f2fs_snap_dump_dentry(new_inode, idx, "snap");
-
-						// 更新当前和父目录的dentry信息
-						// if(idx == 0){
-						// 	// 实际命令应该是new_dpage
-						// 	src_ipage = f2fs_get_lock_data_page(new_inode, idx, false);
-						// 	page_addr = page_address(src_ipage);
-						// 	make_dentry_ptr_block(new_inode, &d, page_addr);
-						// 	f2fs_put_page(src_ipage, 1);
-
-						// 	f2fs_update_dentry(new_inode->i_ino, new_inode->i_mode, &d, &dot, 0, 0);
-
-						// 	f2fs_update_dentry(parent_inode->i_ino, parent_inode->i_mode, &d, &dotdot, 0, 1);
-						// }
-
-					} else if(src_fi->i_addr[idx] == NEW_ADDR){
-						// 如果addr是new，标明刚分配的，缓存页需要写回
-						pr_info("COW new_addr try write back\n");
-						// src_dpage = f2fs_get_lock_data_page(src_inode, idx, false);
-						{
-							ret = filemap_fdatawrite(son_inode->i_mapping);
-							if (ret)
-								return ret;
-							filemap_fdatawait(son_inode->i_mapping);
-						}
-						if(src_fi->i_addr[idx] != NEW_ADDR){
-							pr_info("COW get real addr\n");
-							pr_info("COW wb i_addr[%3d] = 0x%08x\n", idx, src_fi->i_addr[idx]);
-							new_fi->i_addr[idx] = src_fi->i_addr[idx];
-							invalidate_mapping_pages(new_inode->i_mapping, idx, idx);
-							new_inode->i_size = son_inode->i_size;
-
-							// 更新当前和父目录的dentry信息
-							// if(idx == 0){
-							// 	// 实际命令应该是new_dpage
-							// 	page = f2fs_get_lock_data_page(new_inode, idx, false);
-							// 	page_addr = page_address(page);
-							// 	make_dentry_ptr_block(new_inode, &d, page_addr);
-							// 	f2fs_put_page(page, 1);
-							// 	f2fs_update_dentry(new_inode->i_ino, new_inode->i_mode, &d, &dot, 0, 0);
-							// 	f2fs_update_dentry(parent_inode->i_ino, parent_inode->i_mode, &d, &dotdot, 0, 1);
-							// }
-						} else {
-							pr_info("COW still not get real addr\n");
-						}							
-					}
-				}
-			}
-			
+	
 		}
     } // while end
 
