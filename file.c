@@ -5320,8 +5320,31 @@ start_snap:
 						unsigned int valid_blocks = new_inode->i_blocks / (F2FS_BLKSIZE >> 9);
 						f2fs_i_blocks_write(new_inode, valid_blocks, true, true);
 					}
-
+					int *do_replace;
+					pgoff_t len = 0;
+					do_replace = f2fs_kvzalloc(F2FS_I_SB(new_inode),
+								array_size(DEF_ADDRS_PER_INODE, sizeof(int)),
+								GFP_NOFS);
+					if (!do_replace) {
+						// 错误处理
+						ret = -ENOMEM;
+						pr_info("do_replace alloc failed! %lu\n",ret);
+					}
+					memset(do_replace, 0, DEF_ADDRS_PER_INODE * sizeof(int));
 					memcpy(new_fi->i_addr, src_fi->i_addr, sizeof(src_fi->i_addr));
+
+
+					for (idx = 0; idx < DEF_ADDRS_PER_INODE; idx++) {
+						if (src_fi->i_addr[idx] != NULL_ADDR && src_fi->i_addr[idx] != NEW_ADDR) {
+							// new_fi->i_addr[idx] = src_fi->i_addr[idx];
+							len++;
+							do_replace[idx] = 1;
+							// invalidate_mapping_pages(new_inode->i_mapping, idx, idx);
+						} 
+					}
+					ret = share_blk_update_meta(son_inode, new_inode, do_replace, len);
+
+
 					new_inode->i_size = son_inode->i_size;
 					// new_inode->i_mapping->nrpages = son_inode->i_mapping->nrpages;
 					// === 1. 基本文件属性 ===
