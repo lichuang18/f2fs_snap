@@ -1,18 +1,14 @@
 #!/bin/bash
-set -e
 
-DIR="/mnt/test3"
-SNAP_DIR="/mnt/snap3"
+mkdir /mnt/df
+#dd if=/dev/urandom of=/mnt/df/file1 bs=8K count=1
+dd if=/dev/zero bs=8192 count=1 2>/dev/null | tr '\0' 'A' > /mnt/df/file1
+dd if=/dev/zero bs=8192 count=1 2>/dev/null | tr '\0' 'B' >> /mnt/df/file1
+sync
 
-STR=$(head -c 40960 /dev/urandom | base64 | tr -d '\n' | cut -c1-4096)
+./test_ioctl/a.out  /mnt/ /mnt/df/ /mnt/snap
 
+#sync
 
-mkdir -p $DIR
-cd $DIR
-
-for i in $(seq 0 257); do
-    #touch "f$i"
-    #echo $STR > f$i
-    mkdir -p /mnt/dir$i
-done
-
+#echo sdsadas >> /mnt/df/file1
+#sync

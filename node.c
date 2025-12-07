@@ -1462,7 +1462,6 @@ repeat:
 		f2fs_put_page(page, 1);
 		goto repeat;
 	}
-
 	if (unlikely(!PageUptodate(page))) {
 		err = -EIO;
 		goto out_err;
@@ -1660,6 +1659,90 @@ static int __write_node_page(struct page *page, bool atomic, bool *submitted,
 		up_read(&sbi->node_write);
 		goto redirty_out;
 	}
+	// dump
+	// /* 添加的变量 */
+	// struct f2fs_summary sum;
+	// struct seg_entry *se;
+	// struct page *sum_page;
+	// struct f2fs_summary_block *sum_blk;
+	// unsigned int segno, offset;
+	// unsigned short blk_off;
+	// unsigned int type;
+	// struct curseg_info *curseg = NULL;
+
+	// /* 添加的逻辑：通过old_addr获取对应的summary entry并打印信息 */
+	// if (__is_valid_data_blkaddr(ni.blk_addr)) {
+	// 	segno = GET_SEGNO(sbi, ni.blk_addr);
+	// 	offset = GET_BLKOFF_FROM_SEG0(sbi, ni.blk_addr);
+		
+	// 	down_read(&SM_I(sbi)->curseg_lock);
+	// 	se = get_seg_entry(sbi, segno);
+		
+	// 	if (se && offset < sbi->blocks_per_seg) {
+	// 		/* 使用cur_valid_map检查块是否有效 */
+	// 		if (f2fs_test_bit(offset, se->cur_valid_map)) {
+	// 			for (type = 0; type < NR_CURSEG_TYPE; type++) {
+	// 				struct curseg_info *ci = CURSEG_I(sbi, type);
+
+	// 				if (ci->segno == segno) {
+	// 					curseg = ci;
+	// 					break;
+	// 				}
+	// 			}
+	// 			if (curseg) {
+	// 				/* 从内存中的 curseg->sum_blk 读取最新 summary */
+	// 				sum_blk = curseg->sum_blk;
+	// 				sum = sum_blk->entries[blk_off];
+
+	// 				f2fs_info(sbi,
+	// 					"Summary(curseg): nid=%u, ver=%u, ofs=%u, old_addr=0x%x, segno=%u, blk_off=%u, type=%u",
+	// 					le32_to_cpu(sum.nid),
+	// 					sum.version,
+	// 					le16_to_cpu(sum.ofs_in_node),
+	// 					ni.blk_addr,
+	// 					segno,
+	// 					blk_off,
+	// 					type);
+	// 			} else {
+	// 				/*
+	// 				* 2) 不属于任何 curseg，说明是“封存”的旧 segment，
+	// 				*    这时 SSA 上的 summary 应该已经写好了，再用 f2fs_get_sum_page()。
+	// 				*/
+	// 				sum_page = f2fs_get_sum_page(sbi, segno);
+	// 				if (!IS_ERR(sum_page)) {
+	// 					sum_blk = (struct f2fs_summary_block *)page_address(sum_page);
+	// 					sum = sum_blk->entries[blk_off];
+
+	// 					f2fs_info(sbi,
+	// 						"Summary(SSA): nid=%u, ver=%u, ofs=%u, old_addr=0x%x, segno=%u, blk_off=%u",
+	// 						le32_to_cpu(sum.nid),
+	// 						sum.version,
+	// 						le16_to_cpu(sum.ofs_in_node),
+	// 						ni.blk_addr,
+	// 						segno,
+	// 						blk_off);
+
+	// 					f2fs_put_page(sum_page, 1);
+	// 				} else {
+	// 					f2fs_info(sbi,
+	// 						"Failed to get SSA summary: old_addr=0x%x, segno=%u, blk_off=%u, err=%ld",
+	// 						ni.blk_addr, segno, blk_off, PTR_ERR(sum_page));
+	// 				}
+	// 			}
+	// 		} else {
+	// 			f2fs_info(sbi,
+	// 				"Block 0x%x is invalid in segment %u (blk_off=%u)",
+	// 				ni.blk_addr, segno, blk_off);
+	// 		}
+	// 	} else {
+	// 		f2fs_info(sbi,
+	// 			"Invalid seg_entry or blk_off: old_addr=0x%x, segno=%u, blk_off=%u",
+	// 			ni.blk_addr, segno, blk_off);
+	// 	}
+	// 	up_read(&SM_I(sbi)->curseg_lock);
+	// }
+
+	// // over
 
 	if (atomic && !test_opt(sbi, NOBARRIER))
 		fio.op_flags |= REQ_PREFLUSH | REQ_FUA;
