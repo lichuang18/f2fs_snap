@@ -3443,7 +3443,8 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
                 continue;
             }
 
-			up_read(&SM_I(sbi)->curseg_lock);
+			// up_read(&SM_I(sbi)->curseg_lock);
+			down_read(&SM_I(sbi)->curseg_lock);
 			old_curseg = NULL;
 			for (old_type = CURSEG_HOT_DATA; old_type <= CURSEG_COLD_DATA; old_type++) {
 				struct curseg_info *ci = CURSEG_I(sbi, old_type);
@@ -3491,9 +3492,9 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 					for (i = 0; i < 40 && !found_slot; i++) {  // 40 bytes = 320 bits
 						__u8 bitmap_byte = safe_bitmap[i];
 						pr_info("DEBUG: bitmap[%d] = 0x%02x\n", i, bitmap_byte);
-						if (bitmap[i] != 0xFF) {  // Not all bits are set
+						if (bitmap_byte != 0xFF) {  // Not all bits are set
 							for (bit_pos = 0; bit_pos < 8; bit_pos++) {
-								if (!(bitmap[i] & (1 << bit_pos))) {
+								if (!(bitmap_byte & (1 << bit_pos))) {
 									pr_info("[update_snap_meta] store to mulref_blk at bitmap[%d], bit=%d\n", 
                                            i, bit_pos);
 									entry_index = i * 8 + bit_pos;
@@ -3578,16 +3579,17 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 						pr_info("multi ref block is full, Stop snap op\n");
 						return 0;
 					}
-				} else if(old_nid == new_nid){
-					pr_info("Same file update [DATA: %lu]\n", old_nid);
-					sum->nid = cpu_to_le32(new_nid);
-                    sum->ofs_in_node = old_ofs_in_node;
-                    sum->version = 0;
+				// } else if(old_nid == new_nid){
+				// 	pr_info("Same file update [DATA: %lu]\n", old_nid);
+				// 	sum->nid = cpu_to_le32(new_nid);
+                //     sum->ofs_in_node = old_ofs_in_node;
+                //     sum->version = 0;
 				} else if(!f2fs_test_bit(blk_off, se->cur_valid_map)){
 					pr_info("activate block\n");
 					sum->nid = cpu_to_le32(new_nid);
 					sum->ofs_in_node = old_ofs_in_node;
 					sum->version = 0; // more to do	
+					update_sit_entry(sbi, old_blkaddr, 1);
 				}
 				 if (mulref_page) {
                     kunmap(mulref_page);
@@ -3614,31 +3616,85 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 							need_multi_ref = true;
 							cur_brf_blk = le64_to_cpu(sbi->ckpt->cur_brf_blk);
 							mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
-							mulref = (struct f2fs_mulref_block *)page_address(mulref_page);
-							bitmap = mulref->multi_bitmap;
-							for (i = 0; i < 40; i++) {  // 40 bytes = 320 bits
-								if (bitmap[i] != 0xFF) {  // Not all bits are set
+							if (IS_ERR(mulref_page)) {
+								pr_err("Failed to get mulref page2: %ld\n", PTR_ERR(mulref_page));
+								return PTR_ERR(mulref_page);
+							}
+							mulref = (struct f2fs_mulref_block *)kmap(mulref_page);
+							if (!mulref) {
+								pr_err("Failed to get page address2\n");
+								f2fs_put_page(mulref_page, 1);
+								return -EFAULT;
+								break;
+							}
+							pr_info("=== MULREF DEBUG START2 ===\n");
+							pr_info("mulref pointer2: %p\n", mulref);
+
+							// bitmap = mulref->multi_bitmap;
+							char *base_ptr = (char *)mulref;
+							__u8 *safe_bitmap = (__u8 *)(base_ptr);  // bitmap从偏移0开始
+							bool found_slot = false;
+							// mulref = (struct f2fs_mulref_block *)page_address(mulref_page);
+							// bitmap = mulref->multi_bitmap;
+							for (i = 0; i < 40 && !found_slot; i++) {  // 40 bytes = 320 bits
+								__u8 bitmap_byte = safe_bitmap[i];
+								pr_info("DEBUG: bitmap[%d] = 0x%02x\n", i, bitmap_byte);
+								if (bitmap_byte != 0xFF) {  // Not all bits are set
 									for (bit_pos = 0; bit_pos < 8; bit_pos++) {
-										if (!(bitmap[i] & (1 << bit_pos))) {
-											pr_info("[update_snap_meta] stor to mulref_blk2\n");
+										if (!(bitmap_byte & (1 << bit_pos))) {
+											pr_info("[update_snap_meta] store to mulref_blk at bitmap[%d], bit=%d\n", 
+												i, bit_pos);
 											entry_index = i * 8 + bit_pos;
-											mulref->mrentry[entry_index].inoa = cpu_to_le32(old_nid);
-											mulref->mrentry[entry_index].a_offset = cpu_to_le16(old_ofs_in_node);
-											mulref->mrentry[entry_index].inob = cpu_to_le32(le32_to_cpu(sum->nid)); /* 根据类型 */
-											mulref->mrentry[entry_index].b_offset = cpu_to_le16(le16_to_cpu(sum->ofs_in_node));
-											mulref->mrentry[entry_index].rsv = 0;
+											// 检查边界
+											if (entry_index >= 312) {  // 直接使用数字，避免ARRAY_SIZE问题
+												pr_err("entry_index out of bounds: %d (max: 311)\n", entry_index);
+												kunmap(mulref_page);  // 重要：kunmap在返回前！
+												f2fs_put_page(mulref_page, 1);
+												return -EINVAL;
+											}
+											pr_info("DEBUG: mulref = %p, entry_index = %d\n", mulref, entry_index);
+											size_t entry_offset = 40 + entry_index * 13;  // mrentry起始偏移 + 索引×大小
+											struct f2fs_mulref_entry *entry = 
+												(struct f2fs_mulref_entry *)(base_ptr + entry_offset);
+											
+											pr_info("DEBUG: entry = %p (base %p + offset %zu)\n", 
+												entry, base_ptr, entry_offset);
+											// === 安全的赋值 ===
+											__le32 temp_inoa = cpu_to_le32(old_nid);
+											__le16 temp_a_offset = cpu_to_le16(old_ofs_in_node);
+											__le32 temp_inob = cpu_to_le32(le32_to_cpu(new_nid));
+											__le16 temp_b_offset = cpu_to_le16(le16_to_cpu(old_ofs_in_node));
+											
+											pr_info("DEBUG: Writing data: inoa=%u, inob=%lu\n",
+												old_nid, new_nid);
+											// 逐个成员复制
+											memcpy(&entry->inoa, &temp_inoa, sizeof(temp_inoa));
+											memcpy(&entry->a_offset, &temp_a_offset, sizeof(temp_a_offset));
+											memcpy(&entry->inob, &temp_inob, sizeof(temp_inob));
+											memcpy(&entry->b_offset, &temp_b_offset, sizeof(temp_b_offset));
+											entry->rsv = 0;
+											pr_info("DEBUG: Entry written successfully\n");
+											// over
+											safe_bitmap[i] = bitmap_byte | (1 << bit_pos);
+											pr_info("DEBUG: Bitmap updated: 0x%02x -> 0x%02x\n",
+												bitmap_byte, safe_bitmap[i]);
 											block_t mr_blkaddr = multi_addr + cur_brf_blk;
+											pr_info("DEBUG: Setting sum: mr_blkaddr=%llu, entry_index=%d\n",
+												mr_blkaddr, entry_index);
 											sum->nid = cpu_to_le32(mr_blkaddr);
 											sum->ofs_in_node = cpu_to_le16(entry_index);
 											sum->version = 1; // more to do
-											bitmap[i] |= (1 << bit_pos);
+											// bitmap[i] |= (1 << bit_pos);
+											pr_info("DEBUG: Sum updated successfully\n");
 											set_page_dirty(mulref_page);
+											
+											kunmap(mulref_page);
 											f2fs_put_page(mulref_page, 1);
 											mulref_page = NULL;
-
+											
 											bool full = true;
 											for (k = 0; k < 40; k++) {
-												if (bitmap[k] != 0xFF) {
+												if (safe_bitmap[k] != 0xFF) {
 													full = false;
 													break;
 												}
@@ -3647,19 +3703,31 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 												cur_brf_blk++;
 												sbi->ckpt->cur_brf_blk = cpu_to_le64(cur_brf_blk);
 											}
-											goto normal_add_page;
+											found_slot = true;
+											break;
+											// pr_info("fffffk 555\n");
+											// goto normal_add_curseg;
 										}
 									}
 								}
 							}
-						normal_add_page:
+							pr_info("=== MULREF DEBUG END ===\n");
+						// normal_add_curseg:
+							if (!found_slot) {
+								pr_info("DEBUG: No free slot found in mulref block\n");
+								if (mulref_page) {
+									kunmap(mulref_page);
+									f2fs_put_page(mulref_page, 1);
+									mulref_page = NULL;
+								}
+							}
 							if(cur_brf_blk > (sbi->magic_info->segment_count_magic * 512 - 83)){
 								f2fs_put_page(mulref_page, 1);
-								pr_info("multi ref block is full2, Stop snap op\n");
+								pr_info("multi ref block is full, Stop snap op\n");
 								return 0;
 							}
-						} else if(old_nid == new_nid){
-							pr_info("Same file update [DATA: %lu]\n",old_nid);
+						// } else if(old_nid == new_nid){
+						// 	pr_info("Same file update [DATA: %lu]\n",old_nid);
 						} else if(!f2fs_test_bit(blk_off, se->cur_valid_map)){
 							pr_info("activate block 2\n");
 							sum->nid = new_nid;
