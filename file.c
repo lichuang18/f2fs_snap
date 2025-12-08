@@ -5342,8 +5342,9 @@ start_snap:
 							// invalidate_mapping_pages(new_inode->i_mapping, idx, idx);
 						} 
 					}
-					ret = share_blk_update_meta(son_inode, new_inode, do_replace, len);
-
+					pr_info("here?\n");
+					ret = share_blk_update_meta(son_inode, new_inode, do_replace, len, nipage);
+					pr_info("not here?\n");
 
 					new_inode->i_size = son_inode->i_size;
 					// new_inode->i_mapping->nrpages = son_inode->i_mapping->nrpages;

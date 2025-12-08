@@ -1021,6 +1021,7 @@ struct f2fs_mulref_entry { // 13 Bytes
 /* 4KB-sized multi ref entry block */
 struct f2fs_mulref_block { // 13 Byte * 312 + 40 Byte = 4096 K Byte
 	__u8 multi_bitmap[40]; // 40 Byte * 8 bit = 320 bit
+	// __u8 padding[1];        // 对齐到40字节
 	struct f2fs_mulref_entry mrentry[312];
 } __packed;
 
@@ -1044,7 +1045,7 @@ struct f2fs_magic_info {
 };
 
 struct f2fs_sm_info {
-	struct sit_info *sit_info;		/* whole segment information */
+	struct sit_info *sit_info;		/*- whole segment information */
 	struct free_segmap_info *free_info;	/* free segment information */
 	struct dirty_seglist_info *dirty_info;	/* dirty segment information */
 	struct curseg_info *curseg_array;	/* active segment information */

@@ -925,4 +925,4 @@ wake_up:
 	wake_up_interruptible_all(&dcc->discard_wait_queue);
 }
 int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
-												int *do_replace, pgoff_t len);
+												int *do_replace, pgoff_t len, struct page *ipage);

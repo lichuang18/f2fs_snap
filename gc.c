@@ -1478,6 +1478,7 @@ out:
  * If the parent node is not valid or the data block address is different,
  * the victim data block is ignored.
  */
+// 清理指定的segment
 static int gc_data_segment(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 		struct gc_inode_list *gc_list, unsigned int segno, int gc_type,
 		bool force_migrate)

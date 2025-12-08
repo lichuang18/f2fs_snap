@@ -8,7 +8,7 @@ sync
 
 ./test_ioctl/a.out  /mnt/ /mnt/df/ /mnt/snap
 
-#sync
+sync
 
-#echo sdsadas >> /mnt/df/file1
-#sync
+echo sdsadas >> /mnt/df/file1
+sync
