@@ -1064,71 +1064,99 @@ static bool is_alive(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 	return true;
 }
 
-bool is_alive_blk(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
+bool is_alive_mulref(struct f2fs_sb_info *sbi, struct f2fs_mulref_entry *mulref_entry,
 		struct node_info *dni, block_t blkaddr, unsigned int *nofs)
 {
 	struct page *node_page;
 	nid_t nid;
 	unsigned int ofs_in_node, max_addrs, base;
 	block_t source_blkaddr;
+	nid_t     nid_mulref[2]  = {0};
+	u16  ofs_mulref[2] = {0};
 
-	nid = le32_to_cpu(sum->nid);
-	ofs_in_node = le16_to_cpu(sum->ofs_in_node);
-	node_page = f2fs_get_node_page(sbi, nid);
-	if (IS_ERR(node_page))
-		return false;
+	bool valid[2] = { false, false };
+	int nid_i = 0;
 
-	if (f2fs_get_node_info(sbi, nid, dni, false)) {
-		f2fs_put_page(node_page, 1);
-		return false;
-	}
+	nid_mulref[0] = le32_to_cpu(mulref_entry->inoa);
+	nid_mulref[1] = le32_to_cpu(mulref_entry->inob);
+	ofs_mulref[0] = le16_to_cpu(mulref_entry->a_offset);
+	ofs_mulref[1] = le16_to_cpu(mulref_entry->b_offset);
 
-	if (sum->version != dni->version) {
-		f2fs_warn(sbi, "%s: valid data with mismatched node version.",
-			  __func__);
-		set_sbi_flag(sbi, SBI_NEED_FSCK);
-	}
-
-	if (f2fs_check_nid_range(sbi, dni->ino)) {
-		f2fs_put_page(node_page, 1);
-		return false;
-	}
-
-	if (IS_INODE(node_page)) {
-		base = offset_in_addr(F2FS_INODE(node_page));
-		max_addrs = DEF_ADDRS_PER_INODE;
-	} else {
-		base = 0;
-		max_addrs = DEF_ADDRS_PER_BLOCK;
-	}
-
-	if (base + ofs_in_node >= max_addrs) {
-		f2fs_err(sbi, "Inconsistent blkaddr offset: base:%u, ofs_in_node:%u, max:%u, ino:%u, nid:%u",
-			base, ofs_in_node, max_addrs, dni->ino, dni->nid);
-		f2fs_put_page(node_page, 1);
-		return false;
-	}
-
-	*nofs = ofs_of_node(node_page);
-	source_blkaddr = data_blkaddr(NULL, node_page, ofs_in_node);
-	f2fs_put_page(node_page, 1);
-
-	if (source_blkaddr != blkaddr) {
-#ifdef CONFIG_F2FS_CHECK_FS
-		unsigned int segno = GET_SEGNO(sbi, blkaddr);
-		unsigned long offset = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
-
-		if (unlikely(check_valid_map(sbi, segno, offset))) {
-			if (!test_and_set_bit(segno, SIT_I(sbi)->invalid_segmap)) {
-				f2fs_err(sbi, "mismatched blkaddr %u (source_blkaddr %u) in seg %u",
-					 blkaddr, source_blkaddr, segno);
-				set_sbi_flag(sbi, SBI_NEED_FSCK);
-			}
+	// nid = le32_to_cpu(sum->nid);
+	// ofs_in_node = le16_to_cpu(sum->ofs_in_node);
+	for(nid_i = 0; nid_i < 2; nid_i++){
+		nid = nid_mulref[nid_i];
+		ofs_in_node = ofs_mulref[nid_i];
+		node_page = f2fs_get_node_page(sbi, nid);
+		if (IS_ERR(node_page)){
+			valid[nid_i] = false;
+			pr_info("mulref: get_node_page failed for nid[%d] = %u, err %ld\n",
+				nid_i, nid, PTR_ERR(node_page));
+			continue;
 		}
-#endif
-		return false;
+
+		if (f2fs_get_node_info(sbi, nid, &dni[nid_i], false)) {
+			valid[nid_i] = false;
+			f2fs_put_page(node_page, 1);
+			pr_info("mulref: get_node_info failed for nid[%d] = %u\n",
+				nid_i, nid);
+			continue;
+		}
+
+		// if (sum->version != dni->version) {
+		// 	f2fs_warn(sbi, "%s: valid data with mismatched node version.",
+		// 			__func__);
+		// 	set_sbi_flag(sbi, SBI_NEED_FSCK);
+		// }
+
+		if (f2fs_check_nid_range(sbi, dni[nid_i].ino)) {
+			f2fs_put_page(node_page, 1);
+			valid[nid_i] = false;
+			continue;
+		}
+
+		if (IS_INODE(node_page)) {
+			base = offset_in_addr(F2FS_INODE(node_page));
+			max_addrs = DEF_ADDRS_PER_INODE;
+		} else { // 间接node块的处理。1018
+			base = 0;
+			max_addrs = DEF_ADDRS_PER_BLOCK;
+		}
+
+		if (base + ofs_in_node >= max_addrs) {
+			f2fs_err(sbi, "Inconsistent blkaddr offset: base:%u, ofs_in_node:%u, max:%u, ino:%u, nid:%u",
+				base, ofs_in_node, max_addrs, dni[nid_i].ino, dni[nid_i].nid);
+			f2fs_put_page(node_page, 1);
+			valid[nid_i] = false;
+			continue;
+		}
+
+		// *nofs = ofs_of_node(node_page);
+		nofs[nid_i] = ofs_of_node(node_page);
+		source_blkaddr = data_blkaddr(NULL, node_page, ofs_in_node);
+		f2fs_put_page(node_page, 1);
+
+		if (source_blkaddr != blkaddr) {
+		#ifdef CONFIG_F2FS_CHECK_FS
+			unsigned int segno = GET_SEGNO(sbi, blkaddr);
+			unsigned long offset = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
+
+			if (unlikely(check_valid_map(sbi, segno, offset))) {
+				if (!test_and_set_bit(segno, SIT_I(sbi)->invalid_segmap)) {
+					f2fs_err(sbi, "mismatched blkaddr %u (source_blkaddr %u) in seg %u",
+							blkaddr, source_blkaddr, segno);
+					set_sbi_flag(sbi, SBI_NEED_FSCK);
+				}
+			}
+		#endif
+			valid[nid_i] = false;
+			continue;
+		}
+		
+		valid[nid_i] = true;
 	}
-	return true;
+
+	return valid[0] || valid[1];
 }
 
 static int ra_data_block(struct inode *inode, pgoff_t index)
@@ -1471,6 +1499,64 @@ out:
 	return err;
 }
 
+
+int get_mulref_nid(struct f2fs_sb_info *sbi, nid_t mr_blkaddr, u16 entry_index,
+	 	struct f2fs_mulref_entry *entry){
+	struct page *mulref_page;
+	struct f2fs_mulref_block *mulref;
+	struct f2fs_mulref_entry *src;
+	
+	char *base_ptr;
+	bool used;
+	u8 byte;
+	u8 bit;
+	// int ret = 0;
+
+	pr_info("get mulref nid info\n");
+	if (entry_index >= 312) {
+			pr_err("mulref: entry_index out of range: %u (max 311)\n",
+					entry_index);
+			return -EINVAL;
+	}
+	 /* 1. 读出对应 meta page */
+	mulref_page = f2fs_get_meta_page(sbi, mr_blkaddr);
+	if (IS_ERR(mulref_page)) {
+			pr_err("mulref: failed to get meta page / get_mulref_nid: %ld\n",
+					PTR_ERR(mulref_page));
+			return PTR_ERR(mulref_page);
+	}
+
+	mulref = (struct f2fs_mulref_block *)kmap(mulref_page);
+	if (!mulref) {
+		pr_err("mulref: kmap failed / get_mulref_nid\n");
+		f2fs_put_page(mulref_page, 1);
+		return -EFAULT;
+	}
+	base_ptr = (char *)mulref;
+	/* 2. 可选：先检查 bitmap，看看这个 entry 是否被占用 */
+	byte = mulref->multi_bitmap[entry_index / 8];
+	bit  = 1 << (entry_index % 8);
+	used = !!(byte & bit);
+
+	if (!used) {
+		pr_info("mulref: entry_index %u not used (bitmap=0x%02x, bit=%u)\n",
+					entry_index, byte, entry_index % 8);
+		kunmap(mulref_page);
+		f2fs_put_page(mulref_page, 1);
+		return 1;
+	}
+	/* 3. 直接通过结构体下标访问对应 entry */
+	src = &mulref->mrentry[entry_index];
+	memcpy(entry, src, sizeof(*entry));
+	pr_info("mulref: read entry @ blk=%llu, idx=%u, entry=%p (base=%p)\n",
+			(unsigned long long)mr_blkaddr, entry_index, entry, base_ptr);
+
+	kunmap(mulref_page);
+	f2fs_put_page(mulref_page, 1);
+
+	return 0;
+}
+
 /*
  * This function tries to get parent node of victim data block, and identifies
  * data block validity. If the block is valid, copy that with cold status and
@@ -1478,11 +1564,13 @@ out:
  * If the parent node is not valid or the data block address is different,
  * the victim data block is ignored.
  */
-// 清理指定的segment
+// 清理指定的segment， 迁移指定segment的有效数据块
 static int gc_data_segment(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 		struct gc_inode_list *gc_list, unsigned int segno, int gc_type,
 		bool force_migrate)
 {
+	// 指向该段summary信息，该summary描述一个数据块属于哪个文件以及块在文件内的偏移？
+	// force_migrate。强制迁移，即使这个段可能看起来满的，主要用以处理一些竞争问题
 	struct super_block *sb = sbi->sb;
 	struct f2fs_summary *entry;
 	block_t start_addr;
@@ -1490,7 +1578,8 @@ static int gc_data_segment(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 	int phase = 0;
 	int submitted = 0;
 	unsigned int usable_blks_in_seg = f2fs_usable_blks_in_seg(sbi, segno);
-
+	// sihuo
+	int ret = 0;
 	start_addr = START_BLOCK(sbi, segno);
 
 next_step:
@@ -1499,11 +1588,14 @@ next_step:
 	for (off = 0; off < usable_blks_in_seg; off++, entry++) {
 		struct page *data_page;
 		struct inode *inode;
-		struct node_info dni; /* dnode info for the data */
-		unsigned int ofs_in_node, nofs;
+		// struct node_info dni; /* dnode info for the data */
+		// unsigned int ofs_in_node, nofs;
+		unsigned int ofs_in_node;
 		block_t start_bidx;
 		nid_t nid = le32_to_cpu(entry->nid);
 
+		struct node_info dni_s;
+		unsigned int nofs_s;
 		/*
 		 * stop BG_GC if there is not enough free sections.
 		 * Or, stop GC if the segment becomes fully valid caused by
@@ -1517,123 +1609,286 @@ next_step:
 		if (check_valid_map(sbi, segno, off) == 0)
 			continue;
 
-		if (phase == 0) {
-			f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), 1,
-							META_NAT, true);
-			continue;
-		}
+		if(entry->version != 0){// 非0 就是多引用， 注意要把原本写入时的version是从原NAT中读的
+			struct node_info dni[2];
+			unsigned int nofs[2];
+			struct f2fs_mulref_entry mulref_entry;
+			int nid_i = 0;
+			int nid_mulref[2]  = {0};
+   			u16 ofs_mulref[2] = {0};
 
-		if (phase == 1) {
-			f2fs_ra_node_page(sbi, nid);
-			continue;
-		}
+			block_t mr_blkaddr = le32_to_cpu(entry->nid);          // sum->nid 里存的 mr_blkaddr
+			u16 mr_index       = le16_to_cpu(entry->ofs_in_node);
+			ret = get_mulref_nid(sbi, mr_blkaddr, mr_index, &mulref_entry);
+			if (ret) {
+				// ret = 0  normal
+				pr_info("get_mulref_nid failed...\n");
+				continue;
+			}
+			nid_mulref[0] = le32_to_cpu(mulref_entry.inoa);
+			nid_mulref[1] = le32_to_cpu(mulref_entry.inob);
+			ofs_mulref[0] = le16_to_cpu(mulref_entry.a_offset);
+			ofs_mulref[1] = le16_to_cpu(mulref_entry.b_offset);
+			// 将GC过程分为5个阶段，减少锁竞争
+			// 提前预读所需元数据，优化IO
+			if (phase == 0) { // 预读NAT页
+				for(nid_i = 0; nid_i < 2; nid_i++){
+					if (!nid_mulref[nid_i])
+						continue;
+					f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid_mulref[nid_i]), 1,
+								META_NAT, true);
+				}
+				// f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), 1,
+				// 				META_NAT, true);
+				continue;
+			}
+				
+			if (phase == 1) { // 预读node页
+				for(nid_i = 0; nid_i < 2; nid_i++){
+					if (!nid_mulref[nid_i])
+						continue;
+					f2fs_ra_node_page(sbi, nid_mulref[nid_i]);
+				}
+				// f2fs_ra_node_page(sbi, nid);
+				continue;
+			}
+			/* Get an inode by ino with checking validity */
+			// if (!is_alive(sbi, entry, &dni, start_addr + off, &nofs))
 
-		/* Get an inode by ino with checking validity */
-		if (!is_alive(sbi, entry, &dni, start_addr + off, &nofs))
-			continue;
-
-		if (phase == 2) {
-			f2fs_ra_node_page(sbi, dni.ino);
-			continue;
-		}
-
-		ofs_in_node = le16_to_cpu(entry->ofs_in_node);
-
-		if (phase == 3) {
-			inode = f2fs_iget(sb, dni.ino);
-			if (IS_ERR(inode) || is_bad_inode(inode) ||
-					special_file(inode->i_mode))
+			if (!is_alive_mulref(sbi, &mulref_entry, dni, start_addr + off, nofs))
 				continue;
 
-			if (f2fs_has_inline_data(inode)) {
-				iput(inode);
-				set_sbi_flag(sbi, SBI_NEED_FSCK);
-				printk_ratelimited("%sRDFFS-fs (%s): "
-					"inode %lx has both inline_data flag and "
-					"data block, nid=%u, ofs_in_node=%u",
-					KERN_ERR, sbi->sb->s_id,
-					inode->i_ino, dni.nid, ofs_in_node);
+			if (phase == 2) {
+				for(nid_i = 0; nid_i < 2; nid_i++){
+					f2fs_ra_node_page(sbi, dni[nid_i].ino);
+				}
 				continue;
 			}
 
-			if (!down_write_trylock(
-				&F2FS_I(inode)->i_gc_rwsem[WRITE])) {
-				iput(inode);
-				sbi->skipped_gc_rwsem++;
+			// ofs_in_node = le16_to_cpu(entry->ofs_in_node);
+
+			if (phase == 3) { //准备GC数据
+				for(nid_i = 0; nid_i < 2; nid_i++){
+					// ofs_in_node = ofs_mulref[nid_i];
+
+					inode = f2fs_iget(sb, dni[nid_i].ino);
+					if (IS_ERR(inode) || is_bad_inode(inode) ||
+							special_file(inode->i_mode))
+						continue;
+
+					if (f2fs_has_inline_data(inode)) {
+						iput(inode);
+						set_sbi_flag(sbi, SBI_NEED_FSCK);
+						printk_ratelimited("%sRDFFS-fs (%s): "
+							"inode %lx has both inline_data flag and "
+							"data block, nid=%u, ofs_in_node=%u",
+							KERN_ERR, sbi->sb->s_id,
+							inode->i_ino, dni[nid_i].nid, ofs_mulref[nid_i]);
+						continue;
+					}
+
+					if (!down_write_trylock(
+						&F2FS_I(inode)->i_gc_rwsem[WRITE])) {
+						iput(inode);
+						sbi->skipped_gc_rwsem++;
+						continue;
+					}
+
+					start_bidx = f2fs_start_bidx_of_node(nofs[nid_i], inode) +
+										ofs_mulref[nid_i];
+
+					if (f2fs_post_read_required(inode)) {
+						int err = ra_data_block(inode, start_bidx);
+
+						up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
+						if (err) {
+							iput(inode);
+							continue;
+						}
+						add_gc_inode(gc_list, inode);
+						continue;
+					}
+
+					data_page = f2fs_get_read_data_page(inode,
+								start_bidx, REQ_RAHEAD, true);
+					up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
+					if (IS_ERR(data_page)) {
+						iput(inode);
+						continue;
+					}
+
+					f2fs_put_page(data_page, 0);
+					add_gc_inode(gc_list, inode);
+				}
 				continue;
 			}
 
-			start_bidx = f2fs_start_bidx_of_node(nofs, inode) +
-								ofs_in_node;
+			/* phase 4 */  // 实际迁移数据 这里需要特殊处理一下。
+			for(nid_i = 0; nid_i < 2; nid_i++){
+				inode = find_gc_inode(gc_list, dni[nid_i].ino);
+				if(!inode)
+					continue;
+			
+				struct f2fs_inode_info *fi = F2FS_I(inode);
+				bool locked = false;
+				int err;
 
-			if (f2fs_post_read_required(inode)) {
-				int err = ra_data_block(inode, start_bidx);
+				if (S_ISREG(inode->i_mode)) {
+					if (!down_write_trylock(&fi->i_gc_rwsem[READ])) {
+						sbi->skipped_gc_rwsem++;
+						continue;
+					}
+					if (!down_write_trylock(
+							&fi->i_gc_rwsem[WRITE])) {
+						sbi->skipped_gc_rwsem++;
+						up_write(&fi->i_gc_rwsem[READ]);
+						continue;
+					}
+					locked = true;
 
+					/* wait for all inflight aio data */
+					inode_dio_wait(inode);
+				}
+
+				start_bidx = f2fs_start_bidx_of_node(nofs[nid_i], inode)
+									+ ofs_mulref[nid_i];
+				if (f2fs_post_read_required(inode))
+					err = move_data_block(inode, start_bidx,
+								gc_type, segno, off);
+				else
+					err = move_data_page(inode, start_bidx, gc_type,
+									segno, off);
+
+				if (!err && (gc_type == FG_GC ||
+						f2fs_post_read_required(inode)))
+					submitted++;
+
+				if (locked) {
+					up_write(&fi->i_gc_rwsem[WRITE]);
+					up_write(&fi->i_gc_rwsem[READ]);
+				}
+				stat_inc_data_blk_count(sbi, 1, gc_type);
+			}
+		}else{
+			pr_info("normal process\n");
+			if (phase == 0) {
+				f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), 1,
+								META_NAT, true);
+				continue;
+			}
+
+			if (phase == 1) {
+				f2fs_ra_node_page(sbi, nid);
+				continue;
+			}
+
+			/* Get an inode by ino with checking validity */
+			if (!is_alive(sbi, entry, &dni_s, start_addr + off, &nofs_s))
+				continue;
+
+			if (phase == 2) {
+				f2fs_ra_node_page(sbi, dni_s.ino);
+				continue;
+			}
+
+			ofs_in_node = le16_to_cpu(entry->ofs_in_node);
+
+			if (phase == 3) {
+				inode = f2fs_iget(sb, dni_s.ino);
+				if (IS_ERR(inode) || is_bad_inode(inode) ||
+						special_file(inode->i_mode))
+					continue;
+
+				if (f2fs_has_inline_data(inode)) {
+					iput(inode);
+					set_sbi_flag(sbi, SBI_NEED_FSCK);
+					printk_ratelimited("%sF2FS-fs (%s): "
+						"inode %lx has both inline_data flag and "
+						"data block, nid=%u, ofs_in_node=%u",
+						KERN_ERR, sbi->sb->s_id,
+						inode->i_ino, dni_s.nid, ofs_in_node);
+					continue;
+				}
+
+				if (!down_write_trylock(
+					&F2FS_I(inode)->i_gc_rwsem[WRITE])) {
+					iput(inode);
+					sbi->skipped_gc_rwsem++;
+					continue;
+				}
+
+				start_bidx = f2fs_start_bidx_of_node(nofs_s, inode) +
+									ofs_in_node;
+
+				if (f2fs_post_read_required(inode)) {
+					int err = ra_data_block(inode, start_bidx);
+
+					up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
+					if (err) {
+						iput(inode);
+						continue;
+					}
+					add_gc_inode(gc_list, inode);
+					continue;
+				}
+
+				data_page = f2fs_get_read_data_page(inode,
+							start_bidx, REQ_RAHEAD, true);
 				up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
-				if (err) {
+				if (IS_ERR(data_page)) {
 					iput(inode);
 					continue;
 				}
+
+				f2fs_put_page(data_page, 0);
 				add_gc_inode(gc_list, inode);
 				continue;
 			}
 
-			data_page = f2fs_get_read_data_page(inode,
-						start_bidx, REQ_RAHEAD, true);
-			up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
-			if (IS_ERR(data_page)) {
-				iput(inode);
-				continue;
-			}
+			/* phase 4 */
+			inode = find_gc_inode(gc_list, dni_s.ino);
+			if (inode) {
+				struct f2fs_inode_info *fi = F2FS_I(inode);
+				bool locked = false;
+				int err;
 
-			f2fs_put_page(data_page, 0);
-			add_gc_inode(gc_list, inode);
-			continue;
-		}
+				if (S_ISREG(inode->i_mode)) {
+					if (!down_write_trylock(&fi->i_gc_rwsem[READ])) {
+						sbi->skipped_gc_rwsem++;
+						continue;
+					}
+					if (!down_write_trylock(
+							&fi->i_gc_rwsem[WRITE])) {
+						sbi->skipped_gc_rwsem++;
+						up_write(&fi->i_gc_rwsem[READ]);
+						continue;
+					}
+					locked = true;
 
-		/* phase 4 */
-		inode = find_gc_inode(gc_list, dni.ino);
-		if (inode) {
-			struct f2fs_inode_info *fi = F2FS_I(inode);
-			bool locked = false;
-			int err;
-
-			if (S_ISREG(inode->i_mode)) {
-				if (!down_write_trylock(&fi->i_gc_rwsem[READ])) {
-					sbi->skipped_gc_rwsem++;
-					continue;
+					/* wait for all inflight aio data */
+					inode_dio_wait(inode);
 				}
-				if (!down_write_trylock(
-						&fi->i_gc_rwsem[WRITE])) {
-					sbi->skipped_gc_rwsem++;
+
+				start_bidx = f2fs_start_bidx_of_node(nofs_s, inode)
+									+ ofs_in_node;
+				if (f2fs_post_read_required(inode))
+					err = move_data_block(inode, start_bidx,
+								gc_type, segno, off);
+				else
+					err = move_data_page(inode, start_bidx, gc_type,
+									segno, off);
+
+				if (!err && (gc_type == FG_GC ||
+						f2fs_post_read_required(inode)))
+					submitted++;
+
+				if (locked) {
+					up_write(&fi->i_gc_rwsem[WRITE]);
 					up_write(&fi->i_gc_rwsem[READ]);
-					continue;
 				}
-				locked = true;
 
-				/* wait for all inflight aio data */
-				inode_dio_wait(inode);
+				stat_inc_data_blk_count(sbi, 1, gc_type);
 			}
-
-			start_bidx = f2fs_start_bidx_of_node(nofs, inode)
-								+ ofs_in_node;
-			if (f2fs_post_read_required(inode))
-				err = move_data_block(inode, start_bidx,
-							gc_type, segno, off);
-			else
-				err = move_data_page(inode, start_bidx, gc_type,
-								segno, off);
-
-			if (!err && (gc_type == FG_GC ||
-					f2fs_post_read_required(inode)))
-				submitted++;
-
-			if (locked) {
-				up_write(&fi->i_gc_rwsem[WRITE]);
-				up_write(&fi->i_gc_rwsem[READ]);
-			}
-
-			stat_inc_data_blk_count(sbi, 1, gc_type);
 		}
 	}
 

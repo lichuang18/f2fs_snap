@@ -4262,80 +4262,80 @@ void f2fs_do_replace_block(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 	// Inline  和 noninline两种处理
 	// blkaddr = -> i_addr[i]blkaddr = -> i_addr[i]
 	// unsigned int segno = GET_SEGNO(sbi, blkaddr);
-	struct page *sum_page;
-	struct page *mulref_page;
-	struct f2fs_summary_block *sum_blk;
-	block_t block_addr, multi_addr;
-	unsigned int nofs;
-	struct node_info dni;
-	nid_t old_nid;
-	__le16 old_ofs_of_node;
-	struct f2fs_summary *test_sum;
-	u64 cur_brf_blk;
-	struct f2fs_mulref_block *mulref;
-	int i, bit_pos;
-	int entry_index;
+	// struct page *sum_page;
+	// struct page *mulref_page;
+	// struct f2fs_summary_block *sum_blk;
+	// block_t block_addr, multi_addr;
+	// unsigned int nofs;
+	// struct node_info dni;
+	// nid_t old_nid;
+	// __le16 old_ofs_of_node;
+	// struct f2fs_summary *test_sum;
+	// u64 cur_brf_blk;
+	// struct f2fs_mulref_block *mulref;
+	// int i, bit_pos;
+	// int entry_index;
 	
 
 
-	sum_page = find_get_page(META_MAPPING(sbi), GET_SUM_BLOCK(sbi, old_cursegno));
-	sum_blk = page_address(sum_page);
-	f2fs_put_page(sum_page, 1);
-	block_addr = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
-	old_nid = sum_blk->entries[block_addr].nid;
-	old_ofs_of_node = sum_blk->entries[block_addr].ofs_in_node;
-	test_sum->nid = old_nid;
-	test_sum->ofs_in_node = old_ofs_of_node;
-	// is_alive(sbi, sum->entries, &dni, block_addr, &nofs)
-	if(is_alive_blk(sbi, test_sum, &dni, block_addr, &nofs)){ // 多引用
-lookup_next_blk:
-		cur_brf_blk = sbi->ckpt->cur_brf_blk;
-		// block_t magic_addr = allocate_magic_block();//2 4 8递增分配
-		multi_addr = sbi->magic_info->magic_blkaddr + 83;//segment_count_magic
-		mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
-		mulref = (struct f2fs_mulref_block *)page_address(mulref_page);
-		__u8 *bitmap = mulref->multi_bitmap;
-		f2fs_put_page(mulref_page, 1);
-		for (i = 0; i < 40; i++) {  // 40 bytes = 320 bits
-			if (bitmap[i] != 0xFF) {  // Not all bits are set
-				/* Find the first clear bit in this byte */
-				for (bit_pos = 0; bit_pos < 8; bit_pos++) {
-					if (!(bitmap[i] & (1 << bit_pos))) {
-						/* Found a free entry at bit position i * 8 + bit_pos */
-						entry_index = i * 8 + bit_pos;
-						/* Mark the entry as used by setting the corresponding bit */
-						set_bit(entry_index, (unsigned long *)bitmap);
-						/* Initialize the corresponding f2fs_mulref_entry */
-						struct f2fs_mulref_entry *entry = &mulref->mrentry[entry_index];
-						entry->inoa = old_nid;  /* inode number for A */
-						entry->a_offset = old_ofs_of_node;  /* offset for A */
-						entry->inob = sum->nid;  /* inode number for B */
-						entry->b_offset = sum->ofs_in_node ;  /* offset for B */
-						entry->rsv = 0;  /* reserved, set to 0 */
-						sum->nid = cur_brf_blk;
-						sum->ofs_in_node = multi_addr + entry_index;
-						inc_node_version(sum->version);
-						goto normal_add_summary_replace;
-					}
-				}
-			}
-		}
-		sbi->ckpt->cur_brf_blk++;
-		if(cur_brf_blk > (sbi->magic_info->segment_count_magic * 512 - 83))
-			goto normal_replace;
-		goto lookup_next_blk;
-	normal_add_summary_replace:
-		__add_sum_entry(sbi, type, sum);
+// 	sum_page = find_get_page(META_MAPPING(sbi), GET_SUM_BLOCK(sbi, old_cursegno));
+// 	sum_blk = page_address(sum_page);
+// 	f2fs_put_page(sum_page, 1);
+// 	block_addr = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
+// 	old_nid = sum_blk->entries[block_addr].nid;
+// 	old_ofs_of_node = sum_blk->entries[block_addr].ofs_in_node;
+// 	test_sum->nid = old_nid;
+// 	test_sum->ofs_in_node = old_ofs_of_node;
+// 	// is_alive(sbi, sum->entries, &dni, block_addr, &nofs)
+// 	if(is_alive_blk(sbi, test_sum, &dni, block_addr, &nofs)){ // 多引用
+// lookup_next_blk:
+// 		cur_brf_blk = sbi->ckpt->cur_brf_blk;
+// 		// block_t magic_addr = allocate_magic_block();//2 4 8递增分配
+// 		multi_addr = sbi->magic_info->magic_blkaddr + 83;//segment_count_magic
+// 		mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
+// 		mulref = (struct f2fs_mulref_block *)page_address(mulref_page);
+// 		__u8 *bitmap = mulref->multi_bitmap;
+// 		f2fs_put_page(mulref_page, 1);
+// 		for (i = 0; i < 40; i++) {  // 40 bytes = 320 bits
+// 			if (bitmap[i] != 0xFF) {  // Not all bits are set
+// 				/* Find the first clear bit in this byte */
+// 				for (bit_pos = 0; bit_pos < 8; bit_pos++) {
+// 					if (!(bitmap[i] & (1 << bit_pos))) {
+// 						/* Found a free entry at bit position i * 8 + bit_pos */
+// 						entry_index = i * 8 + bit_pos;
+// 						/* Mark the entry as used by setting the corresponding bit */
+// 						set_bit(entry_index, (unsigned long *)bitmap);
+// 						/* Initialize the corresponding f2fs_mulref_entry */
+// 						struct f2fs_mulref_entry *entry = &mulref->mrentry[entry_index];
+// 						entry->inoa = old_nid;  /* inode number for A */
+// 						entry->a_offset = old_ofs_of_node;  /* offset for A */
+// 						entry->inob = sum->nid;  /* inode number for B */
+// 						entry->b_offset = sum->ofs_in_node ;  /* offset for B */
+// 						entry->rsv = 0;  /* reserved, set to 0 */
+// 						sum->nid = cur_brf_blk;
+// 						sum->ofs_in_node = multi_addr + entry_index;
+// 						inc_node_version(sum->version);
+// 						goto normal_add_summary_replace;
+// 					}
+// 				}
+// 			}
+// 		}
+// 		sbi->ckpt->cur_brf_blk++;
+// 		if(cur_brf_blk > (sbi->magic_info->segment_count_magic * 512 - 83))
+// 			goto normal_replace;
+// 		goto lookup_next_blk;
+// 	normal_add_summary_replace:
+// 		__add_sum_entry(sbi, type, sum);
 
-		if (!recover_curseg || recover_newaddr) {
-			if (!from_gc)
-				update_segment_mtime(sbi, new_blkaddr, 0);
-			update_sit_entry(sbi, new_blkaddr, 1);
-		}
-		goto skip_normal_replace;
-	}
+// 		if (!recover_curseg || recover_newaddr) {
+// 			if (!from_gc)
+// 				update_segment_mtime(sbi, new_blkaddr, 0);
+// 			update_sit_entry(sbi, new_blkaddr, 1);
+// 		}
+// 		goto skip_normal_replace;
+// 	}
 
-normal_replace:
+// normal_replace:
 	__add_sum_entry(sbi, type, sum);
 
 	if (!recover_curseg || recover_newaddr) {
@@ -4352,7 +4352,7 @@ normal_replace:
 		update_sit_entry(sbi, old_blkaddr, -1);
 	}
 
-skip_normal_replace:
+// skip_normal_replace:
 	locate_dirty_segment(sbi, GET_SEGNO(sbi, old_blkaddr));
 	locate_dirty_segment(sbi, GET_SEGNO(sbi, new_blkaddr));
 

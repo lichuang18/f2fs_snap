@@ -176,5 +176,5 @@ static inline bool has_enough_invalid_blocks(struct f2fs_sb_info *sbi)
 	return false;
 }
 
-bool is_alive_blk(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
+bool is_alive_mulref(struct f2fs_sb_info *sbi, struct f2fs_mulref_entry *sum,
 		struct node_info *dni, block_t blkaddr, unsigned int *nofs);
