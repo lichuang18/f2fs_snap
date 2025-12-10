@@ -5347,10 +5347,15 @@ start_snap:
 
 	// freeStacksnap(&stack);
 normal:
-	dput(tmp_dentry);
-	dput(dentry);
-	dput(parent_dentry);
-	path_put(&parent_path);
+	if (tmp_dentry && !IS_ERR(tmp_dentry))
+        dput(tmp_dentry);
+    if (dentry && !IS_ERR(dentry))
+        dput(dentry);
+    if (parent_dentry && !IS_ERR(parent_dentry))
+        dput(parent_dentry);
+    
+    if (!IS_ERR_OR_NULL(parent_path.dentry))
+        path_put(&parent_path);
 	freeStacksnap(&stack);
 	inode = file_inode(file);
 	// e = __loup_nat_cache(nm_i, inode->i_ino);
