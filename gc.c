@@ -1422,7 +1422,7 @@ out:
 }
 
 static int move_data_page(struct inode *inode, block_t bidx, int gc_type,
-							unsigned int segno, int off)
+							unsigned int segno, int off, u8 version)
 {
 	struct page *page;
 	int err = 0;
@@ -1470,6 +1470,7 @@ static int move_data_page(struct inode *inode, block_t bidx, int gc_type,
 			.need_lock = LOCK_REQ,
 			.io_type = FS_GC_DATA_IO,
 		};
+		fio.version = version; 
 		bool is_dirty = PageDirty(page);
 
 retry:
@@ -1482,7 +1483,7 @@ retry:
 		}
 
 		set_page_private_gcing(page);
-		err = f2fs_do_write_data_page(&fio);
+		err = f2fs_do_write_data_page(&fio);// 牛逼
 		if (err) {
 			clear_page_private_gcing(page);
 			if (err == -ENOMEM) {
@@ -1724,50 +1725,164 @@ next_step:
 			}
 
 			/* phase 4 */  // 实际迁移数据 这里需要特殊处理一下。
-			for(nid_i = 0; nid_i < 2; nid_i++){
-				inode = find_gc_inode(gc_list, dni[nid_i].ino);
-				if(!inode)
-					continue;
+			// 应该只要迁移一个数据块，没必要在for循环内调用2次
+			// AI给的方案是，for循环保留用以选择一个主有效的nid
+			// 有效的nid，这样的话从is_alive_mulref就应该给出判断哪一个是有效的
 			
-				struct f2fs_inode_info *fi = F2FS_I(inode);
+			int rep = -1;		/* 代表引用下标 */
+			block_t new_blkaddr = 0;
+
+			/* 4.1 选一个“代表引用”来做真正的 move_data_* */
+			for (nid_i = 0; nid_i < 2; nid_i++) {
+				struct inode *inode;
+
+				if (f2fs_check_nid_range(sbi, dni[nid_i].ino))
+					continue;
+
+				inode = find_gc_inode(gc_list, dni[nid_i].ino);
+				if (!inode)
+					continue;
+				if (!S_ISREG(inode->i_mode))
+					continue;
+
+				rep = nid_i;
+				break;
+			}
+
+			if (rep < 0) {
+				/* 没有任何有效的 inode（很极端的情况），跳过这个 off */
+				continue;
+			}
+
+			/* 4.2 对代表引用执行一次标准 GC 迁移流程 */
+			do {
+				struct f2fs_inode_info *fi;
 				bool locked = false;
 				int err;
+				// unsigned int ofs_in_node = ofs_mulref[rep];
 
+				inode = find_gc_inode(gc_list, dni[rep].ino);
+				if (!inode)
+					break;
+
+				fi = F2FS_I(inode);
 				if (S_ISREG(inode->i_mode)) {
 					if (!down_write_trylock(&fi->i_gc_rwsem[READ])) {
 						sbi->skipped_gc_rwsem++;
-						continue;
+						break;
 					}
-					if (!down_write_trylock(
-							&fi->i_gc_rwsem[WRITE])) {
+					if (!down_write_trylock(&fi->i_gc_rwsem[WRITE])) {
 						sbi->skipped_gc_rwsem++;
 						up_write(&fi->i_gc_rwsem[READ]);
-						continue;
+						break;
 					}
 					locked = true;
-
-					/* wait for all inflight aio data */
 					inode_dio_wait(inode);
 				}
-
-				start_bidx = f2fs_start_bidx_of_node(nofs[nid_i], inode)
-									+ ofs_mulref[nid_i];
+				start_bidx = f2fs_start_bidx_of_node(nofs[rep], inode) +
+						ofs_in_node;
 				if (f2fs_post_read_required(inode))
 					err = move_data_block(inode, start_bidx,
 								gc_type, segno, off);
-				else
-					err = move_data_page(inode, start_bidx, gc_type,
-									segno, off);
-
+				else //正常数据页的gc走的是下面的这个分支
+					err = move_data_page(inode, start_bidx,
+								gc_type, segno, off, entry->version);
 				if (!err && (gc_type == FG_GC ||
 						f2fs_post_read_required(inode)))
 					submitted++;
-
 				if (locked) {
 					up_write(&fi->i_gc_rwsem[WRITE]);
 					up_write(&fi->i_gc_rwsem[READ]);
 				}
+				if (err)
+					break;
+
 				stat_inc_data_blk_count(sbi, 1, gc_type);
+				/* 4.3 通过代表引用的 node，读出新的物理块地址 new_blkaddr */
+				{
+					struct page *np;
+					block_t blk;
+
+					np = f2fs_get_node_page(sbi, dni[rep].nid);
+					if (IS_ERR(np))
+						break;
+					blk = data_blkaddr(NULL, np, ofs_in_node);
+					f2fs_put_page(np, 1);
+					/* 如果迁移成功，这里应该是新的物理块号 */
+					new_blkaddr = blk;
+				}
+			} while (0);
+
+			if (!new_blkaddr) {
+				/* 代表引用迁移失败或无法获取新块地址，跳过同步其它引用 */
+				continue;
+			}
+
+			/* 4.4 更新其它仍然引用这个旧块的 inode 的 node 映射 */
+			for (nid_i = 0; nid_i < 2; nid_i++) {
+				struct inode *inode;
+				struct f2fs_inode_info *fi;
+				struct page *np;
+				unsigned int ofs_in_node;
+				block_t cur;
+
+				if (nid_i == rep)
+					continue;
+
+				if (f2fs_check_nid_range(sbi, dni[nid_i].ino))
+					continue;
+
+				inode = find_gc_inode(gc_list, dni[nid_i].ino);
+				if (!inode)
+					continue;
+
+				fi = F2FS_I(inode);
+				if (!down_write_trylock(&fi->i_gc_rwsem[WRITE])) {
+					sbi->skipped_gc_rwsem++;
+					continue;
+				}
+
+				np = f2fs_get_node_page(sbi, dni[nid_i].nid);
+				if (IS_ERR(np)) {
+					up_write(&fi->i_gc_rwsem[WRITE]);
+					continue;
+				}
+
+				ofs_in_node = ofs_mulref[nid_i];
+				cur = data_blkaddr(NULL, np, ofs_in_node);
+
+				/* 只有当前还指向旧 blkaddr 的引用才需要更新 */
+				if (cur == start_addr + off) {
+					struct dnode_of_data dn = { 0 };
+					dn.inode        = inode;              // 当前 nid_i 对应的 inode
+					dn.inode_page   = NULL;               // 不用就设 NULL
+					dn.node_page    = np;                 // f2fs_get_node_page 拿到的 np
+					dn.nid          = dni[nid_i].nid;     // 这个 node 的 nid
+					dn.ofs_in_node  = ofs_in_node;        // ofs_mulref[nid_i]
+					dn.inode_page_locked = false;         // 没锁 inode_page
+					dn.node_changed = false;              // 初始 false，helper 内部会设置
+					dn.cur_level    = 0;
+					dn.max_level    = 0;
+					dn.data_blkaddr = new_blkaddr;        // 代表引用迁移后的新物理块
+
+					f2fs_set_data_blkaddr(&dn);
+				// 	struct f2fs_node *rn = F2FS_NODE(np);
+				// 	__le32 *addr_array;
+
+				// 	if (IS_INODE(np)) {
+				// 		/* inode node：数据块地址在 i.i_addr[] 里 */
+				// 		addr_array = rn->i.i_addr;
+				// 	} else {
+				// 		/* direct node：数据块地址在 dn.addr[] 里 */
+				// 		addr_array = rn->dn.addr;
+				// 	}
+				// 	/* 这里 ofs_in_node 就是你之前 data_blkaddr 用的下标 */
+				// 	addr_array[ofs_in_node] = cpu_to_le32(new_blkaddr);
+				// 	set_page_dirty(np);
+				}
+
+				f2fs_put_page(np, 1);
+				up_write(&fi->i_gc_rwsem[WRITE]);
 			}
 		}else{
 			pr_info("normal process\n");
@@ -1876,7 +1991,7 @@ next_step:
 								gc_type, segno, off);
 				else
 					err = move_data_page(inode, start_bidx, gc_type,
-									segno, off);
+									segno, off, entry->version);
 
 				if (!err && (gc_type == FG_GC ||
 						f2fs_post_read_required(inode)))

@@ -3380,30 +3380,21 @@ static int __get_segment_type(struct f2fs_io_info *fio)
 
 int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 												int *do_replace, pgoff_t len, struct page *ipage){
-	if (!ipage){
-		pr_info("inode page is null\n");
-		return 1;
-	}
 	struct f2fs_sb_info *sbi = F2FS_I_SB(src_inode);
 	pgoff_t j = 0;
-	int ret;
-
-	struct f2fs_summary *sum = kmalloc(sizeof(struct f2fs_summary), GFP_KERNEL);
-	if (!sum) {
-		pr_err("Failed to allocate summary\n");
-		return -ENOMEM;
-	}
+	// int ret;
 	unsigned int old_segno, blk_off;
 	struct seg_entry *se;
 	int type;
 	block_t old_blkaddr;
-	__le16 old_ofs_in_node, new_ofs_in_node;
+	__le16 old_ofs_in_node;
+	// new_ofs_in_node;
 	block_t multi_addr = 0;
 	struct page *mulref_page = NULL;
 	u64 cur_brf_blk = 0;
 	bool need_multi_ref = false;
 	struct f2fs_mulref_block *mulref;
-	__u8 *bitmap;									
+	// __u8 *bitmap;									
 	nid_t new_nid = dst_inode->i_ino;
 	nid_t old_nid = src_inode->i_ino;									
 	struct curseg_info *old_curseg = NULL;
@@ -3416,6 +3407,25 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 	struct page *sum_page;
 	struct f2fs_summary_block *sum_blk;
 
+	char *base_ptr;
+	size_t entry_offset;
+	u32 temp_inoa,temp_inob;
+	u16 temp_a_offset,temp_b_offset;
+	__u8 *safe_bitmap;
+	block_t mr_blkaddr;
+	bool full,found_slot;
+	struct f2fs_mulref_entry *entry;
+	struct curseg_info *curseg;
+
+	struct f2fs_summary *sum = kmalloc(sizeof(struct f2fs_summary), GFP_KERNEL);
+	if (!sum) {
+		pr_err("Failed to allocate summary\n");
+		return -ENOMEM;
+	}
+	if (!ipage){
+		pr_info("inode page is null\n");
+		return 1;
+	}
 
 	multi_addr = sbi->magic_info->magic_blkaddr + 83;
 	while (j < len) {
@@ -3467,7 +3477,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 				old_version = old_sum.version;	
 				// 检查是否需要多引用（无锁快速检查）
 				if (f2fs_test_bit(blk_off, se->cur_valid_map) && old_nid != 0 && old_nid != new_nid) {
-					pr_info("[update_snap_meta] multiref [DATA: %lu, %lu]\n", old_nid,new_nid);
+					pr_info("[update_snap_meta] multiref [DATA: %u, %u]\n", old_nid,new_nid);
 					need_multi_ref = true;
 					cur_brf_blk = le64_to_cpu(sbi->ckpt->cur_brf_blk);
 					mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
@@ -3486,9 +3496,9 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 					pr_info("mulref pointer: %p\n", mulref);
 
 					// bitmap = mulref->multi_bitmap;
-					char *base_ptr = (char *)mulref;
-					__u8 *safe_bitmap = (__u8 *)(base_ptr);  // bitmap从偏移0开始
-					bool found_slot = false;
+					base_ptr = (char *)mulref;
+					safe_bitmap = (__u8 *)(base_ptr);  // bitmap从偏移0开始
+					found_slot = false;
 					for (i = 0; i < 40 && !found_slot; i++) {  // 40 bytes = 320 bits
 						__u8 bitmap_byte = safe_bitmap[i];
 						pr_info("DEBUG: bitmap[%d] = 0x%02x\n", i, bitmap_byte);
@@ -3506,19 +3516,19 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 										return -EINVAL;
 									}
 									pr_info("DEBUG: mulref = %p, entry_index = %d\n", mulref, entry_index);
-									size_t entry_offset = 40 + entry_index * 13;  // mrentry起始偏移 + 索引×大小
-									struct f2fs_mulref_entry *entry = 
+									entry_offset = 40 + entry_index * 13;  // mrentry起始偏移 + 索引×大小
+									entry = 
 										(struct f2fs_mulref_entry *)(base_ptr + entry_offset);
 									
 									pr_info("DEBUG: entry = %p (base %p + offset %zu)\n", 
                                            entry, base_ptr, entry_offset);
 									// === 安全的赋值 ===
-									__le32 temp_inoa = cpu_to_le32(old_nid);
-									__le16 temp_a_offset = cpu_to_le16(old_ofs_in_node);
-									__le32 temp_inob = cpu_to_le32(le32_to_cpu(new_nid));
-									__le16 temp_b_offset = cpu_to_le16(le16_to_cpu(old_ofs_in_node));
+									temp_inoa = cpu_to_le32(old_nid);
+									temp_a_offset = cpu_to_le16(old_ofs_in_node);
+									temp_inob = cpu_to_le32(le32_to_cpu(new_nid));
+									temp_b_offset = cpu_to_le16(le16_to_cpu(old_ofs_in_node));
 									
-									pr_info("DEBUG: Writing data: inoa=%u, inob=%lu\n",
+									pr_info("DEBUG: Writing data: inoa=%u, inob=%u\n",
                                            old_nid, new_nid);
 									// 逐个成员复制
 									memcpy(&entry->inoa, &temp_inoa, sizeof(temp_inoa));
@@ -3531,8 +3541,8 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 									safe_bitmap[i] = bitmap_byte | (1 << bit_pos);
 									pr_info("DEBUG: Bitmap updated: 0x%02x -> 0x%02x\n",
                                            bitmap_byte, safe_bitmap[i]);
-									block_t mr_blkaddr = multi_addr + cur_brf_blk;
-									pr_info("DEBUG: Setting sum: mr_blkaddr=%llu, entry_index=%d\n",
+									mr_blkaddr = multi_addr + cur_brf_blk;
+									pr_info("DEBUG: Setting sum: mr_blkaddr=%u, entry_index=%u\n",
                                            mr_blkaddr, entry_index);
 									sum->nid = cpu_to_le32(mr_blkaddr);
 									sum->ofs_in_node = cpu_to_le16(entry_index);
@@ -3545,7 +3555,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 									f2fs_put_page(mulref_page, 1);
 									mulref_page = NULL;
 									
-									bool full = true;
+									full = true;
 									for (k = 0; k < 40; k++) {
 										if (safe_bitmap[k] != 0xFF) {
 											full = false;
@@ -3612,7 +3622,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 						f2fs_put_page(sum_page, 1);
 						// 检查是否需要多引用（无锁快速检查）
 						if (f2fs_test_bit(blk_off, se->cur_valid_map) && old_nid != 0 && old_nid != new_nid){
-							pr_info("[update_snap_meta] multiref2 [DATA: %lu, %lu]\n", old_nid,new_nid);
+							pr_info("[update_snap_meta] multiref2 [DATA: %u, %u]\n", old_nid,new_nid);
 							need_multi_ref = true;
 							cur_brf_blk = le64_to_cpu(sbi->ckpt->cur_brf_blk);
 							mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
@@ -3631,9 +3641,9 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 							pr_info("mulref pointer2: %p\n", mulref);
 
 							// bitmap = mulref->multi_bitmap;
-							char *base_ptr = (char *)mulref;
-							__u8 *safe_bitmap = (__u8 *)(base_ptr);  // bitmap从偏移0开始
-							bool found_slot = false;
+							base_ptr = (char *)mulref;
+							safe_bitmap = (__u8 *)(base_ptr);  // bitmap从偏移0开始
+							found_slot = false;
 							// mulref = (struct f2fs_mulref_block *)page_address(mulref_page);
 							// bitmap = mulref->multi_bitmap;
 							for (i = 0; i < 40 && !found_slot; i++) {  // 40 bytes = 320 bits
@@ -3653,19 +3663,19 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 												return -EINVAL;
 											}
 											pr_info("DEBUG: mulref = %p, entry_index = %d\n", mulref, entry_index);
-											size_t entry_offset = 40 + entry_index * 13;  // mrentry起始偏移 + 索引×大小
-											struct f2fs_mulref_entry *entry = 
+											entry_offset = 40 + entry_index * 13;  // mrentry起始偏移 + 索引×大小
+											entry = 
 												(struct f2fs_mulref_entry *)(base_ptr + entry_offset);
 											
 											pr_info("DEBUG: entry = %p (base %p + offset %zu)\n", 
 												entry, base_ptr, entry_offset);
 											// === 安全的赋值 ===
-											__le32 temp_inoa = cpu_to_le32(old_nid);
-											__le16 temp_a_offset = cpu_to_le16(old_ofs_in_node);
-											__le32 temp_inob = cpu_to_le32(le32_to_cpu(new_nid));
-											__le16 temp_b_offset = cpu_to_le16(le16_to_cpu(old_ofs_in_node));
+											temp_inoa = cpu_to_le32(old_nid);
+											temp_a_offset = cpu_to_le16(old_ofs_in_node);
+											temp_inob = cpu_to_le32(le32_to_cpu(new_nid));
+											temp_b_offset = cpu_to_le16(le16_to_cpu(old_ofs_in_node));
 											
-											pr_info("DEBUG: Writing data: inoa=%u, inob=%lu\n",
+											pr_info("DEBUG: Writing data: inoa=%u, inob=%u\n",
 												old_nid, new_nid);
 											// 逐个成员复制
 											memcpy(&entry->inoa, &temp_inoa, sizeof(temp_inoa));
@@ -3678,8 +3688,8 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 											safe_bitmap[i] = bitmap_byte | (1 << bit_pos);
 											pr_info("DEBUG: Bitmap updated: 0x%02x -> 0x%02x\n",
 												bitmap_byte, safe_bitmap[i]);
-											block_t mr_blkaddr = multi_addr + cur_brf_blk;
-											pr_info("DEBUG: Setting sum: mr_blkaddr=%llu, entry_index=%d\n",
+											mr_blkaddr = multi_addr + cur_brf_blk;
+											pr_info("DEBUG: Setting sum: mr_blkaddr=%u, entry_index=%u\n",
 												mr_blkaddr, entry_index);
 											sum->nid = cpu_to_le32(mr_blkaddr);
 											sum->ofs_in_node = cpu_to_le16(entry_index);
@@ -3692,7 +3702,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 											f2fs_put_page(mulref_page, 1);
 											mulref_page = NULL;
 											
-											bool full = true;
+											full = true;
 											for (k = 0; k < 40; k++) {
 												if (safe_bitmap[k] != 0xFF) {
 													full = false;
@@ -3743,7 +3753,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 			}
 			 
 			__add_sum_entry(sbi, type, sum);
-			struct curseg_info *curseg = CURSEG_I(sbi, se->type);
+			curseg = CURSEG_I(sbi, se->type);
 			if (curseg) {
 				stat_inc_block_count(sbi, curseg);
 			}
@@ -3768,6 +3778,25 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	struct curseg_info *curseg = CURSEG_I(sbi, type);
 	unsigned long long old_mtime;
 	bool from_gc = (type == CURSEG_ALL_DATA_ATGC);
+	
+	/* 添加的变量 */
+	// unsigned int new_segno = GET_SEGNO(sbi, *new_blkaddr);
+	struct f2fs_summary old_sum;
+	struct page *sum_page;
+	struct f2fs_summary_block *sum_blk;
+	unsigned int old_segno, blk_off;
+	unsigned int old_type;//, type_start, type_end;
+	struct curseg_info *old_curseg = NULL;
+	nid_t old_nid;//, old_nid_b;
+	__le16 old_ofs_of_node;//, old_ofs_of_node_b;
+	__u8 old_version;
+	block_t multi_addr = 0;// global_addr = 0;
+	struct page *mulref_page = NULL;
+	u64 cur_brf_blk = 0;
+	bool is_multi_ref = false;
+	struct f2fs_mulref_block *mulref;
+	__u8 *bitmap;
+	nid_t new_nid;
 	struct seg_entry *se = NULL;
 	
 	char s_type[10];
@@ -3778,35 +3807,17 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	}else {
 		strcpy(s_type, "OTHER");
 	}
-	/* 添加的变量 */
-	// unsigned int new_segno = GET_SEGNO(sbi, *new_blkaddr);
 
-	struct f2fs_summary old_sum;
-	struct page *sum_page;
-	struct f2fs_summary_block *sum_blk;
-	unsigned int old_segno, blk_off;
-	unsigned int old_type, type_start, type_end;
-	struct curseg_info *old_curseg = NULL;
-	nid_t old_nid, old_nid_b;
-	__le16 old_ofs_of_node, old_ofs_of_node_b;
-	__u8 old_version;
-	block_t multi_addr = 0, global_addr = 0;
-	struct page *mulref_page = NULL;
-	u64 cur_brf_blk = 0;
-	bool is_multi_ref = false;
-	struct f2fs_mulref_block *mulref;
-	__u8 *bitmap;
-
-	unsigned int nofs;
-	struct node_info dni;
-	int i, j, bit_pos;
-	u16 entry_index;
+	// unsigned int nofs;
+	// struct node_info dni;
+	// int i, j, bit_pos;
+	// u16 entry_index;
 	
 
 	/* 添加的逻辑：通过old_addr获取对应的summary entry并打印信息 */
 	if (__is_valid_data_blkaddr(old_blkaddr) && fio->type == DATA) {
 		old_segno = GET_SEGNO(sbi, old_blkaddr);
-		nid_t new_nid = le32_to_cpu(sum->nid);
+		new_nid = le32_to_cpu(sum->nid);
 		blk_off = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
 
 		down_read(&SM_I(sbi)->curseg_lock);
@@ -3831,13 +3842,13 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 					old_version = old_sum.version;	
 					// 检查是否需要多引用（无锁快速检查）
 					if(old_nid != 0 && old_nid != new_nid){
-						pr_info("[update_snap_meta] multiref [DATA: %lu, %lu]\n", old_nid,new_nid);
+						pr_info("[update_snap_meta] multiref [DATA: %u, %u]\n", old_nid,new_nid);
 						is_multi_ref = true;
 						multi_addr = sbi->magic_info->magic_blkaddr + 83;
 						cur_brf_blk = le64_to_cpu(sbi->ckpt->cur_brf_blk);
 						mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
 					} else if(old_nid == new_nid){
-						pr_info("Same file update [%s: %lu]\n",s_type, old_nid);
+						pr_info("Same file update [%s: %u]\n",s_type, old_nid);
 						goto skip_pre;
 					} else if(old_nid == 0){
 						pr_info("Fresh block allocation\n");
@@ -3858,13 +3869,13 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 						f2fs_put_page(sum_page, 1);
 						// 检查是否需要多引用（无锁快速检查）
 						if(old_nid != 0 && old_nid != new_nid){
-							pr_info("[update_snap_meta] multiref [DATA: %lu, %lu]\n", old_nid,new_nid);
+							pr_info("[update_snap_meta] multiref [DATA: %u, %u]\n", old_nid,new_nid);
 							is_multi_ref = true;
 							multi_addr = sbi->magic_info->magic_blkaddr + 83;
 							cur_brf_blk = le64_to_cpu(sbi->ckpt->cur_brf_blk);
 							mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
 						} else if(old_nid == new_nid){
-							pr_info("Same file update [DATA: %lu]\n",old_nid);
+							pr_info("Same file update [DATA: %u]\n",old_nid);
 							goto skip_pre;
 						} else if(old_nid == 0){
 							pr_info("Fresh block allocation\n");
@@ -3891,9 +3902,9 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 skip_pre:
 	if(old_blkaddr == NEW_ADDR)
 	{
-		pr_info("new addr write[%s: %lu]\n",s_type,le32_to_cpu(sum->nid));
+		pr_info("new addr write[%s: %u]\n",s_type,le32_to_cpu(sum->nid));
 	} else if(old_blkaddr == NULL_ADDR){
-		pr_info("null addr write[%s: %lu]\n",s_type,le32_to_cpu(sum->nid));
+		pr_info("null addr write[%s: %u]\n",s_type,le32_to_cpu(sum->nid));
 	}
 	// 原代码开始处
 	down_read(&SM_I(sbi)->curseg_lock);
@@ -3945,7 +3956,7 @@ skip_pre:
 		mulref_page = NULL;
 	}	
 
-normal:
+// normal:
 	/*
 	 * __add_sum_entry should be resided under the curseg_mutex
 	 * because, this function updates a summary entry in the
@@ -3973,7 +3984,6 @@ normal:
 	update_sit_entry(sbi, *new_blkaddr, 1);
 	update_sit_entry(sbi, old_blkaddr, -1);	
 
-skip_update_sit:
 	// if (sum_page) f2fs_put_page(sum_page, 1);
 	if (mulref_page) f2fs_put_page(mulref_page, 1);
 
@@ -4207,6 +4217,7 @@ void f2fs_do_replace_block(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 				bool recover_curseg, bool recover_newaddr,
 				bool from_gc)
 {
+	// recovery 这里先不更新
 	struct sit_info *sit_i = SIT_I(sbi);
 	struct curseg_info *curseg;
 	unsigned int segno, old_cursegno;
@@ -4256,86 +4267,6 @@ void f2fs_do_replace_block(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 	}
 
 	curseg->next_blkoff = GET_BLKOFF_FROM_SEG0(sbi, new_blkaddr);
-	// sihuo
-	// struct page *node_page = f2fs_get_node_page(sbi, nid);
-	// block_t blkaddr = data_blkaddr(NULL, node_page, ofs_in_node);
-	// Inline  和 noninline两种处理
-	// blkaddr = -> i_addr[i]blkaddr = -> i_addr[i]
-	// unsigned int segno = GET_SEGNO(sbi, blkaddr);
-	// struct page *sum_page;
-	// struct page *mulref_page;
-	// struct f2fs_summary_block *sum_blk;
-	// block_t block_addr, multi_addr;
-	// unsigned int nofs;
-	// struct node_info dni;
-	// nid_t old_nid;
-	// __le16 old_ofs_of_node;
-	// struct f2fs_summary *test_sum;
-	// u64 cur_brf_blk;
-	// struct f2fs_mulref_block *mulref;
-	// int i, bit_pos;
-	// int entry_index;
-	
-
-
-// 	sum_page = find_get_page(META_MAPPING(sbi), GET_SUM_BLOCK(sbi, old_cursegno));
-// 	sum_blk = page_address(sum_page);
-// 	f2fs_put_page(sum_page, 1);
-// 	block_addr = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
-// 	old_nid = sum_blk->entries[block_addr].nid;
-// 	old_ofs_of_node = sum_blk->entries[block_addr].ofs_in_node;
-// 	test_sum->nid = old_nid;
-// 	test_sum->ofs_in_node = old_ofs_of_node;
-// 	// is_alive(sbi, sum->entries, &dni, block_addr, &nofs)
-// 	if(is_alive_blk(sbi, test_sum, &dni, block_addr, &nofs)){ // 多引用
-// lookup_next_blk:
-// 		cur_brf_blk = sbi->ckpt->cur_brf_blk;
-// 		// block_t magic_addr = allocate_magic_block();//2 4 8递增分配
-// 		multi_addr = sbi->magic_info->magic_blkaddr + 83;//segment_count_magic
-// 		mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
-// 		mulref = (struct f2fs_mulref_block *)page_address(mulref_page);
-// 		__u8 *bitmap = mulref->multi_bitmap;
-// 		f2fs_put_page(mulref_page, 1);
-// 		for (i = 0; i < 40; i++) {  // 40 bytes = 320 bits
-// 			if (bitmap[i] != 0xFF) {  // Not all bits are set
-// 				/* Find the first clear bit in this byte */
-// 				for (bit_pos = 0; bit_pos < 8; bit_pos++) {
-// 					if (!(bitmap[i] & (1 << bit_pos))) {
-// 						/* Found a free entry at bit position i * 8 + bit_pos */
-// 						entry_index = i * 8 + bit_pos;
-// 						/* Mark the entry as used by setting the corresponding bit */
-// 						set_bit(entry_index, (unsigned long *)bitmap);
-// 						/* Initialize the corresponding f2fs_mulref_entry */
-// 						struct f2fs_mulref_entry *entry = &mulref->mrentry[entry_index];
-// 						entry->inoa = old_nid;  /* inode number for A */
-// 						entry->a_offset = old_ofs_of_node;  /* offset for A */
-// 						entry->inob = sum->nid;  /* inode number for B */
-// 						entry->b_offset = sum->ofs_in_node ;  /* offset for B */
-// 						entry->rsv = 0;  /* reserved, set to 0 */
-// 						sum->nid = cur_brf_blk;
-// 						sum->ofs_in_node = multi_addr + entry_index;
-// 						inc_node_version(sum->version);
-// 						goto normal_add_summary_replace;
-// 					}
-// 				}
-// 			}
-// 		}
-// 		sbi->ckpt->cur_brf_blk++;
-// 		if(cur_brf_blk > (sbi->magic_info->segment_count_magic * 512 - 83))
-// 			goto normal_replace;
-// 		goto lookup_next_blk;
-// 	normal_add_summary_replace:
-// 		__add_sum_entry(sbi, type, sum);
-
-// 		if (!recover_curseg || recover_newaddr) {
-// 			if (!from_gc)
-// 				update_segment_mtime(sbi, new_blkaddr, 0);
-// 			update_sit_entry(sbi, new_blkaddr, 1);
-// 		}
-// 		goto skip_normal_replace;
-// 	}
-
-// normal_replace:
 	__add_sum_entry(sbi, type, sum);
 
 	if (!recover_curseg || recover_newaddr) {
@@ -4352,7 +4283,6 @@ void f2fs_do_replace_block(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 		update_sit_entry(sbi, old_blkaddr, -1);
 	}
 
-// skip_normal_replace:
 	locate_dirty_segment(sbi, GET_SEGNO(sbi, old_blkaddr));
 	locate_dirty_segment(sbi, GET_SEGNO(sbi, new_blkaddr));
 
@@ -5793,6 +5723,7 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	struct f2fs_super_block *raw_super = F2FS_RAW_SUPER(sbi);
 	struct f2fs_checkpoint *ckpt = F2FS_CKPT(sbi);
 	struct f2fs_sm_info *sm_info;
+	struct f2fs_magic_info *magic_info;
 	int err;
 	sm_info = f2fs_kzalloc(sbi, sizeof(struct f2fs_sm_info), GFP_KERNEL);
 	if (!sm_info)
@@ -5810,13 +5741,13 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	// lichuang
 	sm_info->magic_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);
 
-	struct f2fs_magic_info *magic_info;
+	
 	magic_info = f2fs_kzalloc(sbi, sizeof(struct f2fs_magic_info), GFP_KERNEL);
 	sbi->magic_info = magic_info;
 	magic_info->magic_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);
 	magic_info->segment_count_magic = le32_to_cpu(raw_super->segment_count_magic);
 	
-	pr_info("i have get magic: addr[%x], count[%llu]\n",sm_info->magic_blkaddr,magic_info->segment_count_magic);
+	pr_info("i have get magic: addr[%x], count[%u]\n",sm_info->magic_blkaddr,magic_info->segment_count_magic);
 	magic_info->mul_blocks =kmalloc_array(512 * magic_info->segment_count_magic,
                   sizeof(struct f2fs_mulref_block),
                   GFP_KERNEL);

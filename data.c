@@ -2757,8 +2757,8 @@ got_it:
 	if (err)
 		goto out_writepage;
 
-	fio->version = ni.version;
-
+	// fio->version = ni.version;
+	fio->version = 0;
 	err = f2fs_encrypt_one_page(fio);
 	if (err)
 		goto out_writepage;
