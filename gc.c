@@ -1426,7 +1426,7 @@ static int move_data_page(struct inode *inode, block_t bidx, int gc_type,
 {
 	struct page *page;
 	int err = 0;
-
+	bool is_dirty;
 	page = f2fs_get_lock_data_page(inode, bidx, true);
 	if (IS_ERR(page))
 		return PTR_ERR(page);
@@ -1471,7 +1471,7 @@ static int move_data_page(struct inode *inode, block_t bidx, int gc_type,
 			.io_type = FS_GC_DATA_IO,
 		};
 		fio.version = version; 
-		bool is_dirty = PageDirty(page);
+		is_dirty = PageDirty(page);
 
 retry:
 		f2fs_wait_on_page_writeback(page, DATA, true, true);
@@ -1581,6 +1581,8 @@ static int gc_data_segment(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 	unsigned int usable_blks_in_seg = f2fs_usable_blks_in_seg(sbi, segno);
 	// sihuo
 	int ret = 0;
+	int rep = -1;		/* 代表引用下标 */
+	block_t new_blkaddr = 0;
 	start_addr = START_BLOCK(sbi, segno);
 
 next_step:
@@ -1729,8 +1731,8 @@ next_step:
 			// AI给的方案是，for循环保留用以选择一个主有效的nid
 			// 有效的nid，这样的话从is_alive_mulref就应该给出判断哪一个是有效的
 			
-			int rep = -1;		/* 代表引用下标 */
-			block_t new_blkaddr = 0;
+			rep = -1;		/* 代表引用下标 */
+			new_blkaddr = 0;
 
 			/* 4.1 选一个“代表引用”来做真正的 move_data_* */
 			for (nid_i = 0; nid_i < 2; nid_i++) {

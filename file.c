@@ -63,7 +63,7 @@
 
 #define MAX_DENTRY_SLOT 128      /* F2FS 目录块最大 slot 数，根据版本可调整 */
 #define BITMAP_SIZE_BYTES 32     /* F2FS 目录块 bitmap 区大小，根据版本可调整 */
-#define F2FS_SLOT_LEN 256        /* 每个 slot 对应的最大文件名长度 */
+#define F2FS_SLOT_LEN_F 256        /* 每个 slot 对应的最大文件名长度 */
 
 
 typedef struct StacksnapNode {
@@ -3757,7 +3757,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		inline_size = bitmap_size
 							+ reserved_size
 							+ SIZE_OF_DIR_ENTRY * entry_cnt
-							+ F2FS_SLOT_LEN * entry_cnt;
+							+ F2FS_SLOT_LEN_F * entry_cnt;
 	}
 	
 	if (f2fs_has_inline_dentry(src_inode)) {
@@ -4920,11 +4920,11 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	struct f2fs_magic_info *magic_i = MAGIC_I(sbi); // sihuo
 	// struct inode *parent_inode;
 
-	struct writeback_control wbc = {
-		.sync_mode = WB_SYNC_ALL,
-		.nr_to_write = LONG_MAX,
-		.for_reclaim = 0,
-	};
+	// struct writeback_control wbc = {
+	// 	.sync_mode = WB_SYNC_ALL,
+	// 	.nr_to_write = LONG_MAX,
+	// 	.for_reclaim = 0,
+	// };
 	struct inode *pra_inode, *son_inode, *snap_inode, *new_inode;
 	struct dentry *parent_dentry, *dentry;
 	struct super_block *sb = inode->i_sb;
@@ -4935,10 +4935,24 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	struct f2fs_magic_entry *entry = NULL;// &block->entries[loc_oft_in_block];
 	size_t pra_ino, son_ino, snap_ino;
 	umode_t mode;
-	int entry_cnt, bitmap_size, reserved_size;
+	// int entry_cnt, bitmap_size, reserved_size;
 	struct fscrypt_str dot = FSTR_INIT(".", 1);
 	struct fscrypt_str dotdot = FSTR_INIT("..", 2);
 	struct dentry *tmp_dentry;
+
+	struct page *ndpage, *page;
+	void *inline_dentry, *inline_dentry2; // inline数据
+	struct f2fs_dentry_ptr d;
+	struct f2fs_dir_entry *de;
+	// size_t bit_pos;
+	struct page *nipage, *tipage;
+	// size_t inline_size = 0;
+	size_t idx;	
+	void *page_addr;
+	struct f2fs_inode *src_fi, *new_fi;
+
+	int *do_replace;
+	pgoff_t len = 0;
 
 	struct path parent_path;
 	ret = kern_path("/mnt/", LOOKUP_FOLLOW | LOOKUP_REVAL, &parent_path);
@@ -4966,7 +4980,7 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		}
 
 		if(ver != 0 && entry->flag != 0 && entry->snap_ino != 0){
-			pr_info("[COW] Find snapshot, magic-flag-snap_nid[%lu,%lu.%lu], should COW\n",
+			pr_info("[COW] Find snapshot, magic-flag-snap_nid[%zu,%u.%u], should COW\n",
 				ver,entry->flag,entry->snap_ino);
 			snap_ino = entry->snap_ino;
 			goto start_snap;
@@ -5001,17 +5015,6 @@ start_snap:
 		dentry = d_find_any_alias(son_inode);
 		pr_info("[COW] pra_ino/name [%lu,%s],son_ino/name [%lu,%s]\n", pra_ino, 
 			parent_dentry->d_name.name, son_ino, dentry->d_name.name);
-
-		struct page *ndpage, *page;
-		void *inline_dentry, *inline_dentry2; // inline数据
-		struct f2fs_dentry_ptr d;
-		struct f2fs_dir_entry *de;
-		size_t bit_pos;
-		struct page *nipage, *tipage;
-		size_t inline_size = 0;
-		size_t idx;	
-		void *page_addr;
-		struct f2fs_inode *src_fi, *new_fi;
 
 		if (S_ISDIR(pra_inode->i_mode)) {
 			pr_info("[COW] pra[%lu,%s],gen[%lu,%s],son[%lu,%s]\n", pra_inode->i_ino, parent_dentry->d_name.name, snap_inode->i_ino, 
@@ -5112,7 +5115,7 @@ start_snap:
 					for (idx = 0; idx < DEF_ADDRS_PER_INODE; idx++) {
 						if (src_fi->i_addr[idx] != NULL_ADDR && src_fi->i_addr[idx] != NEW_ADDR) {
 							// 让snap也指向这个数据块
-							pr_info("[COW] i_addr[%3d]=0x%08x, valid_addr\n", idx, src_fi->i_addr[idx]);
+							pr_info("[COW] i_addr[%3zu]=0x%08x, valid_addr\n", idx, src_fi->i_addr[idx]);
 							// {
 							// 	ret = filemap_fdatawrite(son_inode->i_mapping);
 							// 	if (ret)
@@ -5245,8 +5248,6 @@ start_snap:
 						unsigned int valid_blocks = new_inode->i_blocks / (F2FS_BLKSIZE >> 9);
 						f2fs_i_blocks_write(new_inode, valid_blocks, true, true);
 					}
-					int *do_replace;
-					pgoff_t len = 0;
 					do_replace = f2fs_kvzalloc(F2FS_I_SB(new_inode),
 								array_size(DEF_ADDRS_PER_INODE, sizeof(int)),
 								GFP_NOFS);

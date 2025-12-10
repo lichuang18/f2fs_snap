@@ -491,8 +491,7 @@ static void set_node_addr(struct f2fs_sb_info *sbi, struct node_info *ni,
 
 	/* increment version no as node is removed */
 	if (nat_get_blkaddr(e) != NEW_ADDR && new_blkaddr == NULL_ADDR) {
-		unsigned char version = nat_get_version(e);
-
+		// unsigned char version = nat_get_version(e);
 		//  nat_set_version(e, inc_node_version(version));
 	}
 
