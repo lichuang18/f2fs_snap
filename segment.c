@@ -3909,7 +3909,7 @@ skip_pre:
 	{
 		pr_info("new addr write[%s: %u]\n",s_type,le32_to_cpu(sum->nid));
 	} else if(old_blkaddr == NULL_ADDR){
-		pr_info("null addr write\n");
+		// pr_info("null addr write\n");
 	}
 	// 原代码开始处
 	down_read(&SM_I(sbi)->curseg_lock);
