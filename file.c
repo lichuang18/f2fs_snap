@@ -63,7 +63,7 @@
 
 #define MAX_DENTRY_SLOT 128      /* F2FS 目录块最大 slot 数，根据版本可调整 */
 #define BITMAP_SIZE_BYTES 32     /* F2FS 目录块 bitmap 区大小，根据版本可调整 */
-#define F2FS_SLOT_LEN_F 256        /* 每个 slot 对应的最大文件名长度 */
+// #define F2FS_SLOT_LEN_F 256        /* 每个 slot 对应的最大文件名长度 */
 
 
 typedef struct StacksnapNode {
@@ -3757,7 +3757,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		inline_size = bitmap_size
 							+ reserved_size
 							+ SIZE_OF_DIR_ENTRY * entry_cnt
-							+ F2FS_SLOT_LEN_F * entry_cnt;
+							+ F2FS_SLOT_LEN * entry_cnt;
 	}
 	
 	if (f2fs_has_inline_dentry(src_inode)) {
@@ -4957,6 +4957,13 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	struct path parent_path;
 	ret = kern_path("/mnt/", LOOKUP_FOLLOW | LOOKUP_REVAL, &parent_path);
 
+
+	if(!magic_i){
+		pr_info("[COW] magic_i is null\n");
+		freeStacksnap(&stack);
+		goto normal;
+	}
+
     snap_initStack(&stack);
 	snap_push(&stack, inode->i_ino);
 	while (inode){
@@ -4969,13 +4976,18 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		snap_push(&stack, parent_dentry->d_inode->i_ino);
 		e = __loup_nat_cache(nm_i, parent_dentry->d_inode->i_ino);
 		ver = nat_get_version(e);
+		if (ver == 0) {
+			// version 为 0，不支持快照
+			pr_info("[COW] ver is 0, no need snapshot\n");
+			goto normal;
+		}
 		loc_block = ver / 799;
 		loc_oft_in_block = ver % 799;
 		block = &magic_i->magic_blocks[loc_block];
 		entry = &block->entries[loc_oft_in_block];
-		if(!magic_i){
-			pr_info("[COW] magic_i is null\n");
-			freeStacksnap(&stack);
+
+		if (entry->flag == 0 || entry->snap_ino == 0) {
+			// 没有快照
 			goto normal;
 		}
 
@@ -4989,12 +5001,8 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
             break;
         }
 		
-		
 		inode = parent_dentry->d_inode;
 	}
-	dput(dentry);
-	dput(parent_dentry);
-	dput(tmp_dentry);
 	goto normal;
 	
 start_snap:

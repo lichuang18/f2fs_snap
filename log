@@ -1,513 +1,2745 @@
----- fk founder 1
-a4 81 0d 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 f9 33 c1
-00 b8 da 4a
-f8 17 a9 e4
-c0 20 22 7b
-04 00 00 00
-01 00 00 00
-00 00 00 00
-52 03 28 69
-36 05 5f 2c
-54 03 28 69
-22 53 05 28
-54 03 28 69
-22 53 05 28
-00 00 00 00
-00 00 00 00
-01 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-38 17 a9 e4
-38 17 a9 e4
-4f 29 58 00
-00 00 00 00
-00 00 00 00
-08 1c ac 9c
-68 05 0a 76
-18 18 d7 5c
-00 18 d7 5c
-00 00 00 00
-88 17 a9 e4
-88 17 a9 e4
-98 05 0a 76
-48 bd da 4a
-a8 17 a9 e4
-a8 17 a9 e4
-f0 48 70 76
-00 00 00 00
-00 00 00 00
-00 00 00 00
-01 00 00 00
-01 00 00 00
-60 f7 33 c1
-00 00 00 00
-80 16 a9 e4
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-28 18 a9 e4
-28 18 a9 e4
-ca 0c 10 01
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-80 0a 34 c1
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-88 18 a9 e4
-88 18 a9 e4
-00 00 00 00
-a0 18 a9 e4
-a0 18 a9 e4
-00 00 00 00
-b8 18 a9 e4
-b8 18 a9 e4
-00 00 00 00
-85 e4 53 ca
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-03 00 00 00
-02 06 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-38 19 a9 e4
-38 19 a9 e4
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-a8 19 a9 e4
-a8 19 a9 e4
-c8 83 05 64
-c8 83 05 64
-c8 19 a9 e4
-c8 19 a9 e4
-d8 19 a9 e4
-d8 19 a9 e4
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 1a a9 e4
-00 1a a9 e4
-50 1a d3 54
-00 00 00 00
-00 00 00 00
-00 00 00 00
-30 1a a9 e4
-30 1a a9 e4
-00 00 00 00
-00 00 00 00
-00 00 00 00
-58 1a a9 e4
-58 1a a9 e4
-00 00 00 00
-01 80 29 36
-00 00 00 00
-80 1a a9 e4
-80 1a a9 e4
-00 00 00 00
-32 00 00 00
-52 03 28 69
-36 05 5f 2c
-52 03 28 69
-36 05 5f 2c
-52 03 28 69
-36 05 5f 2c
-52 03 28 69
-36 05 5f 2c
-52 03 28 69
-36 05 5f 2c
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-ff 11 16 25
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-a4 81 0d 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 f9 33 c1
-00 e8 03 67
-f8 20 a9 e4
-80 0a 78 94
-5b 00 00 00
-01 00 00 00
-81 00 00 00
-7f f6 27 69
-11 f4 29 17
-7f f6 27 69
-11 f4 29 17
-7f f6 27 69
-11 f4 29 17
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-38 20 a9 e4
-38 20 a9 e4
-b3 0f 26 00
-00 00 00 00
-00 00 00 00
-b8 31 52 9c
-68 68 a9 e4
-e8 48 a9 e4
-00 18 d7 5c
-bb 00 00 00
-88 20 a9 e4
-88 20 a9 e4
-98 68 a9 e4
-18 49 a9 e4
-a8 20 a9 e4
-a8 20 a9 e4
-b0 66 91 47
-00 00 00 00
-00 00 00 00
-00 00 00 00
-01 00 00 00
-00 00 00 00
-60 f7 33 c1
-00 00 00 00
-80 1f a9 e4
-00 00 00 00
-80 0e 45 51
-00 00 00 00
-00 00 00 00
-00 00 00 00
-28 21 a9 e4
-28 21 a9 e4
-ca 0c 10 01
-00 00 00 00
-00 00 00 00
-01 00 00 00
-00 00 00 00
-80 0a 34 c1
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-88 21 a9 e4
-88 21 a9 e4
-00 00 00 00
-a0 21 a9 e4
-a0 21 a9 e4
-00 00 00 00
-b8 21 a9 e4
-b8 21 a9 e4
-00 00 00 00
-f5 54 c4 c9
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-04 00 00 00
-00 16 10 02
-00 00 00 00
-00 00 00 00
-00 00 00 00
-38 22 a9 e4
-38 22 a9 e4
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-a8 22 a9 e4
-a8 22 a9 e4
-b8 22 a9 e4
-b8 22 a9 e4
-c8 22 a9 e4
-c8 22 a9 e4
-d8 22 a9 e4
-d8 22 a9 e4
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 23 a9 e4
-00 23 a9 e4
-90 11 d3 54
-00 00 00 00
-00 00 00 00
-00 00 00 00
-30 23 a9 e4
-30 23 a9 e4
-00 00 00 00
-00 00 00 00
-00 00 00 00
-58 23 a9 e4
-58 23 a9 e4
-00 00 00 00
-01 52 8f 5c
-00 00 00 00
-80 23 a9 e4
-80 23 a9 e4
-00 00 00 00
-32 00 00 00
-7f f6 27 69
-11 f4 29 17
-7f f6 27 69
-11 f4 29 17
-7f f6 27 69
-11 f4 29 17
-7f f6 27 69
-11 f4 29 17
-7f f6 27 69
-11 f4 29 17
-00 00 00 00
-00 00 00 00
-a4 81 0d 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 f9 33 c1
-00 e8 93 45
-78 25 a9 e4
-b0 27 22 7b
-09 00 00 00
-01 00 00 00
-81 00 00 00
-91 fe 27 69
-62 cd d1 28
-91 fe 27 69
-62 cd d1 28
-91 fe 27 69
-62 cd d1 28
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-b8 24 a9 e4
-b8 24 a9 e4
-2c 97 45 00
-00 00 00 00
-00 00 00 00
-58 0a d3 9c
-e8 b6 48 ef
-68 b2 48 ef
-00 18 d7 5c
-bb 00 00 00
-08 25 a9 e4
-08 25 a9 e4
-18 b7 48 ef
-98 b2 48 ef
-28 25 a9 e4
-28 25 a9 e4
-70 24 5c ef
-00 00 00 00
-00 00 00 00
-00 00 00 00
-01 00 00 00
-00 00 00 00
-60 f7 33 c1
-00 00 00 00
-00 24 a9 e4
-00 00 00 00
-00 9e 4f 51
-00 00 00 00
-00 00 00 00
-00 00 00 00
-a8 25 a9 e4
-a8 25 a9 e4
-ca 0c 10 01
-00 00 00 00
-00 00 00 00
-01 00 00 00
-00 00 00 00
-80 0a 34 c1
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-08 26 a9 e4
-08 26 a9 e4
-00 00 00 00
-20 26 a9 e4
-20 26 a9 e4
-00 00 00 00
-38 26 a9 e4
-38 26 a9 e4
-00 00 00 00
-64 ca ae a0
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
-00 00 00 00
+diff --git a/data.c b/data.c
+index c6d16c6..5b8d1fd 100644
+--- a/data.c
++++ b/data.c
+@@ -2757,8 +2757,8 @@ got_it:
+ 	if (err)
+ 		goto out_writepage;
+ 
+-	fio->version = ni.version;
+-
++	// fio->version = ni.version;
++	fio->version = 0;
+ 	err = f2fs_encrypt_one_page(fio);
+ 	if (err)
+ 		goto out_writepage;
+@@ -3657,7 +3657,7 @@ static void f2fs_dio_submit_bio(struct bio *bio, struct inode *inode,
+ {
+ 	struct f2fs_private_dio *dio;
+ 	bool write = (bio_op(bio) == REQ_OP_WRITE);
+-	struct bvec_iter *iter = &bio->bi_iter;
++	// struct bvec_iter *iter = &bio->bi_iter;
+ 	dio = f2fs_kzalloc(F2FS_I_SB(inode),
+ 			sizeof(struct f2fs_private_dio), GFP_NOFS);
+ 	if (!dio)
+diff --git a/file.c b/file.c
+index 8fc31b1..434926a 100644
+--- a/file.c
++++ b/file.c
+@@ -63,7 +63,7 @@
+ 
+ #define MAX_DENTRY_SLOT 128      /* F2FS 目录块最大 slot 数，根据版本可调整 */
+ #define BITMAP_SIZE_BYTES 32     /* F2FS 目录块 bitmap 区大小，根据版本可调整 */
+-#define F2FS_SLOT_LEN 256        /* 每个 slot 对应的最大文件名长度 */
+// +#define F2FS_SLOT_LEN_F 256        /* 每个 slot 对应的最大文件名长度 */
+ 
+ 
+ typedef struct StacksnapNode {
+@@ -3526,82 +3526,7 @@ static int f2fs_get_compress_blocks(struct file *filp, unsigned long arg)
+ 	return put_user(blocks, (u64 __user *)arg);
+ }
+ 
+-// static int f2fs_write_data_page_compat(struct inode *inode, void *buf, unsigned int idx, struct page *ipage)
+-// {
+-//     struct page *page;
+-//     struct writeback_control wbc;
+-//     int ret;
+-// 	struct f2fs_io_info fio;
+-
+-//     /* 初始化 writeback_control */
+-//     memset(&wbc, 0, sizeof(wbc));
+-//     wbc.sync_mode = WB_SYNC_ALL;
+-//     wbc.nr_to_write = 1;
+-
+-//     /* 获取目标页 */
+-//     page = f2fs_get_new_data_page(inode, ipage , idx, false);
+-
+-//     if (IS_ERR(page))
+-//         return PTR_ERR(page);
+-
+-//     /* 拷贝数据 */
+-//     memcpy(page_address(page), buf, PAGE_SIZE);
+-
+-
+-// 	memset(&fio, 0, sizeof(fio));
+-// 	fio.sbi       = F2FS_I_SB(inode);
+-// 	fio.ino     = inode->i_ino;
+-// 	fio.op        = REQ_OP_WRITE;
+-// 	fio.op_flags  = REQ_SYNC;
+-// 	fio.page      = page;
+-// 	fio.type      = FS_DATA_IO;
+-//     /* 调用原 f2fs_write_data_page */
+-//     ret = f2fs_do_write_data_page(&fio);
+-
+-//     f2fs_put_page(page, 1);
+-
+-//     return ret;
+-// }
+-// 非inline目录的copy  regular dentry
+-
+-
+-// static void f2fs_snap_dump_dentry(struct inode *src_inode, int idx, char *target)
+-// {
+-// 	struct page *src_ipage;
+-// 	void *page_addr; // inline数据
+-// 	int bit_pos;
+-// 	char *name = NULL;
+-// 	struct f2fs_dir_entry *de;
+-// 	struct f2fs_dentry_ptr d;
+-// 	struct f2fs_inode *src_fi;
+-	
+-
+-// 	pr_info("--------------------src dump start %s--------------------\n",target);
+-// 	src_ipage = f2fs_get_lock_data_page(src_inode, idx, false);
+-// 	src_fi = F2FS_INODE(src_ipage);
+-// 	page_addr = page_address(src_ipage);
+-// 	f2fs_put_page(src_ipage, 1);
+-// 	make_dentry_ptr_block(src_inode, &d, page_addr);
+-// 	for (bit_pos = 0; bit_pos < d.max; bit_pos++) { //max = 214？
+-// 		if (!test_bit_le(bit_pos, d.bitmap))
+-// 			continue;
+-// 		de = &d.dentry[bit_pos];
+-// 		name = d.filename[bit_pos];
+-// 		if(bit_pos % 20 == 0){
+-// 			pr_info("  [%03u] ino=%u, name_len=%u, name=%.*s, type=%u\n",
+-// 				bit_pos,
+-// 				le32_to_cpu(de->ino),
+-// 				le16_to_cpu(de->name_len),
+-// 				le16_to_cpu(de->name_len),
+-// 				name,
+-// 				de->file_type);
+-// 		}
+-// 		if(de->name_len > 8){
+-// 			bit_pos = bit_pos + de->name_len / 8;
+-// 		}
+-// 	}
+-// 	pr_info("--------------------src dump finish %s i_addr[%d]:%x--------------------\n",target,idx,src_fi->i_addr[idx]);
+-// }
++// dump
+ static int f2fs_read_dir_dump(struct file *filp, unsigned long arg)
+ {
+ 	pr_info("to do dumping...\n");
+@@ -3832,7 +3757,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
+ 		inline_size = bitmap_size
+ 							+ reserved_size
+ 							+ SIZE_OF_DIR_ENTRY * entry_cnt
+-							+ F2FS_SLOT_LEN * entry_cnt;
++							+ F2FS_SLOT_LEN_F * entry_cnt;
+ 	}
+ 	
+ 	if (f2fs_has_inline_dentry(src_inode)) {
+@@ -4995,11 +4920,11 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
+ 	struct f2fs_magic_info *magic_i = MAGIC_I(sbi); // sihuo
+ 	// struct inode *parent_inode;
+ 
+-	struct writeback_control wbc = {
+-		.sync_mode = WB_SYNC_ALL,
+-		.nr_to_write = LONG_MAX,
+-		.for_reclaim = 0,
+-	};
++	// struct writeback_control wbc = {
++	// 	.sync_mode = WB_SYNC_ALL,
++	// 	.nr_to_write = LONG_MAX,
++	// 	.for_reclaim = 0,
++	// };
+ 	struct inode *pra_inode, *son_inode, *snap_inode, *new_inode;
+ 	struct dentry *parent_dentry, *dentry;
+ 	struct super_block *sb = inode->i_sb;
+@@ -5010,11 +4935,25 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
+ 	struct f2fs_magic_entry *entry = NULL;// &block->entries[loc_oft_in_block];
+ 	size_t pra_ino, son_ino, snap_ino;
+ 	umode_t mode;
+-	int entry_cnt, bitmap_size, reserved_size;
++	// int entry_cnt, bitmap_size, reserved_size;
+ 	struct fscrypt_str dot = FSTR_INIT(".", 1);
+ 	struct fscrypt_str dotdot = FSTR_INIT("..", 2);
+ 	struct dentry *tmp_dentry;
+ 
++	struct page *ndpage, *page;
++	void *inline_dentry, *inline_dentry2; // inline数据
++	struct f2fs_dentry_ptr d;
++	struct f2fs_dir_entry *de;
++	// size_t bit_pos;
++	struct page *nipage, *tipage;
++	// size_t inline_size = 0;
++	size_t idx;	
++	void *page_addr;
++	struct f2fs_inode *src_fi, *new_fi;
++
++	int *do_replace;
++	pgoff_t len = 0;
++
+ 	struct path parent_path;
+ 	ret = kern_path("/mnt/", LOOKUP_FOLLOW | LOOKUP_REVAL, &parent_path);
+ 
+@@ -5041,7 +4980,7 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
+ 		}
+ 
+ 		if(ver != 0 && entry->flag != 0 && entry->snap_ino != 0){
+-			pr_info("[COW] Find snapshot, magic-flag-snap_nid[%lu,%lu.%lu], should COW\n",
++			pr_info("[COW] Find snapshot, magic-flag-snap_nid[%zu,%u.%u], should COW\n",
+ 				ver,entry->flag,entry->snap_ino);
+ 			snap_ino = entry->snap_ino;
+ 			goto start_snap;
+@@ -5077,17 +5016,6 @@ start_snap:
+ 		pr_info("[COW] pra_ino/name [%lu,%s],son_ino/name [%lu,%s]\n", pra_ino, 
+ 			parent_dentry->d_name.name, son_ino, dentry->d_name.name);
+ 
+-		struct page *ndpage, *page;
+-		void *inline_dentry, *inline_dentry2; // inline数据
+-		struct f2fs_dentry_ptr d;
+-		struct f2fs_dir_entry *de;
+-		size_t bit_pos;
+-		struct page *nipage, *tipage;
+-		size_t inline_size = 0;
+-		size_t idx;	
+-		void *page_addr;
+-		struct f2fs_inode *src_fi, *new_fi;
+-
+ 		if (S_ISDIR(pra_inode->i_mode)) {
+ 			pr_info("[COW] pra[%lu,%s],gen[%lu,%s],son[%lu,%s]\n", pra_inode->i_ino, parent_dentry->d_name.name, snap_inode->i_ino, 
+ 				d_find_any_alias(snap_inode)->d_name.name, son_inode->i_ino, dentry->d_name.name);
+@@ -5187,7 +5115,7 @@ start_snap:
+ 					for (idx = 0; idx < DEF_ADDRS_PER_INODE; idx++) {
+ 						if (src_fi->i_addr[idx] != NULL_ADDR && src_fi->i_addr[idx] != NEW_ADDR) {
+ 							// 让snap也指向这个数据块
+-							pr_info("[COW] i_addr[%3d]=0x%08x, valid_addr\n", idx, src_fi->i_addr[idx]);
++							pr_info("[COW] i_addr[%3zu]=0x%08x, valid_addr\n", idx, src_fi->i_addr[idx]);
+ 							// {
+ 							// 	ret = filemap_fdatawrite(son_inode->i_mapping);
+ 							// 	if (ret)
+@@ -5320,8 +5248,6 @@ start_snap:
+ 						unsigned int valid_blocks = new_inode->i_blocks / (F2FS_BLKSIZE >> 9);
+ 						f2fs_i_blocks_write(new_inode, valid_blocks, true, true);
+ 					}
+-					int *do_replace;
+-					pgoff_t len = 0;
+ 					do_replace = f2fs_kvzalloc(F2FS_I_SB(new_inode),
+ 								array_size(DEF_ADDRS_PER_INODE, sizeof(int)),
+ 								GFP_NOFS);
+diff --git a/gc.c b/gc.c
+index 540ea28..a3c98a1 100644
+--- a/gc.c
++++ b/gc.c
+@@ -1426,7 +1426,7 @@ static int move_data_page(struct inode *inode, block_t bidx, int gc_type,
+ {
+ 	struct page *page;
+ 	int err = 0;
+-
++	bool is_dirty;
+ 	page = f2fs_get_lock_data_page(inode, bidx, true);
+ 	if (IS_ERR(page))
+ 		return PTR_ERR(page);
+@@ -1470,8 +1470,8 @@ static int move_data_page(struct inode *inode, block_t bidx, int gc_type,
+ 			.need_lock = LOCK_REQ,
+ 			.io_type = FS_GC_DATA_IO,
+ 		};
+-		fio.version = version;
+-		bool is_dirty = PageDirty(page);
++		fio.version = version; 
++		is_dirty = PageDirty(page);
+ 
+ retry:
+ 		f2fs_wait_on_page_writeback(page, DATA, true, true);
+@@ -1483,7 +1483,7 @@ retry:
+ 		}
+ 
+ 		set_page_private_gcing(page);
+-		err = f2fs_do_write_data_page(&fio);
++		err = f2fs_do_write_data_page(&fio);// 牛逼
+ 		if (err) {
+ 			clear_page_private_gcing(page);
+ 			if (err == -ENOMEM) {
+@@ -1500,6 +1500,7 @@ out:
+ 	return err;
+ }
+ 
++
+ int get_mulref_nid(struct f2fs_sb_info *sbi, nid_t mr_blkaddr, u16 entry_index,
+ 	 	struct f2fs_mulref_entry *entry){
+ 	struct page *mulref_page;
+diff --git a/log b/log
+index aeb7ca9..25d222e 100644
+--- a/log
++++ b/log
+@@ -1,1486 +1,513 @@
+-diff --git a/data.c b/data.c
+-index c6d16c6..5b8d1fd 100644
+---- a/data.c
+-+++ b/data.c
+-@@ -2757,8 +2757,8 @@ got_it:
+- 	if (err)
+- 		goto out_writepage;
+- 
+--	fio->version = ni.version;
+--
+-+	// fio->version = ni.version;
+-+	fio->version = 0;
+- 	err = f2fs_encrypt_one_page(fio);
+- 	if (err)
+- 		goto out_writepage;
+-@@ -3657,7 +3657,7 @@ static void f2fs_dio_submit_bio(struct bio *bio, struct inode *inode,
+- {
+- 	struct f2fs_private_dio *dio;
+- 	bool write = (bio_op(bio) == REQ_OP_WRITE);
+--	struct bvec_iter *iter = &bio->bi_iter;
+-+	// struct bvec_iter *iter = &bio->bi_iter;
+- 	dio = f2fs_kzalloc(F2FS_I_SB(inode),
+- 			sizeof(struct f2fs_private_dio), GFP_NOFS);
+- 	if (!dio)
+-diff --git a/file.c b/file.c
+-index 8fc31b1..434926a 100644
+---- a/file.c
+-+++ b/file.c
+-@@ -63,7 +63,7 @@
+- 
+- #define MAX_DENTRY_SLOT 128      /* F2FS 目录块最大 slot 数，根据版本可调整 */
+- #define BITMAP_SIZE_BYTES 32     /* F2FS 目录块 bitmap 区大小，根据版本可调整 */
+--#define F2FS_SLOT_LEN 256        /* 每个 slot 对应的最大文件名长度 */
+-+#define F2FS_SLOT_LEN_F 256        /* 每个 slot 对应的最大文件名长度 */
+- 
+- 
+- typedef struct StacksnapNode {
+-@@ -3526,82 +3526,7 @@ static int f2fs_get_compress_blocks(struct file *filp, unsigned long arg)
+- 	return put_user(blocks, (u64 __user *)arg);
+- }
+- 
+--// static int f2fs_write_data_page_compat(struct inode *inode, void *buf, unsigned int idx, struct page *ipage)
+--// {
+--//     struct page *page;
+--//     struct writeback_control wbc;
+--//     int ret;
+--// 	struct f2fs_io_info fio;
+--
+--//     /* 初始化 writeback_control */
+--//     memset(&wbc, 0, sizeof(wbc));
+--//     wbc.sync_mode = WB_SYNC_ALL;
+--//     wbc.nr_to_write = 1;
+--
+--//     /* 获取目标页 */
+--//     page = f2fs_get_new_data_page(inode, ipage , idx, false);
+--
+--//     if (IS_ERR(page))
+--//         return PTR_ERR(page);
+--
+--//     /* 拷贝数据 */
+--//     memcpy(page_address(page), buf, PAGE_SIZE);
+--
+--
+--// 	memset(&fio, 0, sizeof(fio));
+--// 	fio.sbi       = F2FS_I_SB(inode);
+--// 	fio.ino     = inode->i_ino;
+--// 	fio.op        = REQ_OP_WRITE;
+--// 	fio.op_flags  = REQ_SYNC;
+--// 	fio.page      = page;
+--// 	fio.type      = FS_DATA_IO;
+--//     /* 调用原 f2fs_write_data_page */
+--//     ret = f2fs_do_write_data_page(&fio);
+--
+--//     f2fs_put_page(page, 1);
+--
+--//     return ret;
+--// }
+--// 非inline目录的copy  regular dentry
+--
+--
+--// static void f2fs_snap_dump_dentry(struct inode *src_inode, int idx, char *target)
+--// {
+--// 	struct page *src_ipage;
+--// 	void *page_addr; // inline数据
+--// 	int bit_pos;
+--// 	char *name = NULL;
+--// 	struct f2fs_dir_entry *de;
+--// 	struct f2fs_dentry_ptr d;
+--// 	struct f2fs_inode *src_fi;
+--	
+--
+--// 	pr_info("--------------------src dump start %s--------------------\n",target);
+--// 	src_ipage = f2fs_get_lock_data_page(src_inode, idx, false);
+--// 	src_fi = F2FS_INODE(src_ipage);
+--// 	page_addr = page_address(src_ipage);
+--// 	f2fs_put_page(src_ipage, 1);
+--// 	make_dentry_ptr_block(src_inode, &d, page_addr);
+--// 	for (bit_pos = 0; bit_pos < d.max; bit_pos++) { //max = 214？
+--// 		if (!test_bit_le(bit_pos, d.bitmap))
+--// 			continue;
+--// 		de = &d.dentry[bit_pos];
+--// 		name = d.filename[bit_pos];
+--// 		if(bit_pos % 20 == 0){
+--// 			pr_info("  [%03u] ino=%u, name_len=%u, name=%.*s, type=%u\n",
+--// 				bit_pos,
+--// 				le32_to_cpu(de->ino),
+--// 				le16_to_cpu(de->name_len),
+--// 				le16_to_cpu(de->name_len),
+--// 				name,
+--// 				de->file_type);
+--// 		}
+--// 		if(de->name_len > 8){
+--// 			bit_pos = bit_pos + de->name_len / 8;
+--// 		}
+--// 	}
+--// 	pr_info("--------------------src dump finish %s i_addr[%d]:%x--------------------\n",target,idx,src_fi->i_addr[idx]);
+--// }
+-+// dump
+- static int f2fs_read_dir_dump(struct file *filp, unsigned long arg)
+- {
+- 	pr_info("to do dumping...\n");
+-@@ -3832,7 +3757,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
+- 		inline_size = bitmap_size
+- 							+ reserved_size
+- 							+ SIZE_OF_DIR_ENTRY * entry_cnt
+--							+ F2FS_SLOT_LEN * entry_cnt;
+-+							+ F2FS_SLOT_LEN_F * entry_cnt;
+- 	}
+- 	
+- 	if (f2fs_has_inline_dentry(src_inode)) {
+-@@ -4995,11 +4920,11 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
+- 	struct f2fs_magic_info *magic_i = MAGIC_I(sbi); // sihuo
+- 	// struct inode *parent_inode;
+- 
+--	struct writeback_control wbc = {
+--		.sync_mode = WB_SYNC_ALL,
+--		.nr_to_write = LONG_MAX,
+--		.for_reclaim = 0,
+--	};
+-+	// struct writeback_control wbc = {
+-+	// 	.sync_mode = WB_SYNC_ALL,
+-+	// 	.nr_to_write = LONG_MAX,
+-+	// 	.for_reclaim = 0,
+-+	// };
+- 	struct inode *pra_inode, *son_inode, *snap_inode, *new_inode;
+- 	struct dentry *parent_dentry, *dentry;
+- 	struct super_block *sb = inode->i_sb;
+-@@ -5010,11 +4935,25 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
+- 	struct f2fs_magic_entry *entry = NULL;// &block->entries[loc_oft_in_block];
+- 	size_t pra_ino, son_ino, snap_ino;
+- 	umode_t mode;
+--	int entry_cnt, bitmap_size, reserved_size;
+-+	// int entry_cnt, bitmap_size, reserved_size;
+- 	struct fscrypt_str dot = FSTR_INIT(".", 1);
+- 	struct fscrypt_str dotdot = FSTR_INIT("..", 2);
+- 	struct dentry *tmp_dentry;
+- 
+-+	struct page *ndpage, *page;
+-+	void *inline_dentry, *inline_dentry2; // inline数据
+-+	struct f2fs_dentry_ptr d;
+-+	struct f2fs_dir_entry *de;
+-+	// size_t bit_pos;
+-+	struct page *nipage, *tipage;
+-+	// size_t inline_size = 0;
+-+	size_t idx;	
+-+	void *page_addr;
+-+	struct f2fs_inode *src_fi, *new_fi;
+-+
+-+	int *do_replace;
+-+	pgoff_t len = 0;
+-+
+- 	struct path parent_path;
+- 	ret = kern_path("/mnt/", LOOKUP_FOLLOW | LOOKUP_REVAL, &parent_path);
+- 
+-@@ -5041,7 +4980,7 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
+- 		}
+- 
+- 		if(ver != 0 && entry->flag != 0 && entry->snap_ino != 0){
+--			pr_info("[COW] Find snapshot, magic-flag-snap_nid[%lu,%lu.%lu], should COW\n",
+-+			pr_info("[COW] Find snapshot, magic-flag-snap_nid[%zu,%u.%u], should COW\n",
+- 				ver,entry->flag,entry->snap_ino);
+- 			snap_ino = entry->snap_ino;
+- 			goto start_snap;
+-@@ -5077,17 +5016,6 @@ start_snap:
+- 		pr_info("[COW] pra_ino/name [%lu,%s],son_ino/name [%lu,%s]\n", pra_ino, 
+- 			parent_dentry->d_name.name, son_ino, dentry->d_name.name);
+- 
+--		struct page *ndpage, *page;
+--		void *inline_dentry, *inline_dentry2; // inline数据
+--		struct f2fs_dentry_ptr d;
+--		struct f2fs_dir_entry *de;
+--		size_t bit_pos;
+--		struct page *nipage, *tipage;
+--		size_t inline_size = 0;
+--		size_t idx;	
+--		void *page_addr;
+--		struct f2fs_inode *src_fi, *new_fi;
+--
+- 		if (S_ISDIR(pra_inode->i_mode)) {
+- 			pr_info("[COW] pra[%lu,%s],gen[%lu,%s],son[%lu,%s]\n", pra_inode->i_ino, parent_dentry->d_name.name, snap_inode->i_ino, 
+- 				d_find_any_alias(snap_inode)->d_name.name, son_inode->i_ino, dentry->d_name.name);
+-@@ -5187,7 +5115,7 @@ start_snap:
+- 					for (idx = 0; idx < DEF_ADDRS_PER_INODE; idx++) {
+- 						if (src_fi->i_addr[idx] != NULL_ADDR && src_fi->i_addr[idx] != NEW_ADDR) {
+- 							// 让snap也指向这个数据块
+--							pr_info("[COW] i_addr[%3d]=0x%08x, valid_addr\n", idx, src_fi->i_addr[idx]);
+-+							pr_info("[COW] i_addr[%3zu]=0x%08x, valid_addr\n", idx, src_fi->i_addr[idx]);
+- 							// {
+- 							// 	ret = filemap_fdatawrite(son_inode->i_mapping);
+- 							// 	if (ret)
+-@@ -5320,8 +5248,6 @@ start_snap:
+- 						unsigned int valid_blocks = new_inode->i_blocks / (F2FS_BLKSIZE >> 9);
+- 						f2fs_i_blocks_write(new_inode, valid_blocks, true, true);
+- 					}
+--					int *do_replace;
+--					pgoff_t len = 0;
+- 					do_replace = f2fs_kvzalloc(F2FS_I_SB(new_inode),
+- 								array_size(DEF_ADDRS_PER_INODE, sizeof(int)),
+- 								GFP_NOFS);
+-diff --git a/gc.c b/gc.c
+-index 562a8b1..a3c98a1 100644
+---- a/gc.c
+-+++ b/gc.c
+-@@ -1064,71 +1064,99 @@ static bool is_alive(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
+- 	return true;
+- }
+- 
+--bool is_alive_blk(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
+-+bool is_alive_mulref(struct f2fs_sb_info *sbi, struct f2fs_mulref_entry *mulref_entry,
+- 		struct node_info *dni, block_t blkaddr, unsigned int *nofs)
+- {
+- 	struct page *node_page;
+- 	nid_t nid;
+- 	unsigned int ofs_in_node, max_addrs, base;
+- 	block_t source_blkaddr;
+-+	nid_t     nid_mulref[2]  = {0};
+-+	u16  ofs_mulref[2] = {0};
+-+
+-+	bool valid[2] = { false, false };
+-+	int nid_i = 0;
+-+
+-+	nid_mulref[0] = le32_to_cpu(mulref_entry->inoa);
+-+	nid_mulref[1] = le32_to_cpu(mulref_entry->inob);
+-+	ofs_mulref[0] = le16_to_cpu(mulref_entry->a_offset);
+-+	ofs_mulref[1] = le16_to_cpu(mulref_entry->b_offset);
+-+
+-+	// nid = le32_to_cpu(sum->nid);
+-+	// ofs_in_node = le16_to_cpu(sum->ofs_in_node);
+-+	for(nid_i = 0; nid_i < 2; nid_i++){
+-+		nid = nid_mulref[nid_i];
+-+		ofs_in_node = ofs_mulref[nid_i];
+-+		node_page = f2fs_get_node_page(sbi, nid);
+-+		if (IS_ERR(node_page)){
+-+			valid[nid_i] = false;
+-+			pr_info("mulref: get_node_page failed for nid[%d] = %u, err %ld\n",
+-+				nid_i, nid, PTR_ERR(node_page));
+-+			continue;
+-+		}
+- 
+--	nid = le32_to_cpu(sum->nid);
+--	ofs_in_node = le16_to_cpu(sum->ofs_in_node);
+--	node_page = f2fs_get_node_page(sbi, nid);
+--	if (IS_ERR(node_page))
+--		return false;
+-+		if (f2fs_get_node_info(sbi, nid, &dni[nid_i], false)) {
+-+			valid[nid_i] = false;
+-+			f2fs_put_page(node_page, 1);
+-+			pr_info("mulref: get_node_info failed for nid[%d] = %u\n",
+-+				nid_i, nid);
+-+			continue;
+-+		}
+- 
+--	if (f2fs_get_node_info(sbi, nid, dni, false)) {
+--		f2fs_put_page(node_page, 1);
+--		return false;
+--	}
+-+		// if (sum->version != dni->version) {
+-+		// 	f2fs_warn(sbi, "%s: valid data with mismatched node version.",
+-+		// 			__func__);
+-+		// 	set_sbi_flag(sbi, SBI_NEED_FSCK);
+-+		// }
+- 
+--	if (sum->version != dni->version) {
+--		f2fs_warn(sbi, "%s: valid data with mismatched node version.",
+--			  __func__);
+--		set_sbi_flag(sbi, SBI_NEED_FSCK);
+--	}
+-+		if (f2fs_check_nid_range(sbi, dni[nid_i].ino)) {
+-+			f2fs_put_page(node_page, 1);
+-+			valid[nid_i] = false;
+-+			continue;
+-+		}
+- 
+--	if (f2fs_check_nid_range(sbi, dni->ino)) {
+--		f2fs_put_page(node_page, 1);
+--		return false;
+--	}
+-+		if (IS_INODE(node_page)) {
+-+			base = offset_in_addr(F2FS_INODE(node_page));
+-+			max_addrs = DEF_ADDRS_PER_INODE;
+-+		} else { // 间接node块的处理。1018
+-+			base = 0;
+-+			max_addrs = DEF_ADDRS_PER_BLOCK;
+-+		}
+- 
+--	if (IS_INODE(node_page)) {
+--		base = offset_in_addr(F2FS_INODE(node_page));
+--		max_addrs = DEF_ADDRS_PER_INODE;
+--	} else {
+--		base = 0;
+--		max_addrs = DEF_ADDRS_PER_BLOCK;
+--	}
+-+		if (base + ofs_in_node >= max_addrs) {
+-+			f2fs_err(sbi, "Inconsistent blkaddr offset: base:%u, ofs_in_node:%u, max:%u, ino:%u, nid:%u",
+-+				base, ofs_in_node, max_addrs, dni[nid_i].ino, dni[nid_i].nid);
+-+			f2fs_put_page(node_page, 1);
+-+			valid[nid_i] = false;
+-+			continue;
+-+		}
+- 
+--	if (base + ofs_in_node >= max_addrs) {
+--		f2fs_err(sbi, "Inconsistent blkaddr offset: base:%u, ofs_in_node:%u, max:%u, ino:%u, nid:%u",
+--			base, ofs_in_node, max_addrs, dni->ino, dni->nid);
+-+		// *nofs = ofs_of_node(node_page);
+-+		nofs[nid_i] = ofs_of_node(node_page);
+-+		source_blkaddr = data_blkaddr(NULL, node_page, ofs_in_node);
+- 		f2fs_put_page(node_page, 1);
+--		return false;
+--	}
+--
+--	*nofs = ofs_of_node(node_page);
+--	source_blkaddr = data_blkaddr(NULL, node_page, ofs_in_node);
+--	f2fs_put_page(node_page, 1);
+- 
+--	if (source_blkaddr != blkaddr) {
+--#ifdef CONFIG_F2FS_CHECK_FS
+--		unsigned int segno = GET_SEGNO(sbi, blkaddr);
+--		unsigned long offset = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
+-+		if (source_blkaddr != blkaddr) {
+-+		#ifdef CONFIG_F2FS_CHECK_FS
+-+			unsigned int segno = GET_SEGNO(sbi, blkaddr);
+-+			unsigned long offset = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
+- 
+--		if (unlikely(check_valid_map(sbi, segno, offset))) {
+--			if (!test_and_set_bit(segno, SIT_I(sbi)->invalid_segmap)) {
+--				f2fs_err(sbi, "mismatched blkaddr %u (source_blkaddr %u) in seg %u",
+--					 blkaddr, source_blkaddr, segno);
+--				set_sbi_flag(sbi, SBI_NEED_FSCK);
+-+			if (unlikely(check_valid_map(sbi, segno, offset))) {
+-+				if (!test_and_set_bit(segno, SIT_I(sbi)->invalid_segmap)) {
+-+					f2fs_err(sbi, "mismatched blkaddr %u (source_blkaddr %u) in seg %u",
+-+							blkaddr, source_blkaddr, segno);
+-+					set_sbi_flag(sbi, SBI_NEED_FSCK);
+-+				}
+- 			}
+-+		#endif
+-+			valid[nid_i] = false;
+-+			continue;
+- 		}
+--#endif
+--		return false;
+-+		
+-+		valid[nid_i] = true;
+- 	}
+--	return true;
+-+
+-+	return valid[0] || valid[1];
+- }
+- 
+- static int ra_data_block(struct inode *inode, pgoff_t index)
+-@@ -1394,11 +1422,11 @@ out:
+- }
+- 
+- static int move_data_page(struct inode *inode, block_t bidx, int gc_type,
+--							unsigned int segno, int off)
+-+							unsigned int segno, int off, u8 version)
+- {
+- 	struct page *page;
+- 	int err = 0;
+--
+-+	bool is_dirty;
+- 	page = f2fs_get_lock_data_page(inode, bidx, true);
+- 	if (IS_ERR(page))
+- 		return PTR_ERR(page);
+-@@ -1442,7 +1470,8 @@ static int move_data_page(struct inode *inode, block_t bidx, int gc_type,
+- 			.need_lock = LOCK_REQ,
+- 			.io_type = FS_GC_DATA_IO,
+- 		};
+--		bool is_dirty = PageDirty(page);
+-+		fio.version = version; 
+-+		is_dirty = PageDirty(page);
+- 
+- retry:
+- 		f2fs_wait_on_page_writeback(page, DATA, true, true);
+-@@ -1454,7 +1483,7 @@ retry:
+- 		}
+- 
+- 		set_page_private_gcing(page);
+--		err = f2fs_do_write_data_page(&fio);
+-+		err = f2fs_do_write_data_page(&fio);// 牛逼
+- 		if (err) {
+- 			clear_page_private_gcing(page);
+- 			if (err == -ENOMEM) {
+-@@ -1471,6 +1500,64 @@ out:
+- 	return err;
+- }
+- 
+-+
+-+int get_mulref_nid(struct f2fs_sb_info *sbi, nid_t mr_blkaddr, u16 entry_index,
+-+	 	struct f2fs_mulref_entry *entry){
+-+	struct page *mulref_page;
+-+	struct f2fs_mulref_block *mulref;
+-+	struct f2fs_mulref_entry *src;
+-+	
+-+	char *base_ptr;
+-+	bool used;
+-+	u8 byte;
+-+	u8 bit;
+-+	// int ret = 0;
+-+
+-+	pr_info("get mulref nid info\n");
+-+	if (entry_index >= 312) {
+-+			pr_err("mulref: entry_index out of range: %u (max 311)\n",
+-+					entry_index);
+-+			return -EINVAL;
+-+	}
+-+	 /* 1. 读出对应 meta page */
+-+	mulref_page = f2fs_get_meta_page(sbi, mr_blkaddr);
+-+	if (IS_ERR(mulref_page)) {
+-+			pr_err("mulref: failed to get meta page / get_mulref_nid: %ld\n",
+-+					PTR_ERR(mulref_page));
+-+			return PTR_ERR(mulref_page);
+-+	}
+-+
+-+	mulref = (struct f2fs_mulref_block *)kmap(mulref_page);
+-+	if (!mulref) {
+-+		pr_err("mulref: kmap failed / get_mulref_nid\n");
+-+		f2fs_put_page(mulref_page, 1);
+-+		return -EFAULT;
+-+	}
+-+	base_ptr = (char *)mulref;
+-+	/* 2. 可选：先检查 bitmap，看看这个 entry 是否被占用 */
+-+	byte = mulref->multi_bitmap[entry_index / 8];
+-+	bit  = 1 << (entry_index % 8);
+-+	used = !!(byte & bit);
+-+
+-+	if (!used) {
+-+		pr_info("mulref: entry_index %u not used (bitmap=0x%02x, bit=%u)\n",
+-+					entry_index, byte, entry_index % 8);
+-+		kunmap(mulref_page);
+-+		f2fs_put_page(mulref_page, 1);
+-+		return 1;
+-+	}
+-+	/* 3. 直接通过结构体下标访问对应 entry */
+-+	src = &mulref->mrentry[entry_index];
+-+	memcpy(entry, src, sizeof(*entry));
+-+	pr_info("mulref: read entry @ blk=%llu, idx=%u, entry=%p (base=%p)\n",
+-+			(unsigned long long)mr_blkaddr, entry_index, entry, base_ptr);
+-+
+-+	kunmap(mulref_page);
+-+	f2fs_put_page(mulref_page, 1);
+-+
+-+	return 0;
+-+}
+-+
+- /*
+-  * This function tries to get parent node of victim data block, and identifies
+-  * data block validity. If the block is valid, copy that with cold status and
+-@@ -1478,11 +1565,13 @@ out:
+-  * If the parent node is not valid or the data block address is different,
+-  * the victim data block is ignored.
+-  */
+--// 清理指定的segment
+-+// 清理指定的segment， 迁移指定segment的有效数据块
+- static int gc_data_segment(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
+- 		struct gc_inode_list *gc_list, unsigned int segno, int gc_type,
+- 		bool force_migrate)
+- {
+-+	// 指向该段summary信息，该summary描述一个数据块属于哪个文件以及块在文件内的偏移？
+-+	// force_migrate。强制迁移，即使这个段可能看起来满的，主要用以处理一些竞争问题
+- 	struct super_block *sb = sbi->sb;
+- 	struct f2fs_summary *entry;
+- 	block_t start_addr;
+-@@ -1490,7 +1579,10 @@ static int gc_data_segment(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
+- 	int phase = 0;
+- 	int submitted = 0;
+- 	unsigned int usable_blks_in_seg = f2fs_usable_blks_in_seg(sbi, segno);
+--
+-+	// sihuo
+-+	int ret = 0;
+-+	int rep = -1;		/* 代表引用下标 */
+-+	block_t new_blkaddr = 0;
+- 	start_addr = START_BLOCK(sbi, segno);
+- 
+- next_step:
+-@@ -1499,11 +1591,14 @@ next_step:
+- 	for (off = 0; off < usable_blks_in_seg; off++, entry++) {
+- 		struct page *data_page;
+- 		struct inode *inode;
+--		struct node_info dni; /* dnode info for the data */
+--		unsigned int ofs_in_node, nofs;
+-+		// struct node_info dni; /* dnode info for the data */
+-+		// unsigned int ofs_in_node, nofs;
+-+		unsigned int ofs_in_node;
+- 		block_t start_bidx;
+- 		nid_t nid = le32_to_cpu(entry->nid);
+- 
+-+		struct node_info dni_s;
+-+		unsigned int nofs_s;
+- 		/*
+- 		 * stop BG_GC if there is not enough free sections.
+- 		 * Or, stop GC if the segment becomes fully valid caused by
+-@@ -1517,123 +1612,400 @@ next_step:
+- 		if (check_valid_map(sbi, segno, off) == 0)
+- 			continue;
+- 
+--		if (phase == 0) {
+--			f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), 1,
+--							META_NAT, true);
+--			continue;
+--		}
+-+		if(entry->version != 0){// 非0 就是多引用， 注意要把原本写入时的version是从原NAT中读的
+-+			struct node_info dni[2];
+-+			unsigned int nofs[2];
+-+			struct f2fs_mulref_entry mulref_entry;
+-+			int nid_i = 0;
+-+			int nid_mulref[2]  = {0};
+-+   			u16 ofs_mulref[2] = {0};
+-+
+-+			block_t mr_blkaddr = le32_to_cpu(entry->nid);          // sum->nid 里存的 mr_blkaddr
+-+			u16 mr_index       = le16_to_cpu(entry->ofs_in_node);
+-+			ret = get_mulref_nid(sbi, mr_blkaddr, mr_index, &mulref_entry);
+-+			if (ret) {
+-+				// ret = 0  normal
+-+				pr_info("get_mulref_nid failed...\n");
+-+				continue;
+-+			}
+-+			nid_mulref[0] = le32_to_cpu(mulref_entry.inoa);
+-+			nid_mulref[1] = le32_to_cpu(mulref_entry.inob);
+-+			ofs_mulref[0] = le16_to_cpu(mulref_entry.a_offset);
+-+			ofs_mulref[1] = le16_to_cpu(mulref_entry.b_offset);
+-+			// 将GC过程分为5个阶段，减少锁竞争
+-+			// 提前预读所需元数据，优化IO
+-+			if (phase == 0) { // 预读NAT页
+-+				for(nid_i = 0; nid_i < 2; nid_i++){
+-+					if (!nid_mulref[nid_i])
+-+						continue;
+-+					f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid_mulref[nid_i]), 1,
+-+								META_NAT, true);
+-+				}
+-+				// f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), 1,
+-+				// 				META_NAT, true);
+-+				continue;
+-+			}
+-+				
+-+			if (phase == 1) { // 预读node页
+-+				for(nid_i = 0; nid_i < 2; nid_i++){
+-+					if (!nid_mulref[nid_i])
+-+						continue;
+-+					f2fs_ra_node_page(sbi, nid_mulref[nid_i]);
+-+				}
+-+				// f2fs_ra_node_page(sbi, nid);
+-+				continue;
+-+			}
+-+			/* Get an inode by ino with checking validity */
+-+			// if (!is_alive(sbi, entry, &dni, start_addr + off, &nofs))
+- 
+--		if (phase == 1) {
+--			f2fs_ra_node_page(sbi, nid);
+--			continue;
+--		}
+-+			if (!is_alive_mulref(sbi, &mulref_entry, dni, start_addr + off, nofs))
+-+				continue;
+- 
+--		/* Get an inode by ino with checking validity */
+--		if (!is_alive(sbi, entry, &dni, start_addr + off, &nofs))
+--			continue;
+-+			if (phase == 2) {
+-+				for(nid_i = 0; nid_i < 2; nid_i++){
+-+					f2fs_ra_node_page(sbi, dni[nid_i].ino);
+-+				}
+-+				continue;
+-+			}
+- 
+--		if (phase == 2) {
+--			f2fs_ra_node_page(sbi, dni.ino);
+--			continue;
+--		}
+-+			// ofs_in_node = le16_to_cpu(entry->ofs_in_node);
+-+
+-+			if (phase == 3) { //准备GC数据
+-+				for(nid_i = 0; nid_i < 2; nid_i++){
+-+					// ofs_in_node = ofs_mulref[nid_i];
+-+
+-+					inode = f2fs_iget(sb, dni[nid_i].ino);
+-+					if (IS_ERR(inode) || is_bad_inode(inode) ||
+-+							special_file(inode->i_mode))
+-+						continue;
+-+
+-+					if (f2fs_has_inline_data(inode)) {
+-+						iput(inode);
+-+						set_sbi_flag(sbi, SBI_NEED_FSCK);
+-+						printk_ratelimited("%sRDFFS-fs (%s): "
+-+							"inode %lx has both inline_data flag and "
+-+							"data block, nid=%u, ofs_in_node=%u",
+-+							KERN_ERR, sbi->sb->s_id,
+-+							inode->i_ino, dni[nid_i].nid, ofs_mulref[nid_i]);
+-+						continue;
+-+					}
+-+
+-+					if (!down_write_trylock(
+-+						&F2FS_I(inode)->i_gc_rwsem[WRITE])) {
+-+						iput(inode);
+-+						sbi->skipped_gc_rwsem++;
+-+						continue;
+-+					}
+-+
+-+					start_bidx = f2fs_start_bidx_of_node(nofs[nid_i], inode) +
+-+										ofs_mulref[nid_i];
+-+
+-+					if (f2fs_post_read_required(inode)) {
+-+						int err = ra_data_block(inode, start_bidx);
+-+
+-+						up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
+-+						if (err) {
+-+							iput(inode);
+-+							continue;
+-+						}
+-+						add_gc_inode(gc_list, inode);
+-+						continue;
+-+					}
+-+
+-+					data_page = f2fs_get_read_data_page(inode,
+-+								start_bidx, REQ_RAHEAD, true);
+-+					up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
+-+					if (IS_ERR(data_page)) {
+-+						iput(inode);
+-+						continue;
+-+					}
+-+
+-+					f2fs_put_page(data_page, 0);
+-+					add_gc_inode(gc_list, inode);
+-+				}
+-+				continue;
+-+			}
+- 
+--		ofs_in_node = le16_to_cpu(entry->ofs_in_node);
+-+			/* phase 4 */  // 实际迁移数据 这里需要特殊处理一下。
+-+			// 应该只要迁移一个数据块，没必要在for循环内调用2次
+-+			// AI给的方案是，for循环保留用以选择一个主有效的nid
+-+			// 有效的nid，这样的话从is_alive_mulref就应该给出判断哪一个是有效的
+-+			
+-+			rep = -1;		/* 代表引用下标 */
+-+			new_blkaddr = 0;
+- 
+--		if (phase == 3) {
+--			inode = f2fs_iget(sb, dni.ino);
+--			if (IS_ERR(inode) || is_bad_inode(inode) ||
+--					special_file(inode->i_mode))
+--				continue;
+-+			/* 4.1 选一个“代表引用”来做真正的 move_data_* */
+-+			for (nid_i = 0; nid_i < 2; nid_i++) {
+-+				struct inode *inode;
+- 
+--			if (f2fs_has_inline_data(inode)) {
+--				iput(inode);
+--				set_sbi_flag(sbi, SBI_NEED_FSCK);
+--				printk_ratelimited("%sRDFFS-fs (%s): "
+--					"inode %lx has both inline_data flag and "
+--					"data block, nid=%u, ofs_in_node=%u",
+--					KERN_ERR, sbi->sb->s_id,
+--					inode->i_ino, dni.nid, ofs_in_node);
+-+				if (f2fs_check_nid_range(sbi, dni[nid_i].ino))
+-+					continue;
+-+
+-+				inode = find_gc_inode(gc_list, dni[nid_i].ino);
+-+				if (!inode)
+-+					continue;
+-+				if (!S_ISREG(inode->i_mode))
+-+					continue;
+-+
+-+				rep = nid_i;
+-+				break;
+-+			}
+-+
+-+			if (rep < 0) {
+-+				/* 没有任何有效的 inode（很极端的情况），跳过这个 off */
+- 				continue;
+- 			}
+- 
+--			if (!down_write_trylock(
+--				&F2FS_I(inode)->i_gc_rwsem[WRITE])) {
+--				iput(inode);
+--				sbi->skipped_gc_rwsem++;
+-+			/* 4.2 对代表引用执行一次标准 GC 迁移流程 */
+-+			do {
+-+				struct f2fs_inode_info *fi;
+-+				bool locked = false;
+-+				int err;
+-+				// unsigned int ofs_in_node = ofs_mulref[rep];
+-+
+-+				inode = find_gc_inode(gc_list, dni[rep].ino);
+-+				if (!inode)
+-+					break;
+-+
+-+				fi = F2FS_I(inode);
+-+				if (S_ISREG(inode->i_mode)) {
+-+					if (!down_write_trylock(&fi->i_gc_rwsem[READ])) {
+-+						sbi->skipped_gc_rwsem++;
+-+						break;
+-+					}
+-+					if (!down_write_trylock(&fi->i_gc_rwsem[WRITE])) {
+-+						sbi->skipped_gc_rwsem++;
+-+						up_write(&fi->i_gc_rwsem[READ]);
+-+						break;
+-+					}
+-+					locked = true;
+-+					inode_dio_wait(inode);
+-+				}
+-+				start_bidx = f2fs_start_bidx_of_node(nofs[rep], inode) +
+-+						ofs_in_node;
+-+				if (f2fs_post_read_required(inode))
+-+					err = move_data_block(inode, start_bidx,
+-+								gc_type, segno, off);
+-+				else //正常数据页的gc走的是下面的这个分支
+-+					err = move_data_page(inode, start_bidx,
+-+								gc_type, segno, off, entry->version);
+-+				if (!err && (gc_type == FG_GC ||
+-+						f2fs_post_read_required(inode)))
+-+					submitted++;
+-+				if (locked) {
+-+					up_write(&fi->i_gc_rwsem[WRITE]);
+-+					up_write(&fi->i_gc_rwsem[READ]);
+-+				}
+-+				if (err)
+-+					break;
+-+
+-+				stat_inc_data_blk_count(sbi, 1, gc_type);
+-+				/* 4.3 通过代表引用的 node，读出新的物理块地址 new_blkaddr */
+-+				{
+-+					struct page *np;
+-+					block_t blk;
+-+
+-+					np = f2fs_get_node_page(sbi, dni[rep].nid);
+-+					if (IS_ERR(np))
+-+						break;
+-+					blk = data_blkaddr(NULL, np, ofs_in_node);
+-+					f2fs_put_page(np, 1);
+-+					/* 如果迁移成功，这里应该是新的物理块号 */
+-+					new_blkaddr = blk;
+-+				}
+-+			} while (0);
+-+
+-+			if (!new_blkaddr) {
+-+				/* 代表引用迁移失败或无法获取新块地址，跳过同步其它引用 */
+- 				continue;
+- 			}
+- 
+--			start_bidx = f2fs_start_bidx_of_node(nofs, inode) +
+--								ofs_in_node;
+-+			/* 4.4 更新其它仍然引用这个旧块的 inode 的 node 映射 */
+-+			for (nid_i = 0; nid_i < 2; nid_i++) {
+-+				struct inode *inode;
+-+				struct f2fs_inode_info *fi;
+-+				struct page *np;
+-+				unsigned int ofs_in_node;
+-+				block_t cur;
+- 
+--			if (f2fs_post_read_required(inode)) {
+--				int err = ra_data_block(inode, start_bidx);
+-+				if (nid_i == rep)
+-+					continue;
+- 
+--				up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
+--				if (err) {
+--					iput(inode);
+-+				if (f2fs_check_nid_range(sbi, dni[nid_i].ino))
+-+					continue;
+-+
+-+				inode = find_gc_inode(gc_list, dni[nid_i].ino);
+-+				if (!inode)
+-+					continue;
+-+
+-+				fi = F2FS_I(inode);
+-+				if (!down_write_trylock(&fi->i_gc_rwsem[WRITE])) {
+-+					sbi->skipped_gc_rwsem++;
+- 					continue;
+- 				}
+--				add_gc_inode(gc_list, inode);
+-+
+-+				np = f2fs_get_node_page(sbi, dni[nid_i].nid);
+-+				if (IS_ERR(np)) {
+-+					up_write(&fi->i_gc_rwsem[WRITE]);
+-+					continue;
+-+				}
+-+
+-+				ofs_in_node = ofs_mulref[nid_i];
+-+				cur = data_blkaddr(NULL, np, ofs_in_node);
+-+
+-+				/* 只有当前还指向旧 blkaddr 的引用才需要更新 */
+-+				if (cur == start_addr + off) {
+-+					struct dnode_of_data dn = { 0 };
+-+					dn.inode        = inode;              // 当前 nid_i 对应的 inode
+-+					dn.inode_page   = NULL;               // 不用就设 NULL
+-+					dn.node_page    = np;                 // f2fs_get_node_page 拿到的 np
+-+					dn.nid          = dni[nid_i].nid;     // 这个 node 的 nid
+-+					dn.ofs_in_node  = ofs_in_node;        // ofs_mulref[nid_i]
+-+					dn.inode_page_locked = false;         // 没锁 inode_page
+-+					dn.node_changed = false;              // 初始 false，helper 内部会设置
+-+					dn.cur_level    = 0;
+-+					dn.max_level    = 0;
+-+					dn.data_blkaddr = new_blkaddr;        // 代表引用迁移后的新物理块
+-+
+-+					f2fs_set_data_blkaddr(&dn);
+-+				// 	struct f2fs_node *rn = F2FS_NODE(np);
+-+				// 	__le32 *addr_array;
+-+
+-+				// 	if (IS_INODE(np)) {
+-+				// 		/* inode node：数据块地址在 i.i_addr[] 里 */
+-+				// 		addr_array = rn->i.i_addr;
+-+				// 	} else {
+-+				// 		/* direct node：数据块地址在 dn.addr[] 里 */
+-+				// 		addr_array = rn->dn.addr;
+-+				// 	}
+-+				// 	/* 这里 ofs_in_node 就是你之前 data_blkaddr 用的下标 */
+-+				// 	addr_array[ofs_in_node] = cpu_to_le32(new_blkaddr);
+-+				// 	set_page_dirty(np);
+-+				}
+-+
+-+				f2fs_put_page(np, 1);
+-+				up_write(&fi->i_gc_rwsem[WRITE]);
+-+			}
+-+		}else{
+-+			pr_info("normal process\n");
+-+			if (phase == 0) {
+-+				f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), 1,
+-+								META_NAT, true);
+- 				continue;
+- 			}
+- 
+--			data_page = f2fs_get_read_data_page(inode,
+--						start_bidx, REQ_RAHEAD, true);
+--			up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
+--			if (IS_ERR(data_page)) {
+--				iput(inode);
+-+			if (phase == 1) {
+-+				f2fs_ra_node_page(sbi, nid);
+- 				continue;
+- 			}
+- 
+--			f2fs_put_page(data_page, 0);
+--			add_gc_inode(gc_list, inode);
+--			continue;
+--		}
+-+			/* Get an inode by ino with checking validity */
+-+			if (!is_alive(sbi, entry, &dni_s, start_addr + off, &nofs_s))
+-+				continue;
+- 
+--		/* phase 4 */
+--		inode = find_gc_inode(gc_list, dni.ino);
+--		if (inode) {
+--			struct f2fs_inode_info *fi = F2FS_I(inode);
+--			bool locked = false;
+--			int err;
+-+			if (phase == 2) {
+-+				f2fs_ra_node_page(sbi, dni_s.ino);
+-+				continue;
+-+			}
+- 
+--			if (S_ISREG(inode->i_mode)) {
+--				if (!down_write_trylock(&fi->i_gc_rwsem[READ])) {
+--					sbi->skipped_gc_rwsem++;
+-+			ofs_in_node = le16_to_cpu(entry->ofs_in_node);
+-+
+-+			if (phase == 3) {
+-+				inode = f2fs_iget(sb, dni_s.ino);
+-+				if (IS_ERR(inode) || is_bad_inode(inode) ||
+-+						special_file(inode->i_mode))
+-+					continue;
+-+
+-+				if (f2fs_has_inline_data(inode)) {
+-+					iput(inode);
+-+					set_sbi_flag(sbi, SBI_NEED_FSCK);
+-+					printk_ratelimited("%sF2FS-fs (%s): "
+-+						"inode %lx has both inline_data flag and "
+-+						"data block, nid=%u, ofs_in_node=%u",
+-+						KERN_ERR, sbi->sb->s_id,
+-+						inode->i_ino, dni_s.nid, ofs_in_node);
+- 					continue;
+- 				}
+-+
+- 				if (!down_write_trylock(
+--						&fi->i_gc_rwsem[WRITE])) {
+-+					&F2FS_I(inode)->i_gc_rwsem[WRITE])) {
+-+					iput(inode);
+- 					sbi->skipped_gc_rwsem++;
+--					up_write(&fi->i_gc_rwsem[READ]);
+- 					continue;
+- 				}
+--				locked = true;
+- 
+--				/* wait for all inflight aio data */
+--				inode_dio_wait(inode);
+--			}
+-+				start_bidx = f2fs_start_bidx_of_node(nofs_s, inode) +
+-+									ofs_in_node;
+- 
+--			start_bidx = f2fs_start_bidx_of_node(nofs, inode)
+--								+ ofs_in_node;
+--			if (f2fs_post_read_required(inode))
+--				err = move_data_block(inode, start_bidx,
+--							gc_type, segno, off);
+--			else
+--				err = move_data_page(inode, start_bidx, gc_type,
+--								segno, off);
+-+				if (f2fs_post_read_required(inode)) {
+-+					int err = ra_data_block(inode, start_bidx);
+- 
+--			if (!err && (gc_type == FG_GC ||
+--					f2fs_post_read_required(inode)))
+--				submitted++;
+-+					up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
+-+					if (err) {
+-+						iput(inode);
+-+						continue;
+-+					}
+-+					add_gc_inode(gc_list, inode);
+-+					continue;
+-+				}
+- 
+--			if (locked) {
+--				up_write(&fi->i_gc_rwsem[WRITE]);
+--				up_write(&fi->i_gc_rwsem[READ]);
+-+				data_page = f2fs_get_read_data_page(inode,
+-+							start_bidx, REQ_RAHEAD, true);
+-+				up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
+-+				if (IS_ERR(data_page)) {
+-+					iput(inode);
+-+					continue;
+-+				}
+-+
+-+				f2fs_put_page(data_page, 0);
+-+				add_gc_inode(gc_list, inode);
+-+				continue;
+- 			}
+- 
+--			stat_inc_data_blk_count(sbi, 1, gc_type);
+-+			/* phase 4 */
+-+			inode = find_gc_inode(gc_list, dni_s.ino);
+-+			if (inode) {
+-+				struct f2fs_inode_info *fi = F2FS_I(inode);
+-+				bool locked = false;
+-+				int err;
+-+
+-+				if (S_ISREG(inode->i_mode)) {
+-+					if (!down_write_trylock(&fi->i_gc_rwsem[READ])) {
+-+						sbi->skipped_gc_rwsem++;
+-+						continue;
+-+					}
+-+					if (!down_write_trylock(
+-+							&fi->i_gc_rwsem[WRITE])) {
+-+						sbi->skipped_gc_rwsem++;
+-+						up_write(&fi->i_gc_rwsem[READ]);
+-+						continue;
+-+					}
+-+					locked = true;
+-+
+-+					/* wait for all inflight aio data */
+-+					inode_dio_wait(inode);
+-+				}
+-+
+-+				start_bidx = f2fs_start_bidx_of_node(nofs_s, inode)
+-+									+ ofs_in_node;
+-+				if (f2fs_post_read_required(inode))
+-+					err = move_data_block(inode, start_bidx,
+-+								gc_type, segno, off);
+-+				else
+-+					err = move_data_page(inode, start_bidx, gc_type,
+-+									segno, off, entry->version);
+-+
+-+				if (!err && (gc_type == FG_GC ||
+-+						f2fs_post_read_required(inode)))
+-+					submitted++;
+-+
+-+				if (locked) {
+-+					up_write(&fi->i_gc_rwsem[WRITE]);
+-+					up_write(&fi->i_gc_rwsem[READ]);
+-+				}
+-+
+-+				stat_inc_data_blk_count(sbi, 1, gc_type);
+-+			}
+- 		}
+- 	}
+- 
+-diff --git a/gc.h b/gc.h
+-index c22e308..5a6bcc6 100644
+---- a/gc.h
+-+++ b/gc.h
+-@@ -176,5 +176,5 @@ static inline bool has_enough_invalid_blocks(struct f2fs_sb_info *sbi)
+- 	return false;
+- }
+- 
+--bool is_alive_blk(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
+-+bool is_alive_mulref(struct f2fs_sb_info *sbi, struct f2fs_mulref_entry *sum,
+- 		struct node_info *dni, block_t blkaddr, unsigned int *nofs);
+-\ No newline at end of file
+-diff --git a/node.c b/node.c
+-index c86e9df..be056b7 100644
+---- a/node.c
+-+++ b/node.c
+-@@ -491,8 +491,7 @@ static void set_node_addr(struct f2fs_sb_info *sbi, struct node_info *ni,
+- 
+- 	/* increment version no as node is removed */
+- 	if (nat_get_blkaddr(e) != NEW_ADDR && new_blkaddr == NULL_ADDR) {
+--		unsigned char version = nat_get_version(e);
+--
+-+		// unsigned char version = nat_get_version(e);
+- 		//  nat_set_version(e, inc_node_version(version));
+- 	}
+- 
+-diff --git a/segment.c b/segment.c
+-index 849a2cb..71bdd80 100644
+---- a/segment.c
+-+++ b/segment.c
+-@@ -3380,30 +3380,21 @@ static int __get_segment_type(struct f2fs_io_info *fio)
+- 
+- int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+- 												int *do_replace, pgoff_t len, struct page *ipage){
+--	if (!ipage){
+--		pr_info("inode page is null\n");
+--		return 1;
+--	}
+- 	struct f2fs_sb_info *sbi = F2FS_I_SB(src_inode);
+- 	pgoff_t j = 0;
+--	int ret;
+--
+--	struct f2fs_summary *sum = kmalloc(sizeof(struct f2fs_summary), GFP_KERNEL);
+--	if (!sum) {
+--		pr_err("Failed to allocate summary\n");
+--		return -ENOMEM;
+--	}
+-+	// int ret;
+- 	unsigned int old_segno, blk_off;
+- 	struct seg_entry *se;
+- 	int type;
+- 	block_t old_blkaddr;
+--	__le16 old_ofs_in_node, new_ofs_in_node;
+-+	__le16 old_ofs_in_node;
+-+	// new_ofs_in_node;
+- 	block_t multi_addr = 0;
+- 	struct page *mulref_page = NULL;
+- 	u64 cur_brf_blk = 0;
+- 	bool need_multi_ref = false;
+- 	struct f2fs_mulref_block *mulref;
+--	__u8 *bitmap;									
+-+	// __u8 *bitmap;									
+- 	nid_t new_nid = dst_inode->i_ino;
+- 	nid_t old_nid = src_inode->i_ino;									
+- 	struct curseg_info *old_curseg = NULL;
+-@@ -3416,6 +3407,25 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+- 	struct page *sum_page;
+- 	struct f2fs_summary_block *sum_blk;
+- 
+-+	char *base_ptr;
+-+	size_t entry_offset;
+-+	u32 temp_inoa,temp_inob;
+-+	u16 temp_a_offset,temp_b_offset;
+-+	__u8 *safe_bitmap;
+-+	block_t mr_blkaddr;
+-+	bool full,found_slot;
+-+	struct f2fs_mulref_entry *entry;
+-+	struct curseg_info *curseg;
+-+
+-+	struct f2fs_summary *sum = kmalloc(sizeof(struct f2fs_summary), GFP_KERNEL);
+-+	if (!sum) {
+-+		pr_err("Failed to allocate summary\n");
+-+		return -ENOMEM;
+-+	}
+-+	if (!ipage){
+-+		pr_info("inode page is null\n");
+-+		return 1;
+-+	}
+- 
+- 	multi_addr = sbi->magic_info->magic_blkaddr + 83;
+- 	while (j < len) {
+-@@ -3467,7 +3477,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+- 				old_version = old_sum.version;	
+- 				// 检查是否需要多引用（无锁快速检查）
+- 				if (f2fs_test_bit(blk_off, se->cur_valid_map) && old_nid != 0 && old_nid != new_nid) {
+--					pr_info("[update_snap_meta] multiref [DATA: %lu, %lu]\n", old_nid,new_nid);
+-+					pr_info("[update_snap_meta] multiref [DATA: %u, %u]\n", old_nid,new_nid);
+- 					need_multi_ref = true;
+- 					cur_brf_blk = le64_to_cpu(sbi->ckpt->cur_brf_blk);
+- 					mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
+-@@ -3486,9 +3496,9 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+- 					pr_info("mulref pointer: %p\n", mulref);
+- 
+- 					// bitmap = mulref->multi_bitmap;
+--					char *base_ptr = (char *)mulref;
+--					__u8 *safe_bitmap = (__u8 *)(base_ptr);  // bitmap从偏移0开始
+--					bool found_slot = false;
+-+					base_ptr = (char *)mulref;
+-+					safe_bitmap = (__u8 *)(base_ptr);  // bitmap从偏移0开始
+-+					found_slot = false;
+- 					for (i = 0; i < 40 && !found_slot; i++) {  // 40 bytes = 320 bits
+- 						__u8 bitmap_byte = safe_bitmap[i];
+- 						pr_info("DEBUG: bitmap[%d] = 0x%02x\n", i, bitmap_byte);
+-@@ -3506,19 +3516,19 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+- 										return -EINVAL;
+- 									}
+- 									pr_info("DEBUG: mulref = %p, entry_index = %d\n", mulref, entry_index);
+--									size_t entry_offset = 40 + entry_index * 13;  // mrentry起始偏移 + 索引×大小
+--									struct f2fs_mulref_entry *entry = 
+-+									entry_offset = 40 + entry_index * 13;  // mrentry起始偏移 + 索引×大小
+-+									entry = 
+- 										(struct f2fs_mulref_entry *)(base_ptr + entry_offset);
+- 									
+- 									pr_info("DEBUG: entry = %p (base %p + offset %zu)\n", 
+-                                            entry, base_ptr, entry_offset);
+- 									// === 安全的赋值 ===
+--									__le32 temp_inoa = cpu_to_le32(old_nid);
+--									__le16 temp_a_offset = cpu_to_le16(old_ofs_in_node);
+--									__le32 temp_inob = cpu_to_le32(le32_to_cpu(new_nid));
+--									__le16 temp_b_offset = cpu_to_le16(le16_to_cpu(old_ofs_in_node));
+-+									temp_inoa = cpu_to_le32(old_nid);
+-+									temp_a_offset = cpu_to_le16(old_ofs_in_node);
+-+									temp_inob = cpu_to_le32(le32_to_cpu(new_nid));
+-+									temp_b_offset = cpu_to_le16(le16_to_cpu(old_ofs_in_node));
+- 									
+--									pr_info("DEBUG: Writing data: inoa=%u, inob=%lu\n",
+-+									pr_info("DEBUG: Writing data: inoa=%u, inob=%u\n",
+-                                            old_nid, new_nid);
+- 									// 逐个成员复制
+- 									memcpy(&entry->inoa, &temp_inoa, sizeof(temp_inoa));
+-@@ -3531,8 +3541,8 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+- 									safe_bitmap[i] = bitmap_byte | (1 << bit_pos);
+- 									pr_info("DEBUG: Bitmap updated: 0x%02x -> 0x%02x\n",
+-                                            bitmap_byte, safe_bitmap[i]);
+--									block_t mr_blkaddr = multi_addr + cur_brf_blk;
+--									pr_info("DEBUG: Setting sum: mr_blkaddr=%llu, entry_index=%d\n",
+-+									mr_blkaddr = multi_addr + cur_brf_blk;
+-+									pr_info("DEBUG: Setting sum: mr_blkaddr=%u, entry_index=%u\n",
+-                                            mr_blkaddr, entry_index);
+- 									sum->nid = cpu_to_le32(mr_blkaddr);
+- 									sum->ofs_in_node = cpu_to_le16(entry_index);
+-@@ -3545,7 +3555,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+- 									f2fs_put_page(mulref_page, 1);
+- 									mulref_page = NULL;
+- 									
+--									bool full = true;
+-+									full = true;
+- 									for (k = 0; k < 40; k++) {
+- 										if (safe_bitmap[k] != 0xFF) {
+- 											full = false;
+-@@ -3612,7 +3622,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+- 						f2fs_put_page(sum_page, 1);
+- 						// 检查是否需要多引用（无锁快速检查）
+- 						if (f2fs_test_bit(blk_off, se->cur_valid_map) && old_nid != 0 && old_nid != new_nid){
+--							pr_info("[update_snap_meta] multiref2 [DATA: %lu, %lu]\n", old_nid,new_nid);
+-+							pr_info("[update_snap_meta] multiref2 [DATA: %u, %u]\n", old_nid,new_nid);
+- 							need_multi_ref = true;
+- 							cur_brf_blk = le64_to_cpu(sbi->ckpt->cur_brf_blk);
+- 							mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
+-@@ -3631,9 +3641,9 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+- 							pr_info("mulref pointer2: %p\n", mulref);
+- 
+- 							// bitmap = mulref->multi_bitmap;
+--							char *base_ptr = (char *)mulref;
+--							__u8 *safe_bitmap = (__u8 *)(base_ptr);  // bitmap从偏移0开始
+--							bool found_slot = false;
+-+							base_ptr = (char *)mulref;
+-+							safe_bitmap = (__u8 *)(base_ptr);  // bitmap从偏移0开始
+-+							found_slot = false;
+- 							// mulref = (struct f2fs_mulref_block *)page_address(mulref_page);
+- 							// bitmap = mulref->multi_bitmap;
+- 							for (i = 0; i < 40 && !found_slot; i++) {  // 40 bytes = 320 bits
+-@@ -3653,19 +3663,19 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+- 												return -EINVAL;
+- 											}
+- 											pr_info("DEBUG: mulref = %p, entry_index = %d\n", mulref, entry_index);
+--											size_t entry_offset = 40 + entry_index * 13;  // mrentry起始偏移 + 索引×大小
+--											struct f2fs_mulref_entry *entry = 
+-+											entry_offset = 40 + entry_index * 13;  // mrentry起始偏移 + 索引×大小
+-+											entry = 
+- 												(struct f2fs_mulref_entry *)(base_ptr + entry_offset);
+- 											
+- 											pr_info("DEBUG: entry = %p (base %p + offset %zu)\n", 
+- 												entry, base_ptr, entry_offset);
+- 											// === 安全的赋值 ===
+--											__le32 temp_inoa = cpu_to_le32(old_nid);
+--											__le16 temp_a_offset = cpu_to_le16(old_ofs_in_node);
+--											__le32 temp_inob = cpu_to_le32(le32_to_cpu(new_nid));
+--											__le16 temp_b_offset = cpu_to_le16(le16_to_cpu(old_ofs_in_node));
+-+											temp_inoa = cpu_to_le32(old_nid);
+-+											temp_a_offset = cpu_to_le16(old_ofs_in_node);
+-+											temp_inob = cpu_to_le32(le32_to_cpu(new_nid));
+-+											temp_b_offset = cpu_to_le16(le16_to_cpu(old_ofs_in_node));
+- 											
+--											pr_info("DEBUG: Writing data: inoa=%u, inob=%lu\n",
+-+											pr_info("DEBUG: Writing data: inoa=%u, inob=%u\n",
+- 												old_nid, new_nid);
+- 											// 逐个成员复制
+- 											memcpy(&entry->inoa, &temp_inoa, sizeof(temp_inoa));
+-@@ -3678,8 +3688,8 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+- 											safe_bitmap[i] = bitmap_byte | (1 << bit_pos);
+- 											pr_info("DEBUG: Bitmap updated: 0x%02x -> 0x%02x\n",
+- 												bitmap_byte, safe_bitmap[i]);
+--											block_t mr_blkaddr = multi_addr + cur_brf_blk;
+--											pr_info("DEBUG: Setting sum: mr_blkaddr=%llu, entry_index=%d\n",
+-+											mr_blkaddr = multi_addr + cur_brf_blk;
+-+											pr_info("DEBUG: Setting sum: mr_blkaddr=%u, entry_index=%u\n",
+- 												mr_blkaddr, entry_index);
+- 											sum->nid = cpu_to_le32(mr_blkaddr);
+- 											sum->ofs_in_node = cpu_to_le16(entry_index);
+-@@ -3692,7 +3702,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+- 											f2fs_put_page(mulref_page, 1);
+- 											mulref_page = NULL;
+- 											
+--											bool full = true;
+-+											full = true;
+- 											for (k = 0; k < 40; k++) {
+- 												if (safe_bitmap[k] != 0xFF) {
+- 													full = false;
+-@@ -3743,7 +3753,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+- 			}
+- 			 
+- 			__add_sum_entry(sbi, type, sum);
+--			struct curseg_info *curseg = CURSEG_I(sbi, se->type);
+-+			curseg = CURSEG_I(sbi, se->type);
+- 			if (curseg) {
+- 				stat_inc_block_count(sbi, curseg);
+- 			}
+-@@ -3768,45 +3778,46 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
+- 	struct curseg_info *curseg = CURSEG_I(sbi, type);
+- 	unsigned long long old_mtime;
+- 	bool from_gc = (type == CURSEG_ALL_DATA_ATGC);
+--	struct seg_entry *se = NULL;
+- 	
+--	char s_type[10];
+--	if(fio->type == DATA){
+--		strcpy(s_type, "DATA");
+--	}else if(fio->type == NODE){
+--		strcpy(s_type, "NODE");
+--	}else {
+--		strcpy(s_type, "OTHER");
+--	}
+- 	/* 添加的变量 */
+- 	// unsigned int new_segno = GET_SEGNO(sbi, *new_blkaddr);
+--
+- 	struct f2fs_summary old_sum;
+- 	struct page *sum_page;
+- 	struct f2fs_summary_block *sum_blk;
+- 	unsigned int old_segno, blk_off;
+--	unsigned int old_type, type_start, type_end;
+-+	unsigned int old_type;//, type_start, type_end;
+- 	struct curseg_info *old_curseg = NULL;
+--	nid_t old_nid, old_nid_b;
+--	__le16 old_ofs_of_node, old_ofs_of_node_b;
+-+	nid_t old_nid;//, old_nid_b;
+-+	__le16 old_ofs_of_node;//, old_ofs_of_node_b;
+- 	__u8 old_version;
+--	block_t multi_addr = 0, global_addr = 0;
+-+	block_t multi_addr = 0;// global_addr = 0;
+- 	struct page *mulref_page = NULL;
+- 	u64 cur_brf_blk = 0;
+- 	bool is_multi_ref = false;
+- 	struct f2fs_mulref_block *mulref;
+- 	__u8 *bitmap;
+-+	nid_t new_nid;
+-+	struct seg_entry *se = NULL;
+-+	
+-+	char s_type[10];
+-+	if(fio->type == DATA){
+-+		strcpy(s_type, "DATA");
+-+	}else if(fio->type == NODE){
+-+		strcpy(s_type, "NODE");
+-+	}else {
+-+		strcpy(s_type, "OTHER");
+-+	}
+- 
+--	unsigned int nofs;
+--	struct node_info dni;
+--	int i, j, bit_pos;
+--	u16 entry_index;
+-+	// unsigned int nofs;
+-+	// struct node_info dni;
+-+	// int i, j, bit_pos;
+-+	// u16 entry_index;
+- 	
+- 
+- 	/* 添加的逻辑：通过old_addr获取对应的summary entry并打印信息 */
+- 	if (__is_valid_data_blkaddr(old_blkaddr) && fio->type == DATA) {
+- 		old_segno = GET_SEGNO(sbi, old_blkaddr);
+--		nid_t new_nid = le32_to_cpu(sum->nid);
+-+		new_nid = le32_to_cpu(sum->nid);
+- 		blk_off = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
+- 
+- 		down_read(&SM_I(sbi)->curseg_lock);
+-@@ -3831,13 +3842,13 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
+- 					old_version = old_sum.version;	
+- 					// 检查是否需要多引用（无锁快速检查）
+- 					if(old_nid != 0 && old_nid != new_nid){
+--						pr_info("[update_snap_meta] multiref [DATA: %lu, %lu]\n", old_nid,new_nid);
+-+						pr_info("[update_snap_meta] multiref [DATA: %u, %u]\n", old_nid,new_nid);
+- 						is_multi_ref = true;
+- 						multi_addr = sbi->magic_info->magic_blkaddr + 83;
+- 						cur_brf_blk = le64_to_cpu(sbi->ckpt->cur_brf_blk);
+- 						mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
+- 					} else if(old_nid == new_nid){
+--						pr_info("Same file update [%s: %lu]\n",s_type, old_nid);
+-+						pr_info("Same file update [%s: %u]\n",s_type, old_nid);
+- 						goto skip_pre;
+- 					} else if(old_nid == 0){
+- 						pr_info("Fresh block allocation\n");
+-@@ -3858,13 +3869,13 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
+- 						f2fs_put_page(sum_page, 1);
+- 						// 检查是否需要多引用（无锁快速检查）
+- 						if(old_nid != 0 && old_nid != new_nid){
+--							pr_info("[update_snap_meta] multiref [DATA: %lu, %lu]\n", old_nid,new_nid);
+-+							pr_info("[update_snap_meta] multiref [DATA: %u, %u]\n", old_nid,new_nid);
+- 							is_multi_ref = true;
+- 							multi_addr = sbi->magic_info->magic_blkaddr + 83;
+- 							cur_brf_blk = le64_to_cpu(sbi->ckpt->cur_brf_blk);
+- 							mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
+- 						} else if(old_nid == new_nid){
+--							pr_info("Same file update [DATA: %lu]\n",old_nid);
+-+							pr_info("Same file update [DATA: %u]\n",old_nid);
+- 							goto skip_pre;
+- 						} else if(old_nid == 0){
+- 							pr_info("Fresh block allocation\n");
+-@@ -3891,9 +3902,9 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
+- skip_pre:
+- 	if(old_blkaddr == NEW_ADDR)
+- 	{
+--		pr_info("new addr write[%s: %lu]\n",s_type,le32_to_cpu(sum->nid));
+-+		pr_info("new addr write[%s: %u]\n",s_type,le32_to_cpu(sum->nid));
+- 	} else if(old_blkaddr == NULL_ADDR){
+--		pr_info("null addr write[%s: %lu]\n",s_type,le32_to_cpu(sum->nid));
+-+		pr_info("null addr write[%s: %u]\n",s_type,le32_to_cpu(sum->nid));
+- 	}
+- 	// 原代码开始处
+- 	down_read(&SM_I(sbi)->curseg_lock);
+-@@ -3945,7 +3956,7 @@ skip_pre:
+- 		mulref_page = NULL;
+- 	}	
+- 
+--normal:
+-+// normal:
+- 	/*
+- 	 * __add_sum_entry should be resided under the curseg_mutex
+- 	 * because, this function updates a summary entry in the
+-@@ -3973,7 +3984,6 @@ normal:
+- 	update_sit_entry(sbi, *new_blkaddr, 1);
+- 	update_sit_entry(sbi, old_blkaddr, -1);	
+- 
+--skip_update_sit:
+- 	// if (sum_page) f2fs_put_page(sum_page, 1);
+- 	if (mulref_page) f2fs_put_page(mulref_page, 1);
+- 
+-@@ -4207,6 +4217,7 @@ void f2fs_do_replace_block(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
+- 				bool recover_curseg, bool recover_newaddr,
+- 				bool from_gc)
+- {
+-+	// recovery 这里先不更新
+- 	struct sit_info *sit_i = SIT_I(sbi);
+- 	struct curseg_info *curseg;
+- 	unsigned int segno, old_cursegno;
+-@@ -4256,86 +4267,6 @@ void f2fs_do_replace_block(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
+- 	}
+- 
+- 	curseg->next_blkoff = GET_BLKOFF_FROM_SEG0(sbi, new_blkaddr);
+--	// sihuo
+--	// struct page *node_page = f2fs_get_node_page(sbi, nid);
+--	// block_t blkaddr = data_blkaddr(NULL, node_page, ofs_in_node);
+--	// Inline  和 noninline两种处理
+--	// blkaddr = -> i_addr[i]blkaddr = -> i_addr[i]
+--	// unsigned int segno = GET_SEGNO(sbi, blkaddr);
+--	struct page *sum_page;
+--	struct page *mulref_page;
+--	struct f2fs_summary_block *sum_blk;
+--	block_t block_addr, multi_addr;
+--	unsigned int nofs;
+--	struct node_info dni;
+--	nid_t old_nid;
+--	__le16 old_ofs_of_node;
+--	struct f2fs_summary *test_sum;
+--	u64 cur_brf_blk;
+--	struct f2fs_mulref_block *mulref;
+--	int i, bit_pos;
+--	int entry_index;
+--	
+--
+--
+--	sum_page = find_get_page(META_MAPPING(sbi), GET_SUM_BLOCK(sbi, old_cursegno));
+--	sum_blk = page_address(sum_page);
+--	f2fs_put_page(sum_page, 1);
+--	block_addr = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
+--	old_nid = sum_blk->entries[block_addr].nid;
+--	old_ofs_of_node = sum_blk->entries[block_addr].ofs_in_node;
+--	test_sum->nid = old_nid;
+--	test_sum->ofs_in_node = old_ofs_of_node;
+--	// is_alive(sbi, sum->entries, &dni, block_addr, &nofs)
+--	if(is_alive_blk(sbi, test_sum, &dni, block_addr, &nofs)){ // 多引用
+--lookup_next_blk:
+--		cur_brf_blk = sbi->ckpt->cur_brf_blk;
+--		// block_t magic_addr = allocate_magic_block();//2 4 8递增分配
+--		multi_addr = sbi->magic_info->magic_blkaddr + 83;//segment_count_magic
+--		mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
+--		mulref = (struct f2fs_mulref_block *)page_address(mulref_page);
+--		__u8 *bitmap = mulref->multi_bitmap;
+--		f2fs_put_page(mulref_page, 1);
+--		for (i = 0; i < 40; i++) {  // 40 bytes = 320 bits
+--			if (bitmap[i] != 0xFF) {  // Not all bits are set
+--				/* Find the first clear bit in this byte */
+--				for (bit_pos = 0; bit_pos < 8; bit_pos++) {
+--					if (!(bitmap[i] & (1 << bit_pos))) {
+--						/* Found a free entry at bit position i * 8 + bit_pos */
+--						entry_index = i * 8 + bit_pos;
+--						/* Mark the entry as used by setting the corresponding bit */
+--						set_bit(entry_index, (unsigned long *)bitmap);
+--						/* Initialize the corresponding f2fs_mulref_entry */
+--						struct f2fs_mulref_entry *entry = &mulref->mrentry[entry_index];
+--						entry->inoa = old_nid;  /* inode number for A */
+--						entry->a_offset = old_ofs_of_node;  /* offset for A */
+--						entry->inob = sum->nid;  /* inode number for B */
+--						entry->b_offset = sum->ofs_in_node ;  /* offset for B */
+--						entry->rsv = 0;  /* reserved, set to 0 */
+--						sum->nid = cur_brf_blk;
+--						sum->ofs_in_node = multi_addr + entry_index;
+--						inc_node_version(sum->version);
+--						goto normal_add_summary_replace;
+--					}
+--				}
+--			}
+--		}
+--		sbi->ckpt->cur_brf_blk++;
+--		if(cur_brf_blk > (sbi->magic_info->segment_count_magic * 512 - 83))
+--			goto normal_replace;
+--		goto lookup_next_blk;
+--	normal_add_summary_replace:
+--		__add_sum_entry(sbi, type, sum);
+--
+--		if (!recover_curseg || recover_newaddr) {
+--			if (!from_gc)
+--				update_segment_mtime(sbi, new_blkaddr, 0);
+--			update_sit_entry(sbi, new_blkaddr, 1);
+--		}
+--		goto skip_normal_replace;
+--	}
+--
+--normal_replace:
+- 	__add_sum_entry(sbi, type, sum);
+- 
+- 	if (!recover_curseg || recover_newaddr) {
+-@@ -4352,7 +4283,6 @@ normal_replace:
+- 		update_sit_entry(sbi, old_blkaddr, -1);
+- 	}
+- 
+--skip_normal_replace:
+- 	locate_dirty_segment(sbi, GET_SEGNO(sbi, old_blkaddr));
+- 	locate_dirty_segment(sbi, GET_SEGNO(sbi, new_blkaddr));
+- 
+-@@ -5793,6 +5723,7 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
+- 	struct f2fs_super_block *raw_super = F2FS_RAW_SUPER(sbi);
+- 	struct f2fs_checkpoint *ckpt = F2FS_CKPT(sbi);
+- 	struct f2fs_sm_info *sm_info;
+-+	struct f2fs_magic_info *magic_info;
+- 	int err;
+- 	sm_info = f2fs_kzalloc(sbi, sizeof(struct f2fs_sm_info), GFP_KERNEL);
+- 	if (!sm_info)
+-@@ -5810,13 +5741,13 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
+- 	// lichuang
+- 	sm_info->magic_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);
+- 
+--	struct f2fs_magic_info *magic_info;
+-+	
+- 	magic_info = f2fs_kzalloc(sbi, sizeof(struct f2fs_magic_info), GFP_KERNEL);
+- 	sbi->magic_info = magic_info;
+- 	magic_info->magic_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);
+- 	magic_info->segment_count_magic = le32_to_cpu(raw_super->segment_count_magic);
+- 	
+--	pr_info("i have get magic: addr[%x], count[%llu]\n",sm_info->magic_blkaddr,magic_info->segment_count_magic);
+-+	pr_info("i have get magic: addr[%x], count[%u]\n",sm_info->magic_blkaddr,magic_info->segment_count_magic);
+- 	magic_info->mul_blocks =kmalloc_array(512 * magic_info->segment_count_magic,
+-                   sizeof(struct f2fs_mulref_block),
+-                   GFP_KERNEL);
++---- fk founder 1
++a4 81 0d 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 f9 33 c1
++00 b8 da 4a
++f8 17 a9 e4
++c0 20 22 7b
++04 00 00 00
++01 00 00 00
++00 00 00 00
++52 03 28 69
++36 05 5f 2c
++54 03 28 69
++22 53 05 28
++54 03 28 69
++22 53 05 28
++00 00 00 00
++00 00 00 00
++01 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++38 17 a9 e4
++38 17 a9 e4
++4f 29 58 00
++00 00 00 00
++00 00 00 00
++08 1c ac 9c
++68 05 0a 76
++18 18 d7 5c
++00 18 d7 5c
++00 00 00 00
++88 17 a9 e4
++88 17 a9 e4
++98 05 0a 76
++48 bd da 4a
++a8 17 a9 e4
++a8 17 a9 e4
++f0 48 70 76
++00 00 00 00
++00 00 00 00
++00 00 00 00
++01 00 00 00
++01 00 00 00
++60 f7 33 c1
++00 00 00 00
++80 16 a9 e4
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++28 18 a9 e4
++28 18 a9 e4
++ca 0c 10 01
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++80 0a 34 c1
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++88 18 a9 e4
++88 18 a9 e4
++00 00 00 00
++a0 18 a9 e4
++a0 18 a9 e4
++00 00 00 00
++b8 18 a9 e4
++b8 18 a9 e4
++00 00 00 00
++85 e4 53 ca
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++03 00 00 00
++02 06 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++38 19 a9 e4
++38 19 a9 e4
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++a8 19 a9 e4
++a8 19 a9 e4
++c8 83 05 64
++c8 83 05 64
++c8 19 a9 e4
++c8 19 a9 e4
++d8 19 a9 e4
++d8 19 a9 e4
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 1a a9 e4
++00 1a a9 e4
++50 1a d3 54
++00 00 00 00
++00 00 00 00
++00 00 00 00
++30 1a a9 e4
++30 1a a9 e4
++00 00 00 00
++00 00 00 00
++00 00 00 00
++58 1a a9 e4
++58 1a a9 e4
++00 00 00 00
++01 80 29 36
++00 00 00 00
++80 1a a9 e4
++80 1a a9 e4
++00 00 00 00
++32 00 00 00
++52 03 28 69
++36 05 5f 2c
++52 03 28 69
++36 05 5f 2c
++52 03 28 69
++36 05 5f 2c
++52 03 28 69
++36 05 5f 2c
++52 03 28 69
++36 05 5f 2c
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++ff 11 16 25
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++a4 81 0d 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 f9 33 c1
++00 e8 03 67
++f8 20 a9 e4
++80 0a 78 94
++5b 00 00 00
++01 00 00 00
++81 00 00 00
++7f f6 27 69
++11 f4 29 17
++7f f6 27 69
++11 f4 29 17
++7f f6 27 69
++11 f4 29 17
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++38 20 a9 e4
++38 20 a9 e4
++b3 0f 26 00
++00 00 00 00
++00 00 00 00
++b8 31 52 9c
++68 68 a9 e4
++e8 48 a9 e4
++00 18 d7 5c
++bb 00 00 00
++88 20 a9 e4
++88 20 a9 e4
++98 68 a9 e4
++18 49 a9 e4
++a8 20 a9 e4
++a8 20 a9 e4
++b0 66 91 47
++00 00 00 00
++00 00 00 00
++00 00 00 00
++01 00 00 00
++00 00 00 00
++60 f7 33 c1
++00 00 00 00
++80 1f a9 e4
++00 00 00 00
++80 0e 45 51
++00 00 00 00
++00 00 00 00
++00 00 00 00
++28 21 a9 e4
++28 21 a9 e4
++ca 0c 10 01
++00 00 00 00
++00 00 00 00
++01 00 00 00
++00 00 00 00
++80 0a 34 c1
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++88 21 a9 e4
++88 21 a9 e4
++00 00 00 00
++a0 21 a9 e4
++a0 21 a9 e4
++00 00 00 00
++b8 21 a9 e4
++b8 21 a9 e4
++00 00 00 00
++f5 54 c4 c9
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++04 00 00 00
++00 16 10 02
++00 00 00 00
++00 00 00 00
++00 00 00 00
++38 22 a9 e4
++38 22 a9 e4
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++a8 22 a9 e4
++a8 22 a9 e4
++b8 22 a9 e4
++b8 22 a9 e4
++c8 22 a9 e4
++c8 22 a9 e4
++d8 22 a9 e4
++d8 22 a9 e4
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 23 a9 e4
++00 23 a9 e4
++90 11 d3 54
++00 00 00 00
++00 00 00 00
++00 00 00 00
++30 23 a9 e4
++30 23 a9 e4
++00 00 00 00
++00 00 00 00
++00 00 00 00
++58 23 a9 e4
++58 23 a9 e4
++00 00 00 00
++01 52 8f 5c
++00 00 00 00
++80 23 a9 e4
++80 23 a9 e4
++00 00 00 00
++32 00 00 00
++7f f6 27 69
++11 f4 29 17
++7f f6 27 69
++11 f4 29 17
++7f f6 27 69
++11 f4 29 17
++7f f6 27 69
++11 f4 29 17
++7f f6 27 69
++11 f4 29 17
++00 00 00 00
++00 00 00 00
++a4 81 0d 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 f9 33 c1
++00 e8 93 45
++78 25 a9 e4
++b0 27 22 7b
++09 00 00 00
++01 00 00 00
++81 00 00 00
++91 fe 27 69
++62 cd d1 28
++91 fe 27 69
++62 cd d1 28
++91 fe 27 69
++62 cd d1 28
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++b8 24 a9 e4
++b8 24 a9 e4
++2c 97 45 00
++00 00 00 00
++00 00 00 00
++58 0a d3 9c
++e8 b6 48 ef
++68 b2 48 ef
++00 18 d7 5c
++bb 00 00 00
++08 25 a9 e4
++08 25 a9 e4
++18 b7 48 ef
++98 b2 48 ef
++28 25 a9 e4
++28 25 a9 e4
++70 24 5c ef
++00 00 00 00
++00 00 00 00
++00 00 00 00
++01 00 00 00
++00 00 00 00
++60 f7 33 c1
++00 00 00 00
++00 24 a9 e4
++00 00 00 00
++00 9e 4f 51
++00 00 00 00
++00 00 00 00
++00 00 00 00
++a8 25 a9 e4
++a8 25 a9 e4
++ca 0c 10 01
++00 00 00 00
++00 00 00 00
++01 00 00 00
++00 00 00 00
++80 0a 34 c1
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++08 26 a9 e4
++08 26 a9 e4
++00 00 00 00
++20 26 a9 e4
++20 26 a9 e4
++00 00 00 00
++38 26 a9 e4
++38 26 a9 e4
++00 00 00 00
++64 ca ae a0
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
++00 00 00 00
+\ No newline at end of file
+diff --git a/node.c b/node.c
+index c86e9df..be056b7 100644
+--- a/node.c
++++ b/node.c
+@@ -491,8 +491,7 @@ static void set_node_addr(struct f2fs_sb_info *sbi, struct node_info *ni,
+ 
+ 	/* increment version no as node is removed */
+ 	if (nat_get_blkaddr(e) != NEW_ADDR && new_blkaddr == NULL_ADDR) {
+-		unsigned char version = nat_get_version(e);
+-
++		// unsigned char version = nat_get_version(e);
+ 		//  nat_set_version(e, inc_node_version(version));
+ 	}
+ 
+diff --git a/segment.c b/segment.c
+index 305ec4e..71bdd80 100644
+--- a/segment.c
++++ b/segment.c
+@@ -3380,30 +3380,21 @@ static int __get_segment_type(struct f2fs_io_info *fio)
+ 
+ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+ 												int *do_replace, pgoff_t len, struct page *ipage){
+-	if (!ipage){
+-		pr_info("inode page is null\n");
+-		return 1;
+-	}
+ 	struct f2fs_sb_info *sbi = F2FS_I_SB(src_inode);
+ 	pgoff_t j = 0;
+-	int ret;
+-
+-	struct f2fs_summary *sum = kmalloc(sizeof(struct f2fs_summary), GFP_KERNEL);
+-	if (!sum) {
+-		pr_err("Failed to allocate summary\n");
+-		return -ENOMEM;
+-	}
++	// int ret;
+ 	unsigned int old_segno, blk_off;
+ 	struct seg_entry *se;
+ 	int type;
+ 	block_t old_blkaddr;
+-	__le16 old_ofs_in_node, new_ofs_in_node;
++	__le16 old_ofs_in_node;
++	// new_ofs_in_node;
+ 	block_t multi_addr = 0;
+ 	struct page *mulref_page = NULL;
+ 	u64 cur_brf_blk = 0;
+ 	bool need_multi_ref = false;
+ 	struct f2fs_mulref_block *mulref;
+-	__u8 *bitmap;									
++	// __u8 *bitmap;									
+ 	nid_t new_nid = dst_inode->i_ino;
+ 	nid_t old_nid = src_inode->i_ino;									
+ 	struct curseg_info *old_curseg = NULL;
+@@ -3416,6 +3407,25 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+ 	struct page *sum_page;
+ 	struct f2fs_summary_block *sum_blk;
+ 
++	char *base_ptr;
++	size_t entry_offset;
++	u32 temp_inoa,temp_inob;
++	u16 temp_a_offset,temp_b_offset;
++	__u8 *safe_bitmap;
++	block_t mr_blkaddr;
++	bool full,found_slot;
++	struct f2fs_mulref_entry *entry;
++	struct curseg_info *curseg;
++
++	struct f2fs_summary *sum = kmalloc(sizeof(struct f2fs_summary), GFP_KERNEL);
++	if (!sum) {
++		pr_err("Failed to allocate summary\n");
++		return -ENOMEM;
++	}
++	if (!ipage){
++		pr_info("inode page is null\n");
++		return 1;
++	}
+ 
+ 	multi_addr = sbi->magic_info->magic_blkaddr + 83;
+ 	while (j < len) {
+@@ -3467,7 +3477,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+ 				old_version = old_sum.version;	
+ 				// 检查是否需要多引用（无锁快速检查）
+ 				if (f2fs_test_bit(blk_off, se->cur_valid_map) && old_nid != 0 && old_nid != new_nid) {
+-					pr_info("[update_snap_meta] multiref [DATA: %lu, %lu]\n", old_nid,new_nid);
++					pr_info("[update_snap_meta] multiref [DATA: %u, %u]\n", old_nid,new_nid);
+ 					need_multi_ref = true;
+ 					cur_brf_blk = le64_to_cpu(sbi->ckpt->cur_brf_blk);
+ 					mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
+@@ -3486,9 +3496,9 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+ 					pr_info("mulref pointer: %p\n", mulref);
+ 
+ 					// bitmap = mulref->multi_bitmap;
+-					char *base_ptr = (char *)mulref;
+-					__u8 *safe_bitmap = (__u8 *)(base_ptr);  // bitmap从偏移0开始
+-					bool found_slot = false;
++					base_ptr = (char *)mulref;
++					safe_bitmap = (__u8 *)(base_ptr);  // bitmap从偏移0开始
++					found_slot = false;
+ 					for (i = 0; i < 40 && !found_slot; i++) {  // 40 bytes = 320 bits
+ 						__u8 bitmap_byte = safe_bitmap[i];
+ 						pr_info("DEBUG: bitmap[%d] = 0x%02x\n", i, bitmap_byte);
+@@ -3506,19 +3516,19 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+ 										return -EINVAL;
+ 									}
+ 									pr_info("DEBUG: mulref = %p, entry_index = %d\n", mulref, entry_index);
+-									size_t entry_offset = 40 + entry_index * 13;  // mrentry起始偏移 + 索引×大小
+-									struct f2fs_mulref_entry *entry = 
++									entry_offset = 40 + entry_index * 13;  // mrentry起始偏移 + 索引×大小
++									entry = 
+ 										(struct f2fs_mulref_entry *)(base_ptr + entry_offset);
+ 									
+ 									pr_info("DEBUG: entry = %p (base %p + offset %zu)\n", 
+                                            entry, base_ptr, entry_offset);
+ 									// === 安全的赋值 ===
+-									__le32 temp_inoa = cpu_to_le32(old_nid);
+-									__le16 temp_a_offset = cpu_to_le16(old_ofs_in_node);
+-									__le32 temp_inob = cpu_to_le32(le32_to_cpu(new_nid));
+-									__le16 temp_b_offset = cpu_to_le16(le16_to_cpu(old_ofs_in_node));
++									temp_inoa = cpu_to_le32(old_nid);
++									temp_a_offset = cpu_to_le16(old_ofs_in_node);
++									temp_inob = cpu_to_le32(le32_to_cpu(new_nid));
++									temp_b_offset = cpu_to_le16(le16_to_cpu(old_ofs_in_node));
+ 									
+-									pr_info("DEBUG: Writing data: inoa=%u, inob=%lu\n",
++									pr_info("DEBUG: Writing data: inoa=%u, inob=%u\n",
+                                            old_nid, new_nid);
+ 									// 逐个成员复制
+ 									memcpy(&entry->inoa, &temp_inoa, sizeof(temp_inoa));
+@@ -3531,8 +3541,8 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+ 									safe_bitmap[i] = bitmap_byte | (1 << bit_pos);
+ 									pr_info("DEBUG: Bitmap updated: 0x%02x -> 0x%02x\n",
+                                            bitmap_byte, safe_bitmap[i]);
+-									block_t mr_blkaddr = multi_addr + cur_brf_blk;
+-									pr_info("DEBUG: Setting sum: mr_blkaddr=%llu, entry_index=%d\n",
++									mr_blkaddr = multi_addr + cur_brf_blk;
++									pr_info("DEBUG: Setting sum: mr_blkaddr=%u, entry_index=%u\n",
+                                            mr_blkaddr, entry_index);
+ 									sum->nid = cpu_to_le32(mr_blkaddr);
+ 									sum->ofs_in_node = cpu_to_le16(entry_index);
+@@ -3545,7 +3555,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+ 									f2fs_put_page(mulref_page, 1);
+ 									mulref_page = NULL;
+ 									
+-									bool full = true;
++									full = true;
+ 									for (k = 0; k < 40; k++) {
+ 										if (safe_bitmap[k] != 0xFF) {
+ 											full = false;
+@@ -3612,7 +3622,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+ 						f2fs_put_page(sum_page, 1);
+ 						// 检查是否需要多引用（无锁快速检查）
+ 						if (f2fs_test_bit(blk_off, se->cur_valid_map) && old_nid != 0 && old_nid != new_nid){
+-							pr_info("[update_snap_meta] multiref2 [DATA: %lu, %lu]\n", old_nid,new_nid);
++							pr_info("[update_snap_meta] multiref2 [DATA: %u, %u]\n", old_nid,new_nid);
+ 							need_multi_ref = true;
+ 							cur_brf_blk = le64_to_cpu(sbi->ckpt->cur_brf_blk);
+ 							mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
+@@ -3631,9 +3641,9 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+ 							pr_info("mulref pointer2: %p\n", mulref);
+ 
+ 							// bitmap = mulref->multi_bitmap;
+-							char *base_ptr = (char *)mulref;
+-							__u8 *safe_bitmap = (__u8 *)(base_ptr);  // bitmap从偏移0开始
+-							bool found_slot = false;
++							base_ptr = (char *)mulref;
++							safe_bitmap = (__u8 *)(base_ptr);  // bitmap从偏移0开始
++							found_slot = false;
+ 							// mulref = (struct f2fs_mulref_block *)page_address(mulref_page);
+ 							// bitmap = mulref->multi_bitmap;
+ 							for (i = 0; i < 40 && !found_slot; i++) {  // 40 bytes = 320 bits
+@@ -3653,19 +3663,19 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+ 												return -EINVAL;
+ 											}
+ 											pr_info("DEBUG: mulref = %p, entry_index = %d\n", mulref, entry_index);
+-											size_t entry_offset = 40 + entry_index * 13;  // mrentry起始偏移 + 索引×大小
+-											struct f2fs_mulref_entry *entry = 
++											entry_offset = 40 + entry_index * 13;  // mrentry起始偏移 + 索引×大小
++											entry = 
+ 												(struct f2fs_mulref_entry *)(base_ptr + entry_offset);
+ 											
+ 											pr_info("DEBUG: entry = %p (base %p + offset %zu)\n", 
+ 												entry, base_ptr, entry_offset);
+ 											// === 安全的赋值 ===
+-											__le32 temp_inoa = cpu_to_le32(old_nid);
+-											__le16 temp_a_offset = cpu_to_le16(old_ofs_in_node);
+-											__le32 temp_inob = cpu_to_le32(le32_to_cpu(new_nid));
+-											__le16 temp_b_offset = cpu_to_le16(le16_to_cpu(old_ofs_in_node));
++											temp_inoa = cpu_to_le32(old_nid);
++											temp_a_offset = cpu_to_le16(old_ofs_in_node);
++											temp_inob = cpu_to_le32(le32_to_cpu(new_nid));
++											temp_b_offset = cpu_to_le16(le16_to_cpu(old_ofs_in_node));
+ 											
+-											pr_info("DEBUG: Writing data: inoa=%u, inob=%lu\n",
++											pr_info("DEBUG: Writing data: inoa=%u, inob=%u\n",
+ 												old_nid, new_nid);
+ 											// 逐个成员复制
+ 											memcpy(&entry->inoa, &temp_inoa, sizeof(temp_inoa));
+@@ -3678,8 +3688,8 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+ 											safe_bitmap[i] = bitmap_byte | (1 << bit_pos);
+ 											pr_info("DEBUG: Bitmap updated: 0x%02x -> 0x%02x\n",
+ 												bitmap_byte, safe_bitmap[i]);
+-											block_t mr_blkaddr = multi_addr + cur_brf_blk;
+-											pr_info("DEBUG: Setting sum: mr_blkaddr=%llu, entry_index=%d\n",
++											mr_blkaddr = multi_addr + cur_brf_blk;
++											pr_info("DEBUG: Setting sum: mr_blkaddr=%u, entry_index=%u\n",
+ 												mr_blkaddr, entry_index);
+ 											sum->nid = cpu_to_le32(mr_blkaddr);
+ 											sum->ofs_in_node = cpu_to_le16(entry_index);
+@@ -3692,7 +3702,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+ 											f2fs_put_page(mulref_page, 1);
+ 											mulref_page = NULL;
+ 											
+-											bool full = true;
++											full = true;
+ 											for (k = 0; k < 40; k++) {
+ 												if (safe_bitmap[k] != 0xFF) {
+ 													full = false;
+@@ -3743,7 +3753,7 @@ int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
+ 			}
+ 			 
+ 			__add_sum_entry(sbi, type, sum);
+-			struct curseg_info *curseg = CURSEG_I(sbi, se->type);
++			curseg = CURSEG_I(sbi, se->type);
+ 			if (curseg) {
+ 				stat_inc_block_count(sbi, curseg);
+ 			}
+@@ -3768,45 +3778,46 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
+ 	struct curseg_info *curseg = CURSEG_I(sbi, type);
+ 	unsigned long long old_mtime;
+ 	bool from_gc = (type == CURSEG_ALL_DATA_ATGC);
+-	struct seg_entry *se = NULL;
+ 	
+-	char s_type[10];
+-	if(fio->type == DATA){
+-		strcpy(s_type, "DATA");
+-	}else if(fio->type == NODE){
+-		strcpy(s_type, "NODE");
+-	}else {
+-		strcpy(s_type, "OTHER");
+-	}
+ 	/* 添加的变量 */
+ 	// unsigned int new_segno = GET_SEGNO(sbi, *new_blkaddr);
+-
+ 	struct f2fs_summary old_sum;
+ 	struct page *sum_page;
+ 	struct f2fs_summary_block *sum_blk;
+ 	unsigned int old_segno, blk_off;
+-	unsigned int old_type, type_start, type_end;
++	unsigned int old_type;//, type_start, type_end;
+ 	struct curseg_info *old_curseg = NULL;
+-	nid_t old_nid, old_nid_b;
+-	__le16 old_ofs_of_node, old_ofs_of_node_b;
++	nid_t old_nid;//, old_nid_b;
++	__le16 old_ofs_of_node;//, old_ofs_of_node_b;
+ 	__u8 old_version;
+-	block_t multi_addr = 0, global_addr = 0;
++	block_t multi_addr = 0;// global_addr = 0;
+ 	struct page *mulref_page = NULL;
+ 	u64 cur_brf_blk = 0;
+ 	bool is_multi_ref = false;
+ 	struct f2fs_mulref_block *mulref;
+ 	__u8 *bitmap;
++	nid_t new_nid;
++	struct seg_entry *se = NULL;
++	
++	char s_type[10];
++	if(fio->type == DATA){
++		strcpy(s_type, "DATA");
++	}else if(fio->type == NODE){
++		strcpy(s_type, "NODE");
++	}else {
++		strcpy(s_type, "OTHER");
++	}
+ 
+-	unsigned int nofs;
+-	struct node_info dni;
+-	int i, j, bit_pos;
+-	u16 entry_index;
++	// unsigned int nofs;
++	// struct node_info dni;
++	// int i, j, bit_pos;
++	// u16 entry_index;
+ 	
+ 
+ 	/* 添加的逻辑：通过old_addr获取对应的summary entry并打印信息 */
+ 	if (__is_valid_data_blkaddr(old_blkaddr) && fio->type == DATA) {
+ 		old_segno = GET_SEGNO(sbi, old_blkaddr);
+-		nid_t new_nid = le32_to_cpu(sum->nid);
++		new_nid = le32_to_cpu(sum->nid);
+ 		blk_off = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
+ 
+ 		down_read(&SM_I(sbi)->curseg_lock);
+@@ -3831,13 +3842,13 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
+ 					old_version = old_sum.version;	
+ 					// 检查是否需要多引用（无锁快速检查）
+ 					if(old_nid != 0 && old_nid != new_nid){
+-						pr_info("[update_snap_meta] multiref [DATA: %lu, %lu]\n", old_nid,new_nid);
++						pr_info("[update_snap_meta] multiref [DATA: %u, %u]\n", old_nid,new_nid);
+ 						is_multi_ref = true;
+ 						multi_addr = sbi->magic_info->magic_blkaddr + 83;
+ 						cur_brf_blk = le64_to_cpu(sbi->ckpt->cur_brf_blk);
+ 						mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
+ 					} else if(old_nid == new_nid){
+-						pr_info("Same file update [%s: %lu]\n",s_type, old_nid);
++						pr_info("Same file update [%s: %u]\n",s_type, old_nid);
+ 						goto skip_pre;
+ 					} else if(old_nid == 0){
+ 						pr_info("Fresh block allocation\n");
+@@ -3858,13 +3869,13 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
+ 						f2fs_put_page(sum_page, 1);
+ 						// 检查是否需要多引用（无锁快速检查）
+ 						if(old_nid != 0 && old_nid != new_nid){
+-							pr_info("[update_snap_meta] multiref [DATA: %lu, %lu]\n", old_nid,new_nid);
++							pr_info("[update_snap_meta] multiref [DATA: %u, %u]\n", old_nid,new_nid);
+ 							is_multi_ref = true;
+ 							multi_addr = sbi->magic_info->magic_blkaddr + 83;
+ 							cur_brf_blk = le64_to_cpu(sbi->ckpt->cur_brf_blk);
+ 							mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
+ 						} else if(old_nid == new_nid){
+-							pr_info("Same file update [DATA: %lu]\n",old_nid);
++							pr_info("Same file update [DATA: %u]\n",old_nid);
+ 							goto skip_pre;
+ 						} else if(old_nid == 0){
+ 							pr_info("Fresh block allocation\n");
+@@ -3891,9 +3902,9 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
+ skip_pre:
+ 	if(old_blkaddr == NEW_ADDR)
+ 	{
+-		pr_info("new addr write[%s: %lu]\n",s_type,le32_to_cpu(sum->nid));
++		pr_info("new addr write[%s: %u]\n",s_type,le32_to_cpu(sum->nid));
+ 	} else if(old_blkaddr == NULL_ADDR){
+-		pr_info("null addr write[%s: %lu]\n",s_type,le32_to_cpu(sum->nid));
++		pr_info("null addr write[%s: %u]\n",s_type,le32_to_cpu(sum->nid));
+ 	}
+ 	// 原代码开始处
+ 	down_read(&SM_I(sbi)->curseg_lock);
+@@ -3945,7 +3956,7 @@ skip_pre:
+ 		mulref_page = NULL;
+ 	}	
+ 
+-normal:
++// normal:
+ 	/*
+ 	 * __add_sum_entry should be resided under the curseg_mutex
+ 	 * because, this function updates a summary entry in the
+@@ -3973,7 +3984,6 @@ normal:
+ 	update_sit_entry(sbi, *new_blkaddr, 1);
+ 	update_sit_entry(sbi, old_blkaddr, -1);	
+ 
+-skip_update_sit:
+ 	// if (sum_page) f2fs_put_page(sum_page, 1);
+ 	if (mulref_page) f2fs_put_page(mulref_page, 1);
+ 
+@@ -4207,6 +4217,7 @@ void f2fs_do_replace_block(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
+ 				bool recover_curseg, bool recover_newaddr,
+ 				bool from_gc)
+ {
++	// recovery 这里先不更新
+ 	struct sit_info *sit_i = SIT_I(sbi);
+ 	struct curseg_info *curseg;
+ 	unsigned int segno, old_cursegno;
+@@ -4256,86 +4267,6 @@ void f2fs_do_replace_block(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
+ 	}
+ 
+ 	curseg->next_blkoff = GET_BLKOFF_FROM_SEG0(sbi, new_blkaddr);
+-	// sihuo
+-	// struct page *node_page = f2fs_get_node_page(sbi, nid);
+-	// block_t blkaddr = data_blkaddr(NULL, node_page, ofs_in_node);
+-	// Inline  和 noninline两种处理
+-	// blkaddr = -> i_addr[i]blkaddr = -> i_addr[i]
+-	// unsigned int segno = GET_SEGNO(sbi, blkaddr);
+-// 	struct page *sum_page;
+-// 	struct page *mulref_page;
+-// 	struct f2fs_summary_block *sum_blk;
+-// 	block_t block_addr, multi_addr;
+-// 	unsigned int nofs;
+-// 	struct node_info dni;
+-// 	nid_t old_nid;
+-// 	__le16 old_ofs_of_node;
+-// 	struct f2fs_summary *test_sum;
+-// 	u64 cur_brf_blk;
+-// 	struct f2fs_mulref_block *mulref;
+-// 	int i, bit_pos;
+-// 	int entry_index;
+-	
+-
+-
+-// 	sum_page = find_get_page(META_MAPPING(sbi), GET_SUM_BLOCK(sbi, old_cursegno));
+-// 	sum_blk = page_address(sum_page);
+-// 	f2fs_put_page(sum_page, 1);
+-// 	block_addr = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
+-// 	old_nid = sum_blk->entries[block_addr].nid;
+-// 	old_ofs_of_node = sum_blk->entries[block_addr].ofs_in_node;
+-// 	test_sum->nid = old_nid;
+-// 	test_sum->ofs_in_node = old_ofs_of_node;
+-// 	// is_alive(sbi, sum->entries, &dni, block_addr, &nofs)
+-// 	if(is_alive_blk(sbi, test_sum, &dni, block_addr, &nofs)){ // 多引用
+-// lookup_next_blk:
+-// 		cur_brf_blk = sbi->ckpt->cur_brf_blk;
+-// 		// block_t magic_addr = allocate_magic_block();//2 4 8递增分配
+-// 		multi_addr = sbi->magic_info->magic_blkaddr + 83;//segment_count_magic
+-// 		mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
+-// 		mulref = (struct f2fs_mulref_block *)page_address(mulref_page);
+-// 		__u8 *bitmap = mulref->multi_bitmap;
+-// 		f2fs_put_page(mulref_page, 1);
+-// 		for (i = 0; i < 40; i++) {  // 40 bytes = 320 bits
+-// 			if (bitmap[i] != 0xFF) {  // Not all bits are set
+-// 				/* Find the first clear bit in this byte */
+-// 				for (bit_pos = 0; bit_pos < 8; bit_pos++) {
+-// 					if (!(bitmap[i] & (1 << bit_pos))) {
+-// 						/* Found a free entry at bit position i * 8 + bit_pos */
+-// 						entry_index = i * 8 + bit_pos;
+-// 						/* Mark the entry as used by setting the corresponding bit */
+-// 						set_bit(entry_index, (unsigned long *)bitmap);
+-// 						/* Initialize the corresponding f2fs_mulref_entry */
+-// 						struct f2fs_mulref_entry *entry = &mulref->mrentry[entry_index];
+-// 						entry->inoa = old_nid;  /* inode number for A */
+-// 						entry->a_offset = old_ofs_of_node;  /* offset for A */
+-// 						entry->inob = sum->nid;  /* inode number for B */
+-// 						entry->b_offset = sum->ofs_in_node ;  /* offset for B */
+-// 						entry->rsv = 0;  /* reserved, set to 0 */
+-// 						sum->nid = cur_brf_blk;
+-// 						sum->ofs_in_node = multi_addr + entry_index;
+-// 						inc_node_version(sum->version);
+-// 						goto normal_add_summary_replace;
+-// 					}
+-// 				}
+-// 			}
+-// 		}
+-// 		sbi->ckpt->cur_brf_blk++;
+-// 		if(cur_brf_blk > (sbi->magic_info->segment_count_magic * 512 - 83))
+-// 			goto normal_replace;
+-// 		goto lookup_next_blk;
+-// 	normal_add_summary_replace:
+-// 		__add_sum_entry(sbi, type, sum);
+-
+-// 		if (!recover_curseg || recover_newaddr) {
+-// 			if (!from_gc)
+-// 				update_segment_mtime(sbi, new_blkaddr, 0);
+-// 			update_sit_entry(sbi, new_blkaddr, 1);
+-// 		}
+-// 		goto skip_normal_replace;
+-// 	}
+-
+-// normal_replace:
+ 	__add_sum_entry(sbi, type, sum);
+ 
+ 	if (!recover_curseg || recover_newaddr) {
+@@ -4352,7 +4283,6 @@ void f2fs_do_replace_block(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
+ 		update_sit_entry(sbi, old_blkaddr, -1);
+ 	}
+ 
+-// skip_normal_replace:
+ 	locate_dirty_segment(sbi, GET_SEGNO(sbi, old_blkaddr));
+ 	locate_dirty_segment(sbi, GET_SEGNO(sbi, new_blkaddr));
+ 
+@@ -5793,6 +5723,7 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
+ 	struct f2fs_super_block *raw_super = F2FS_RAW_SUPER(sbi);
+ 	struct f2fs_checkpoint *ckpt = F2FS_CKPT(sbi);
+ 	struct f2fs_sm_info *sm_info;
++	struct f2fs_magic_info *magic_info;
+ 	int err;
+ 	sm_info = f2fs_kzalloc(sbi, sizeof(struct f2fs_sm_info), GFP_KERNEL);
+ 	if (!sm_info)
+@@ -5810,13 +5741,13 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
+ 	// lichuang
+ 	sm_info->magic_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);
+ 
+-	struct f2fs_magic_info *magic_info;
++	
+ 	magic_info = f2fs_kzalloc(sbi, sizeof(struct f2fs_magic_info), GFP_KERNEL);
+ 	sbi->magic_info = magic_info;
+ 	magic_info->magic_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);
+ 	magic_info->segment_count_magic = le32_to_cpu(raw_super->segment_count_magic);
+ 	
+-	pr_info("i have get magic: addr[%x], count[%llu]\n",sm_info->magic_blkaddr,magic_info->segment_count_magic);
++	pr_info("i have get magic: addr[%x], count[%u]\n",sm_info->magic_blkaddr,magic_info->segment_count_magic);
+ 	magic_info->mul_blocks =kmalloc_array(512 * magic_info->segment_count_magic,
+                   sizeof(struct f2fs_mulref_block),
+                   GFP_KERNEL);
