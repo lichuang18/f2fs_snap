@@ -3874,16 +3874,16 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 						f2fs_put_page(sum_page, 1);
 						// 检查是否需要多引用（无锁快速检查）
 						if(old_nid != 0 && old_nid != new_nid){
-							pr_info("[update_snap_meta] multiref [DATA: %u, %u]\n", old_nid,new_nid);
+							pr_info("[update_snap_meta] multiref2 [DATA: %u, %u]\n", old_nid,new_nid);
 							is_multi_ref = true;
 							multi_addr = sbi->magic_info->magic_blkaddr + 83;
 							cur_brf_blk = le64_to_cpu(sbi->ckpt->cur_brf_blk);
 							mulref_page = f2fs_get_meta_page(sbi, multi_addr + cur_brf_blk);
 						} else if(old_nid == new_nid){
-							pr_info("Same file update [DATA: %u]\n",old_nid);
+							pr_info("Same file update2 [DATA: %u]\n",old_nid);
 							goto skip_pre;
 						} else if(old_nid == 0){
-							pr_info("Fresh block allocation\n");
+							pr_info("Fresh block allocation2\n");
 							goto skip_pre;
 						}
 					} else {
@@ -3907,7 +3907,7 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 skip_pre:
 	if(old_blkaddr == NEW_ADDR)
 	{
-		pr_info("new addr write[%s: %u]\n",s_type,le32_to_cpu(sum->nid));
+		// pr_info("new addr write[%s: %u]\n",s_type,le32_to_cpu(sum->nid));
 	} else if(old_blkaddr == NULL_ADDR){
 		// pr_info("null addr write\n");
 	}

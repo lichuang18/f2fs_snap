@@ -1016,11 +1016,11 @@ static bool is_alive(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 		return false;
 	}
 
-	if (sum->version != dni->version) {
-		f2fs_warn(sbi, "%s: valid data with mismatched node version.",
-			  __func__);
-		set_sbi_flag(sbi, SBI_NEED_FSCK);
-	}
+	// if (sum->version != dni->version) {
+	// 	f2fs_warn(sbi, "%s: valid data with mismatched node version.",
+	// 		  __func__);
+	// 	set_sbi_flag(sbi, SBI_NEED_FSCK);
+	// }
 
 	if (f2fs_check_nid_range(sbi, dni->ino)) {
 		f2fs_put_page(node_page, 1);
@@ -1622,6 +1622,7 @@ next_step:
 
 			block_t mr_blkaddr = le32_to_cpu(entry->nid);          // sum->nid 里存的 mr_blkaddr
 			u16 mr_index       = le16_to_cpu(entry->ofs_in_node);
+			pr_info("seg.off[%u,%u], entry->version[%u], start addr[%x], mr_addr[%x],mr_index[%u],\n",segno,off,entry->version, start_addr + off,mr_blkaddr,mr_index);
 			ret = get_mulref_nid(sbi, mr_blkaddr, mr_index, &mulref_entry);
 			if (ret) {
 				// ret = 0  normal
@@ -1887,7 +1888,7 @@ next_step:
 				up_write(&fi->i_gc_rwsem[WRITE]);
 			}
 		}else{
-			pr_info("normal process\n");
+			pr_info("normal process seg[%u],off[%u]\n",segno,off);
 			if (phase == 0) {
 				f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), 1,
 								META_NAT, true);

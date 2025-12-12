@@ -4975,12 +4975,7 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		parent_dentry = dget_parent(dentry);
 		snap_push(&stack, parent_dentry->d_inode->i_ino);
 		e = __loup_nat_cache(nm_i, parent_dentry->d_inode->i_ino);
-		ver = nat_get_version(e);
-		if (ver == 0) {
-			// version 为 0，不支持快照
-			pr_info("[COW] ver is 0, no need snapshot\n");
-			goto normal;
-		}
+		ver = nat_get_version(e);// 这里查看的就是其父目录的entry
 		loc_block = ver / 799;
 		loc_oft_in_block = ver % 799;
 		block = &magic_i->magic_blocks[loc_block];
