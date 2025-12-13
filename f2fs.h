@@ -28,6 +28,11 @@
 #include <linux/fscrypt.h>
 #include <linux/fsverity.h>
 
+#define TOTAL_MAGIC_BLK 142
+#define AUTO_FILL_MAGIC 120 // 剩余22块，可存5104个entry，这时动态管理，以尽可能支持更多目录的快照
+#define MGENTRY_PER_BLOCK 232
+#define MRENTRY_PER_BLOCK 336
+
 #ifdef CONFIG_F2FS_CHECK_FS
 #define f2fs_bug_on(sbi, condition)	BUG_ON(condition)
 #else
@@ -1010,38 +1015,44 @@ struct flush_cmd_control {
 };
 
 
-struct f2fs_mulref_entry { // 13 Bytes
-	__le32 inoa;	/* inode number */
-	__le16 a_offset;		/* inode offset */
-	__le32 inob;	/* inode number */
-	__le16 b_offset;		/* inode offset */
-	__u8 rsv;	/* next double */
+struct f2fs_mulref_entry { // 12 Bytes
+	__le32 m_nid;	/* inode number */
+	__le16 m_ofs;	/* inode offset */
+	__u8 m_ver;	  // version
+	__u8 m_count; // ref entry数量
+	__le32 next;  // next entry
 } __packed;
 
 /* 4KB-sized multi ref entry block */
-struct f2fs_mulref_block { // 13 Byte * 312 + 40 Byte = 4096 K Byte
-	__u8 multi_bitmap[40]; // 40 Byte * 8 bit = 320 bit
-	// __u8 padding[1];        // 对齐到40字节
-	struct f2fs_mulref_entry mrentry[312];
+struct f2fs_mulref_block { // 12 Byte * 338 + 40 Byte = 4096 K Byte
+	__u8 multi_bitmap[42]; // 42 Byte * 8 bit = 336 bit
+	struct f2fs_mulref_entry mrentries[MRENTRY_PER_BLOCK];
+	// 22Byte
+	__u16 v_mrentrys;
+	__u16 next_free_mrentry;
+	__u8 reserved[18];
 } __packed;
 
 
-struct f2fs_magic_entry { // 5B
-    __le32 snap_ino;     /* snap inode number */
+struct f2fs_magic_entry { // 17B
+    __le32 snap_ino[4];     /* snap inode number */
 	__u8 flag;       /* snapshot version control*/
 } __packed;
 
 struct f2fs_magic_block {
-	__u8 multi_bitmap[100]; // 100 Byte
-    struct f2fs_magic_entry entries[799];//799 * 5Byte = 3995 Byte < 3996 Byte
-	__u8 rsv; 
+	__u8 multi_bitmap[29]; // 29 Byte
+    struct f2fs_magic_entry mgentries[MGENTRY_PER_BLOCK];
+	// 123 Byte
+	__u16 v_mgentrys;
+	__u16 next_free_mgentry;
+	__u8 reserved[119];
 } __packed;
 
 struct f2fs_magic_info {
 	block_t magic_blkaddr;		/* start block address of magic area */
 	__le32 segment_count_magic; // 2MB * segment_count_magic
-	struct f2fs_magic_block magic_blocks[83];  // 记录64K个record，就需要83个块
-	struct f2fs_mulref_block *mul_blocks; // 512 * segment_count_magic;
+	struct f2fs_magic_block magic_blocks[TOTAL_MAGIC_BLK];  // 记录32K个record，就需要142个块
+	struct f2fs_mulref_block *mul_blocks; // 512 * segment_count_magic - 142;
 };
 
 struct f2fs_sm_info {
