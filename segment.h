@@ -726,7 +726,6 @@ static inline int check_block_count(struct f2fs_sb_info *sbi,
 	int valid_blocks = 0;
 	int cur_pos = 0, next_pos;
 	unsigned int usable_blks_per_seg = f2fs_usable_blks_in_seg(sbi, segno);
-
 	/* check bitmap with valid block count */
 	do {
 		if (is_valid) {
@@ -734,15 +733,20 @@ static inline int check_block_count(struct f2fs_sb_info *sbi,
 					usable_blks_per_seg,
 					cur_pos);
 			valid_blocks += next_pos - cur_pos;
-		} else
+			
+		} else {
 			next_pos = find_next_bit_le(&raw_sit->valid_map,
 					usable_blks_per_seg,
 					cur_pos);
+					
+		}
 		cur_pos = next_pos;
 		is_valid = !is_valid;
+		
 	} while (cur_pos < usable_blks_per_seg);
-
+	
 	if (unlikely(GET_SIT_VBLOCKS(raw_sit) != valid_blocks)) {
+		pr_info("segno [%u]\n",segno);
 		f2fs_err(sbi, "Mismatch valid blocks %d vs. %d",
 			 GET_SIT_VBLOCKS(raw_sit), valid_blocks);
 		set_sbi_flag(sbi, SBI_NEED_FSCK);

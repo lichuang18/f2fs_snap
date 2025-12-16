@@ -15,6 +15,7 @@
 
 #include "f2fs.h"
 #include "node.h"
+#include "snapshot.h"
 #include "segment.h"
 #include "xattr.h"
 #include "iostat.h"
@@ -451,7 +452,7 @@ static void cache_nat_entry(struct f2fs_sb_info *sbi, nid_t nid,
 	if (e != new)
 		__free_nat_entry(new);
 }
-
+// block_t new_blkaddr, bool fsync_done, u16 s_flag)
 static void set_node_addr(struct f2fs_sb_info *sbi, struct node_info *ni,
 			block_t new_blkaddr, bool fsync_done)
 {
@@ -491,8 +492,9 @@ static void set_node_addr(struct f2fs_sb_info *sbi, struct node_info *ni,
 
 	/* increment version no as node is removed */
 	if (nat_get_blkaddr(e) != NEW_ADDR && new_blkaddr == NULL_ADDR) {
-		// unsigned char version = nat_get_version(e);
-		//  nat_set_version(e, inc_node_version(version));
+		unsigned char version = nat_get_version(e);
+
+		nat_set_version(e, inc_node_version(version));
 	}
 
 	/* change address */
@@ -567,6 +569,7 @@ retry:
 		ni->ino = nat_get_ino(e);
 		ni->blk_addr = nat_get_blkaddr(e);
 		ni->version = nat_get_version(e);
+		ni->s_flag = nat_get_sflag(e);
 		up_read(&nm_i->nat_tree_lock);
 		return 0;
 	}
@@ -1282,6 +1285,7 @@ struct page *f2fs_new_inode_page(struct inode *inode)
 	return f2fs_new_node_page(&dn, 0);
 }
 
+
 struct page *f2fs_new_node_page(struct dnode_of_data *dn, unsigned int ofs)
 {
 	struct f2fs_sb_info *sbi = F2FS_I_SB(dn->inode);
@@ -1316,29 +1320,7 @@ struct page *f2fs_new_node_page(struct dnode_of_data *dn, unsigned int ofs)
 	new_ni.ino = dn->inode->i_ino;
 	new_ni.blk_addr = NULL_ADDR;
 	new_ni.flag = 0;
-	// new_ni.version = 0;
-
-	// set version
-	// 这里需要对记录快照位置，目前假设只支持对256个目录进行快照
-	// 那么这里就要对256个目录进行写入不同的偏移，这个偏移指向另一片空间
-	// 256写完了怎么半？  假设写完就不写了（后续可以考虑有策略的回收）
-	// 要有一个地方记录已经用了多少个偏移了, 比如magic_usecount
-	// 目前使用checkpoint区域保存一个magic_usecount
-	// 假设magic_usecount=0
-	if(S_ISDIR(dn->inode->i_mode)){
-		__le16 magic_count = sbi->ckpt->magic_count;
-		// pr_info("dir ino[%llu] get magic_usecount [%lu]\n",dn->inode->i_ino, magic_count);
-		if(magic_count <= 256){// 假设一定能写入
-		 // 假设写入了111
-			new_ni.version = magic_count + 1;
-			sbi->ckpt->magic_count = magic_count + 1;
-		} else{
-			// todo. 可以设置回收机制, 有选择的更新一些目录的version字段
-			// update nat
-			pr_info("OK, new dir can't do snapshot(reach max snapshot dir record)\n");
-			new_ni.version = 0;
-		}
-	}
+	new_ni.version = 0;
 	// set new_addr， 表示未分配有效块地址
 	set_node_addr(sbi, &new_ni, NEW_ADDR, false);
 	f2fs_wait_on_page_writeback(page, NODE, true, true);
@@ -3497,7 +3479,7 @@ void f2fs_destroy_node_manager(struct f2fs_sb_info *sbi)
 	kfree(nm_i);
 }
 
-int __init rdffs_create_node_manager_caches(void)
+int __init snapfs_create_node_manager_caches(void)
 {
 	nat_entry_slab = f2fs_kmem_cache_create("f2fs_nat_entry",
 			sizeof(struct nat_entry));

@@ -3,7 +3,7 @@
 dev=nvme1n1p1              # 换成你的设备名
 out=fg_gc_stat.log         # 输出文件名
 
-base="/sys/fs/rdffs/$dev"
+base="/sys/fs/snapfs/$dev"
 
 echo "#sec calls_delta blocks_delta calls_total blocks_total" > "$out"
 

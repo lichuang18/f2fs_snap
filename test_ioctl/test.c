@@ -5,11 +5,11 @@
 #include <sys/ioctl.h>
 
 #define F2FS_IOCTL_MAGIC      0xf5
-#define F2FS_IOC_SNAPSHOT   _IOW(F2FS_IOCTL_MAGIC, 28, char*[2])
+#define F2FS_IOC_SNAPSHOT   _IOW(F2FS_IOCTL_MAGIC, 28, char*[3])
 int main(int argc, char *argv[])
 {
     if (argc != 4) {
-        printf("Usage: %s <f2fs_mount_point> <arg1> <arg2>\n", argv[0]);
+        printf("Usage: %s <arg1,src> <arg2,gen> <arg3,snap>\n", argv[0]);
         return -1;
     }
 
@@ -23,18 +23,19 @@ int main(int argc, char *argv[])
     // int args[2];
     // args[0] = atoi(argv[2]);
     // args[1] = atoi(argv[3]);
-    const char *paths[2];
-    paths[0] = argv[2];
-    paths[1] = argv[3];
-
+    const char *paths[3];
+    paths[0] = argv[1];
+    paths[1] = argv[2];
+    paths[2] = argv[3];
 
     if (ioctl(fd, F2FS_IOC_SNAPSHOT, paths) < 0) {
-        perror("[rdffs] ioctl");
+        perror("[snapfs ioctl]: ioctl call failed...");
         close(fd);
         return -1;
     }
 
-    printf("ioctl sent successfully (arg1=%s, arg2=%s).\n", paths[0], paths[1]);
+    printf("[snapfs ioctl]: ioctl successfully(arg1=%s, arg2=%s, arg3=%s).\n"
+        , paths[0], paths[1], paths[2]);
 
     close(fd);
     return 0;

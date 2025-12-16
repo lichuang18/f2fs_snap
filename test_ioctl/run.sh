@@ -2,7 +2,7 @@
 set -e
 
 DIR="/mnt/test3"
-SNAP_DIR="/mnt/snap3"
+SNAP_DIR="/mnt"
 
 STR=$(head -c 96 /dev/urandom | base64 | tr -d '\n' | cut -c1-4096)
 
@@ -18,4 +18,4 @@ done
 cd -
 
 echo "create snapshot time (with 199 files);"
-time ./a.out /mnt $DIR $SNAP_DIR
+time ./a.out $DIR $SNAP_DIR snap3

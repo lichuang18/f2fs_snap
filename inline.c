@@ -86,13 +86,10 @@ void f2fs_truncate_inline_inode(struct inode *inode,
 
 	if (from >= MAX_INLINE_DATA(inode))
 		return;
-
 	addr = inline_data_addr(inode, ipage);
-
 	f2fs_wait_on_page_writeback(ipage, NODE, true, true);
 	memset(addr + from, 0, MAX_INLINE_DATA(inode) - from);
 	set_page_dirty(ipage);
-
 	if (from == 0)
 		clear_inode_flag(inode, FI_DATA_EXIST);
 }

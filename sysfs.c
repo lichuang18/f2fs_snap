@@ -1113,11 +1113,11 @@ static int __maybe_unused victim_bits_seq_show(struct seq_file *seq,
 	return 0;
 }
 
-int __init rdffs_init_sysfs(void)
+int __init snapfs_init_sysfs(void)
 {
 	int ret;
 
-	kobject_set_name(&f2fs_kset.kobj, "rdffs");
+	kobject_set_name(&f2fs_kset.kobj, "snapfs");
 	f2fs_kset.kobj.parent = fs_kobj;
 	ret = kset_register(&f2fs_kset);
 	if (ret)
@@ -1129,7 +1129,7 @@ int __init rdffs_init_sysfs(void)
 		kobject_put(&f2fs_feat);
 		kset_unregister(&f2fs_kset);
 	} else {
-		f2fs_proc_root = proc_mkdir("fs/rdffs", NULL);
+		f2fs_proc_root = proc_mkdir("fs/snapfs", NULL);
 	}
 	return ret;
 }
@@ -1138,7 +1138,7 @@ void f2fs_exit_sysfs(void)
 {
 	kobject_put(&f2fs_feat);
 	kset_unregister(&f2fs_kset);
-	remove_proc_entry("fs/rdffs", NULL);
+	remove_proc_entry("fs/snapfs", NULL);
 	f2fs_proc_root = NULL;
 }
 

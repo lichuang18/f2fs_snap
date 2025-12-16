@@ -30,7 +30,7 @@ int main(int argc, char *argv[])
 
 
     if (ioctl(fd, F2FS_IOC_READDIR, paths) < 0) {
-        perror("[rdffs] ioctl");
+        perror("[snapfs] ioctl");
         close(fd);
         return -1;
     }

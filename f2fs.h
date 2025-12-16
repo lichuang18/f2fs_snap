@@ -28,10 +28,21 @@
 #include <linux/fscrypt.h>
 #include <linux/fsverity.h>
 
-#define TOTAL_MAGIC_BLK 142
-#define AUTO_FILL_MAGIC 120 // 剩余22块，可存5104个entry，这时动态管理，以尽可能支持更多目录的快照
-#define MGENTRY_PER_BLOCK 232
+#define F2FS_DEBUG 1
+
 #define MRENTRY_PER_BLOCK 336
+#define MGENTRY_PER_BLOCK   304
+
+#define TOTAL_MAGIC_BLK 2048 //4M
+#define MAGIC_ENTRY_NR     311296   // 总 entry 数
+
+#define HOP_RANGE 32
+
+// block_offset = entry_id / MGENTRY_PER_BLOCK
+// entry_offset = entry_id % MGENTRY_PER_BLOCK
+
+
+
 
 #ifdef CONFIG_F2FS_CHECK_FS
 #define f2fs_bug_on(sbi, condition)	BUG_ON(condition)
@@ -114,8 +125,8 @@ extern const char *f2fs_fault_name[FAULT_MAX];
 #define test_opt(sbi, option)	(F2FS_OPTION(sbi).opt & F2FS_MOUNT_##option)
 
 
-#define F2FS_IOC_SNAPSHOT   _IOW(F2FS_IOCTL_MAGIC, 28, char*[2])
-#define F2FS_IOC_READDIR   _IOW(F2FS_IOCTL_MAGIC, 29, char*[2])
+#define F2FS_IOC_SNAPSHOT   _IOW(F2FS_IOCTL_MAGIC, 28, char*[3])
+#define F2FS_IOC_SNAPDUMP   _IOW(F2FS_IOCTL_MAGIC, 29, char*[2])
 #define ver_after(a, b)	(typecheck(unsigned long long, a) &&		\
 		typecheck(unsigned long long, b) &&			\
 		((long long)((a) - (b)) > 0))
@@ -436,7 +447,6 @@ static inline int update_nats_in_cursum(struct f2fs_journal *journal, int i)
 static inline int update_sits_in_cursum(struct f2fs_journal *journal, int i)
 {
 	int before = sits_in_cursum(journal);
-
 	journal->n_sits = cpu_to_le16(before + i);
 	return before;
 }
@@ -1034,25 +1044,31 @@ struct f2fs_mulref_block { // 12 Byte * 338 + 40 Byte = 4096 K Byte
 } __packed;
 
 
-struct f2fs_magic_entry { // 17B
-    __le32 snap_ino[4];     /* snap inode number */
-	__u8 flag;       /* snapshot version control*/
+struct f2fs_magic_entry {
+    __le32 snap_ino;     /* snap inode number */
+	__le32 src_ino; 
+	__le32 next; 
+	__u8 count;       /* snapshot version control*/
 } __packed;
 
+
 struct f2fs_magic_block {
-	__u8 multi_bitmap[29]; // 29 Byte
+	__u8 multi_bitmap[38];
     struct f2fs_magic_entry mgentries[MGENTRY_PER_BLOCK];
-	// 123 Byte
-	__u16 v_mgentrys;
+	__u16 v_mgentry;// valid entrys
 	__u16 next_free_mgentry;
+	__u8 modified[38];
 	__u8 reserved[119];
 } __packed;
+
 
 struct f2fs_magic_info {
 	block_t magic_blkaddr;		/* start block address of magic area */
 	__le32 segment_count_magic; // 2MB * segment_count_magic
-	struct f2fs_magic_block magic_blocks[TOTAL_MAGIC_BLK];  // 记录32K个record，就需要142个块
-	struct f2fs_mulref_block *mul_blocks; // 512 * segment_count_magic - 142;
+	// struct f2fs_magic_block magic_blocks[TOTAL_MAGIC_BLK];  // 记录32K个record，就需要142个块
+	block_t mulref_flag_blkaddr;
+	block_t mulref_blkaddr;
+	// struct f2fs_mulref_block mulref_blocks[TOTAL_MAGIC_BLK]; // 512 * segment_count_magic - 142;
 };
 
 struct f2fs_sm_info {
@@ -1067,7 +1083,7 @@ struct f2fs_sm_info {
 	block_t main_blkaddr;		/* start block address of main area */
 	block_t ssa_blkaddr;		/* start block address of SSA area */
 
-	block_t magic_blkaddr;		/* start block address of magic area */
+	// block_t magic_blkaddr;		/* start block address of magic area */
 
 	unsigned int segment_count;	/* total # of segments */
 	unsigned int main_segments;	/* # of segments in main area */
@@ -1621,6 +1637,10 @@ struct f2fs_sb_info {
 	int valid_super_block;			/* valid super block no */
 	unsigned long s_flag;				/* flags for sbi */
 	struct mutex writepages;		/* mutex for writepages() */
+
+	// snap_thread
+	struct magic_mgr *magic_mgr; 
+	// struct mulref_mgr *mulref_mgr;
 
 #ifdef CONFIG_BLK_DEV_ZONED
 	unsigned int blocks_per_blkz;		/* F2FS blocks per zone */
@@ -3502,7 +3522,7 @@ void f2fs_enable_nat_bits(struct f2fs_sb_info *sbi);
 int f2fs_flush_nat_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc);
 int f2fs_build_node_manager(struct f2fs_sb_info *sbi);
 void f2fs_destroy_node_manager(struct f2fs_sb_info *sbi);
-int __init rdffs_create_node_manager_caches(void);
+int __init snapfs_create_node_manager_caches(void);
 void f2fs_destroy_node_manager_caches(void);
 
 /*
@@ -4054,7 +4074,7 @@ void f2fs_destroy_extent_cache(void);
 #define MIN_RA_MUL	2
 #define MAX_RA_MUL	256
 
-int __init rdffs_init_sysfs(void);
+int __init snapfs_init_sysfs(void);
 void f2fs_exit_sysfs(void);
 int f2fs_register_sysfs(struct f2fs_sb_info *sbi);
 void f2fs_unregister_sysfs(struct f2fs_sb_info *sbi);

@@ -385,17 +385,6 @@ static int f2fs_create(struct user_namespace *mnt_userns, struct inode *dir,
 
 	f2fs_balance_fs(sbi, true);
 
-	// void *page_addr;
-	// struct page *spage;
-	// struct dentry *tmp_dentry;
-	// tmp_dentry = d_find_any_alias(inode);
-	// pr_info("create file [%lu,%s]\n",inode->i_ino,tmp_dentry->d_name.name); 
-	// spage = f2fs_get_node_page(sbi, inode->i_ino);
-	// if (f2fs_has_inline_data(inode)){
-	// 	page_addr = inline_data_addr(inode, spage);
-	// 	pr_info("inline data addr, %x\n",page_addr); 
-	// }
-	// f2fs_put_page(spage, 1);
 	return 0;
 out:
 	f2fs_handle_failed_inode(inode);

@@ -54,6 +54,7 @@ enum {
  * For node information
  */
 struct node_info {
+	u16 s_flag;
 	nid_t nid;		/* node id */
 	nid_t ino;		/* inode number of the node's owner */
 	block_t	blk_addr;	/* block address of the node */
@@ -74,6 +75,9 @@ struct nat_entry {
 #define nat_set_ino(nat, i)		((nat)->ni.ino = (i))
 #define nat_get_version(nat)		((nat)->ni.version)
 #define nat_set_version(nat, v)		((nat)->ni.version = (v))
+
+#define nat_get_sflag(nat)		((nat)->ni.s_flag)
+#define nat_set_sflag(nat, v)		((nat)->ni.s_flag = (v))
 
 #define inc_node_version(version)	(++(version))
 
@@ -117,6 +121,7 @@ static inline void node_info_from_raw_nat(struct node_info *ni,
 	ni->ino = le32_to_cpu(raw_ne->ino);
 	ni->blk_addr = le32_to_cpu(raw_ne->block_addr);
 	ni->version = raw_ne->version;
+	ni->s_flag = raw_ne->s_flag;
 }
 
 static inline void raw_nat_from_node_info(struct f2fs_nat_entry *raw_ne,

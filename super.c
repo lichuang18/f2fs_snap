@@ -260,7 +260,7 @@ void f2fs_printk(struct f2fs_sb_info *sbi, const char *fmt, ...)
 	level = printk_get_level(fmt);
 	vaf.fmt = printk_skip_level(fmt);
 	vaf.va = &args;
-	printk("%c%cRDFFS-fs (%s): %pV\n",
+	printk("%c%cSNAPFS-fs (%s): %pV\n",
 	       KERN_SOH_ASCII, level, sbi->sb->s_id, &vaf);
 
 	va_end(args);
@@ -3352,26 +3352,22 @@ static int sanity_check_raw_super(struct f2fs_sb_info *sbi,
 
 	/* blocks_per_seg should be 512, given the above check */
 	blocks_per_seg = 1 << le32_to_cpu(raw_super->log_blocks_per_seg);
-
 	if (segment_count > F2FS_MAX_SEGMENT ||
 				segment_count < F2FS_MIN_SEGMENTS) {
 		f2fs_info(sbi, "Invalid segment count (%u)", segment_count);
 		return -EFSCORRUPTED;
 	}
-
 	if (total_sections > segment_count_main || total_sections < 1 ||
 			segs_per_sec > segment_count || !segs_per_sec) {
 		f2fs_info(sbi, "Invalid segment/section count (%u, %u x %u)",
 			  segment_count, total_sections, segs_per_sec);
 		return -EFSCORRUPTED;
 	}
-
 	if (segment_count_main != total_sections * segs_per_sec) {
 		f2fs_info(sbi, "Invalid segment/section count (%u != %u * %u)",
 			  segment_count_main, total_sections, segs_per_sec);
 		return -EFSCORRUPTED;
 	}
-
 	if ((segment_count / segs_per_sec) < total_sections) {
 		f2fs_info(sbi, "Small segment_count (%u < %u * %u)",
 			  segment_count, segs_per_sec, total_sections);
@@ -3998,7 +3994,7 @@ static void f2fs_tuning_parameters(struct f2fs_sb_info *sbi)
 	sbi->readdir_ra = 1;
 }
 
-static int rdffs_fill_super(struct super_block *sb, void *data, int silent)
+static int snapfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct f2fs_sb_info *sbi;
 	struct f2fs_super_block *raw_super;
@@ -4512,13 +4508,13 @@ free_sbi:
 	return err;
 }
 
-static struct dentry *rdffs_mount(struct file_system_type *fs_type, int flags,
+static struct dentry *snapfs_mount(struct file_system_type *fs_type, int flags,
 			const char *dev_name, void *data)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, rdffs_fill_super);
+	return mount_bdev(fs_type, flags, dev_name, data, snapfs_fill_super);
 }
 
-static void kill_rdffs_super(struct super_block *sb)
+static void kill_snapfs_super(struct super_block *sb)
 {
 	if (sb->s_root) {
 		struct f2fs_sb_info *sbi = F2FS_SB(sb);
@@ -4550,14 +4546,14 @@ static void kill_rdffs_super(struct super_block *sb)
 	kill_block_super(sb);
 }
 
-static struct file_system_type rdffs_fs_type = {
+static struct file_system_type snapfs_fs_type = {
 	.owner		= THIS_MODULE,
-	.name		= "rdffs",
-	.mount		= rdffs_mount,
-	.kill_sb	= kill_rdffs_super,
+	.name		= "snapfs",
+	.mount		= snapfs_mount,
+	.kill_sb	= kill_snapfs_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };
-MODULE_ALIAS_FS("rdffs");
+MODULE_ALIAS_FS("snapfs");
 
 static int __init init_inodecache(void)
 {
@@ -4579,7 +4575,7 @@ static void destroy_inodecache(void)
 	kmem_cache_destroy(f2fs_inode_cachep);
 }
 
-static int __init init_rdffs_fs(void)
+static int __init init_snapfs_fs(void)
 {
 	int err;
 
@@ -4592,7 +4588,7 @@ static int __init init_rdffs_fs(void)
 	err = init_inodecache();
 	if (err)
 		goto fail;
-	err = rdffs_create_node_manager_caches();
+	err = snapfs_create_node_manager_caches();
 	if (err)
 		goto free_inodecache;
 	err = f2fs_create_segment_manager_caches();
@@ -4610,13 +4606,13 @@ static int __init init_rdffs_fs(void)
 	err = f2fs_create_garbage_collection_cache();
 	if (err)
 		goto free_extent_cache;
-	err = rdffs_init_sysfs();
+	err = snapfs_init_sysfs();
 	if (err)
 		goto free_garbage_collection_cache;
 	err = register_shrinker(&f2fs_shrinker_info);
 	if (err)
 		goto free_sysfs;
-	err = register_filesystem(&rdffs_fs_type);
+	err = register_filesystem(&snapfs_fs_type);
 	if (err)
 		goto free_shrinker;
 	f2fs_create_root_stats();
@@ -4656,7 +4652,7 @@ free_post_read:
 	f2fs_destroy_post_read_processing();
 free_root_stats:
 	f2fs_destroy_root_stats();
-	unregister_filesystem(&rdffs_fs_type);
+	unregister_filesystem(&snapfs_fs_type);
 free_shrinker:
 	unregister_shrinker(&f2fs_shrinker_info);
 free_sysfs:
@@ -4679,7 +4675,7 @@ fail:
 	return err;
 }
 
-static void __exit exit_rdffs_fs(void)
+static void __exit exit_snapfs_fs(void)
 {
 	f2fs_destroy_casefold_cache();
 	f2fs_destroy_compress_cache();
@@ -4689,7 +4685,7 @@ static void __exit exit_rdffs_fs(void)
 	f2fs_destroy_iostat_processing();
 	f2fs_destroy_post_read_processing();
 	f2fs_destroy_root_stats();
-	unregister_filesystem(&rdffs_fs_type);
+	unregister_filesystem(&snapfs_fs_type);
 	unregister_shrinker(&f2fs_shrinker_info);
 	f2fs_exit_sysfs();
 	f2fs_destroy_garbage_collection_cache();
@@ -4701,8 +4697,8 @@ static void __exit exit_rdffs_fs(void)
 	destroy_inodecache();
 }
 
-module_init(init_rdffs_fs)
-module_exit(exit_rdffs_fs)
+module_init(init_snapfs_fs)
+module_exit(exit_snapfs_fs)
 
 MODULE_AUTHOR("lch18");
 MODULE_DESCRIPTION("Raid Friendly File System");

@@ -960,7 +960,6 @@ int f2fs_get_valid_checkpoint(struct f2fs_sb_info *sbi)
 
 	cp_block = (struct f2fs_checkpoint *)page_address(cur_page);
 	memcpy(sbi->ckpt, cp_block, blk_size);
-	// sbi->ckpt->magic_count
 	if (cur_page == cp1) 
 		sbi->cur_cp_pack = 1;
 	else
