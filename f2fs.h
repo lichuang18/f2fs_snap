@@ -1048,7 +1048,7 @@ struct f2fs_magic_entry {
     __le32 snap_ino;     /* snap inode number */
 	__le32 src_ino; 
 	__le32 next; 
-	__u8 count;       /* snapshot version control*/
+	__u8 count; // 最高位用来判断inode是否修改过      
 } __packed;
 
 
@@ -4488,6 +4488,7 @@ static inline void f2fs_io_schedule_timeout(long timeout)
 	set_current_state(TASK_UNINTERRUPTIBLE);
 	io_schedule_timeout(timeout);
 }
+
 
 #define EFSBADCRC	EBADMSG		/* Bad CRC detected */
 #define EFSCORRUPTED	EUCLEAN		/* Filesystem is corrupted */

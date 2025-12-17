@@ -23,7 +23,11 @@ int f2fs_magic_lookup_or_alloc_hopscotch(struct f2fs_sb_info *sbi,
                                u32 *ret_entry_id,
                                struct f2fs_magic_entry **ret_entry,
                                struct page **ret_page);
-int f2fs_magic_lookup(struct f2fs_sb_info *sbi, u32 src_ino);
+int f2fs_magic_lookup(struct f2fs_sb_info *sbi, u32 src_ino, 
+			u32 *ret_entry_id, struct f2fs_magic_entry *ret_entry);
+
+int f2fs_snapshot_cow(struct inode *inode);
+
 
 #define MAGIC_MAX		32678
 
