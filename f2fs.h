@@ -1063,6 +1063,7 @@ struct f2fs_magic_block {
 
 
 struct f2fs_magic_info {
+	struct mutex mutex;   
 	block_t magic_blkaddr;		/* start block address of magic area */
 	__le32 segment_count_magic; // 2MB * segment_count_magic
 	// struct f2fs_magic_block magic_blocks[TOTAL_MAGIC_BLK];  // 记录32K个record，就需要142个块

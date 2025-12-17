@@ -305,7 +305,13 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
     u32 h1 = magic_hash1(src_ino) % MAGIC_ENTRY_NR;
     u32 h2 = magic_hash2(src_ino) % MAGIC_ENTRY_NR;
     u32 i;
-
+    unsigned long flags;
+    if (!sbi->magic_info) {
+        pr_err("magic_info is NULL!\n");
+        return -ENOENT;
+    }
+    // 加锁保护整个查找/分配过程
+    mutex_lock(&sbi->magic_info->mutex);
     for (i = 0; i < MAGIC_ENTRY_NR; i++) {
         u32 entry_id = (h1 + i * h2) % MAGIC_ENTRY_NR;
         block_t blkaddr;
@@ -313,43 +319,93 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
         struct page *page;
         struct f2fs_magic_block *mb;
         struct f2fs_magic_entry *me;
-
         blkaddr = magic_entry_to_blkaddr(sbi, entry_id);
         off     = magic_entry_to_offset(entry_id);
 
         page = f2fs_get_meta_page(sbi, blkaddr);
-        if (IS_ERR(page))
+        if (IS_ERR(page)){
+            pr_info("  f2fs_get_meta_page failed: %ld\n", PTR_ERR(page));
+            mutex_unlock(&sbi->magic_info->mutex);
             return PTR_ERR(page);
-
+        }
         mb = (struct f2fs_magic_block *)page_address(page);
-
         /* bitmap 判断 */
         if (!test_bit(off,(unsigned long *)(mb->multi_bitmap))) {
             /* 空槽：可以直接使用 */
+            pr_info("Create new_snap addr/off[%u,%u]\n"
+                    ,blkaddr, off);
             *ret_entry_id = entry_id;
             *ret_entry = &mb->mgentries[off];
             *ret_page = page;
+            mutex_unlock(&sbi->magic_info->mutex);
             return 0;
         }
-
         me = &mb->mgentries[off];
-
         if (le32_to_cpu(me->src_ino) == src_ino) {
             /* 命中已有映射 */
+            pr_info("read or update magic with addr/off[%u,%u]\n"
+                    ,blkaddr, off);
             *ret_entry_id = entry_id;
             *ret_entry = me;
             *ret_page = page;
+            mutex_unlock(&sbi->magic_info->mutex);
             return 0;
         }
-
         /* 冲突：继续 probing */
         f2fs_put_page(page, 1);
     }
-
+    mutex_unlock(&sbi->magic_info->mutex);
     return -ENOSPC;  /* 所有 slot 都被占满 */
 }
 
+int f2fs_magic_lookup(struct f2fs_sb_info *sbi, u32 src_ino)
+{
+    u32 h1 = magic_hash1(src_ino) % MAGIC_ENTRY_NR;
+    u32 h2 = magic_hash2(src_ino) % MAGIC_ENTRY_NR;
+    u32 i;
+    u32 ret_entry_id;
+    struct f2fs_magic_entry *ret_entry;
+    if (!sbi->magic_info) {
+        pr_err("magic_info is NULL!\n");
+        return -ENOENT;
+    }
+    // 加锁保护整个查找/分配过程
+    mutex_lock(&sbi->magic_info->mutex);
+    for (i = 0; i < MAGIC_ENTRY_NR; i++) {
+        u32 entry_id = (h1 + i * h2) % MAGIC_ENTRY_NR;
+        block_t blkaddr;
+        u32 off;
+        struct page *page;
+        struct f2fs_magic_block *mb;
+        struct f2fs_magic_entry *me;
+        blkaddr = magic_entry_to_blkaddr(sbi, entry_id);
+        off     = magic_entry_to_offset(entry_id);
 
+        page = f2fs_get_meta_page(sbi, blkaddr);
+        if (IS_ERR(page)){
+            pr_info("  f2fs_get_meta_page failed: %ld\n", PTR_ERR(page));
+            mutex_unlock(&sbi->magic_info->mutex);
+            return PTR_ERR(page);
+        }
+        mb = (struct f2fs_magic_block *)page_address(page);
+        /* bitmap 判断 */
+        if (test_bit(off,(unsigned long *)(mb->multi_bitmap))) {
+            me = &mb->mgentries[off];
+            if (le32_to_cpu(me->src_ino) == src_ino) {
+                /* 命中已有映射 */
+                pr_info("[snapfs dump]: find mgentry, addr/off[%u,%u] with id[%u]\n"
+                        ,blkaddr, off, entry_id);
+                mutex_unlock(&sbi->magic_info->mutex);
+                f2fs_put_page(page, 1);
+                return 0;
+            }
+        }
+        /* 冲突：继续 probing */
+        f2fs_put_page(page, 1);
+    }
+    mutex_unlock(&sbi->magic_info->mutex);
+    return -ENOSPC;  /* 所有 slot 都被占满 */
+}
 
 // hopscotch
 static inline u32 magic_home(u32 ino)

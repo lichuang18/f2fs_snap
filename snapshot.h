@@ -9,7 +9,21 @@
 
 u16 alloc_magic_flag_from_reclaim(struct f2fs_sb_info *sbi);
 u16 alloc_magic_flag_force(struct f2fs_sb_info *sbi);
+
 void magic_mark_reclaim(struct f2fs_sb_info *sbi, u16 flag);
+
+int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
+                               u32 src_ino,
+                               u32 *ret_entry_id,
+                               struct f2fs_magic_entry **ret_entry,
+                               struct page **ret_page);
+
+int f2fs_magic_lookup_or_alloc_hopscotch(struct f2fs_sb_info *sbi,
+                               u32 src_ino,
+                               u32 *ret_entry_id,
+                               struct f2fs_magic_entry **ret_entry,
+                               struct page **ret_page);
+int f2fs_magic_lookup(struct f2fs_sb_info *sbi, u32 src_ino);
 
 #define MAGIC_MAX		32678
 

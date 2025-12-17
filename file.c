@@ -28,6 +28,7 @@
 #include "f2fs.h"
 #include "node.h"
 #include "segment.h"
+#include "snapshot.h"
 #include "xattr.h"
 #include "acl.h"
 #include "gc.h"
@@ -3598,7 +3599,7 @@ bool check_file_in_directory(struct dentry *dir_dentry, const char *filename){
 			return false; 
         }
     } else {
-        pr_info("File '%s' not found in directory.\n", filename);
+        pr_info("Good, snapfile[%s] not found, go create.\n", filename);
 		if (dentry) {
 			dput(dentry); // 释放 dentry
 		}
@@ -3608,7 +3609,43 @@ bool check_file_in_directory(struct dentry *dir_dentry, const char *filename){
 
 static int f2fs_read_snap_dump(struct file *filp, unsigned long arg)
 {
-	pr_info("to do dumping...\n");
+	struct page *page;
+	struct f2fs_magic_entry *me;
+	u32 entry_id = 0;
+	struct f2fs_sb_info *sbi = NULL;
+	struct inode *inode = file_inode(filp);
+	long len;
+	char *arg1 = NULL, *arg2 = NULL;
+	char __user *user_paths[2];  // 从用户空间复制的指针数组
+	int err;
+	if (copy_from_user(user_paths, (char __user * __user *)arg, sizeof(user_paths)))
+	return -EFAULT;
+	/* ---------- 从用户态复制路径字符串 ---------- */
+	len = strnlen_user(user_paths[0], PATH_MAX);
+	if (len <= 0 || len > PATH_MAX)
+		return -EFAULT;
+	
+	arg1 = memdup_user(user_paths[0], len);//PATH_MAX
+	if (IS_ERR(arg1)){
+		return PTR_ERR(arg1);
+	}
+	len = strnlen_user(user_paths[1], PATH_MAX);
+	if (len <= 0 || len > PATH_MAX) {
+		kfree(arg1);
+		return -EFAULT;
+	}
+	arg2 = memdup_user(user_paths[1], len);
+	if (IS_ERR(arg2)) {
+		err = PTR_ERR(arg2);
+		kfree(arg1);
+		return err;
+	}
+	pr_info("[snapfs dump]: myhash(ino[%u]), init entry_id[%u]\n", inode->i_ino, entry_id);
+	sbi = F2FS_I_SB(inode);
+	if (f2fs_magic_lookup(sbi, inode->i_ino)) {// 未找到或者冲突未解决
+		pr_info("[snapfs dump]: not Found at entry_id\n");
+	}
+
 	return 0;
 }
 
@@ -3635,7 +3672,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 	struct fscrypt_str dotdot = FSTR_INIT("..", 2);
 	struct f2fs_inode *src_fi, *new_fi;
 	int idx;
-
+	struct f2fs_magic_info *magic_info = NULL;
 	if (copy_from_user(user_paths, (char __user * __user *)arg, sizeof(user_paths)))
 	return -EFAULT;
 	/* ---------- 从用户态复制路径字符串 ---------- */
@@ -3665,9 +3702,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		kfree(snap_pra_path_full);
 		return err;
 	}
-
-	pr_info("dump snap_filename{%s}\n",snap_filename);
-
+	
 	/* ---------- 检查 src_path_full 是否存在 ---------- */
 	err = kern_path(src_path_full, LOOKUP_FOLLOW | LOOKUP_REVAL, &src_path);
 	if (err) {
@@ -3714,12 +3749,41 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 	snap_inode = snap_dentry->d_inode;
 	if (!snap_inode) {
 		pr_info("[snapfs mk_snap]: Invalid snap_inode\n");
-		return -EINVAL;
+		goto out_dput;
 	}
-	sbi = F2FS_I_SB(src_inode);
-
+	
 	// 修改src_inode对应的magic block区域的flag
+	sbi = F2FS_I_SB(src_inode);
+	//假设我们要插入或更新一个 src_ino 对应的 snap_ino：
+	struct page *page;
+	struct f2fs_magic_entry *me;
+	u32 entry_id;
+	err = f2fs_magic_lookup_or_alloc(sbi, src_inode->i_ino, &entry_id, &me, &page);
+	if (err) {
+		printk("magic table full!\n");
+		if(page) f2fs_put_page(page, 1);
+		goto out_dput;
+	}
+	pr_info("init snap_file[%u] of snaped_dir[%u] with count[%u]\n"
+		,me->snap_ino, me->src_ino, me->count);
+	// 此时 me 指向可用 entry，page 已加载 
+	// 1. 更新 entry 数据 
+	me->src_ino  = cpu_to_le32(src_inode->i_ino);
+	me->snap_ino = cpu_to_le32(snap_inode->i_ino);
+	me->next     = 0;
+	me->count   += 1;
 
+	pr_info("update snap_file[%u] of snaped_dir[%u] with count[%u] in entryid[%u]\n"
+		,me->snap_ino, me->src_ino, me->count, entry_id);
+	// 2. 更新 bitmap：标记该 slot 已使用 
+	{
+		struct f2fs_magic_block *mb = (struct f2fs_magic_block *)page_address(page);
+		u32 off = entry_id % MGENTRY_PER_BLOCK;
+		set_bit(off, (unsigned long *)mb->multi_bitmap);
+	}
+	// 3. 标记 page dirty，写回磁盘
+	set_page_dirty(page);
+	f2fs_put_page(page, 1);
 
 	// 创建快照目录
 	if (f2fs_has_inline_dentry(src_inode)) {
@@ -3730,14 +3794,12 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		if (IS_ERR(src_ipage)) {
 			pr_err("[snapfs mk_snap]: failed to get src page[%lu]\n", src_inode->i_ino);
 			goto out_dput;
-			return -EINVAL;
 		}
 		snap_ipage = f2fs_get_node_page(sbi, snap_inode->i_ino);
 		if (IS_ERR(snap_ipage)) {
 			pr_err("[snapfs mk_snap]: failed to get snap page[%lu]\n", snap_inode->i_ino);
 			f2fs_put_page(src_ipage, 1);
 			goto out_dput;
-			return -EINVAL;
 		}
 		// src_fi = F2FS_INODE(snap_ipage);
 		inline_dentry = inline_data_addr(src_inode, src_ipage);

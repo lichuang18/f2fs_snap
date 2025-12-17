@@ -5742,7 +5742,10 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 		pr_err("Failed to allocate memory for magic_info\n");
 		return -ENOMEM;
 	}
+	mutex_init(&magic_info->mutex);
 	sbi->magic_info = magic_info;
+	// spin_lock_init(&sbi->magic_info->lock);
+	
 	magic_info->magic_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);
 	magic_info->segment_count_magic = le32_to_cpu(raw_super->segment_count_magic);
 	pr_info("mount with magic addr[%x], count[%u]\n",
