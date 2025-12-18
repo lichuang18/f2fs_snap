@@ -1579,10 +1579,7 @@ static int gc_data_segment(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 	int phase = 0;
 	int submitted = 0;
 	unsigned int usable_blks_in_seg = f2fs_usable_blks_in_seg(sbi, segno);
-	// sihuo
-	int ret = 0;
-	int rep = -1;		/* 代表引用下标 */
-	block_t new_blkaddr = 0;
+
 	start_addr = START_BLOCK(sbi, segno);
 
 next_step:

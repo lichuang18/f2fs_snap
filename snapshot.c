@@ -621,7 +621,12 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
     u32 h1 = magic_hash1(src_ino) % MAGIC_ENTRY_NR;
     u32 h2 = magic_hash2(src_ino) % MAGIC_ENTRY_NR;
     u32 i;
-    unsigned long flags;
+    block_t blkaddr;
+    u32 off;
+    struct page *page;
+    struct f2fs_magic_block *mb;
+    struct f2fs_magic_entry *me;
+    u32 entry_id = 0;
     if (!sbi->magic_info) {
         pr_err("magic_info is NULL!\n");
         return -ENOENT;
@@ -629,12 +634,7 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
     // 加锁保护整个查找/分配过程
     mutex_lock(&sbi->magic_info->mutex);
     for (i = 0; i < MAGIC_ENTRY_NR; i++) {
-        u32 entry_id = (h1 + i * h2) % MAGIC_ENTRY_NR;
-        block_t blkaddr;
-        u32 off;
-        struct page *page;
-        struct f2fs_magic_block *mb;
-        struct f2fs_magic_entry *me;
+        entry_id = (h1 + i * h2) % MAGIC_ENTRY_NR;
         blkaddr = magic_entry_to_blkaddr(sbi, entry_id);
         off     = magic_entry_to_offset(entry_id);
 
@@ -680,6 +680,12 @@ int f2fs_magic_lookup(struct f2fs_sb_info *sbi, u32 src_ino,
     u32 h1 = magic_hash1(src_ino) % MAGIC_ENTRY_NR;
     u32 h2 = magic_hash2(src_ino) % MAGIC_ENTRY_NR;
     u32 i;
+    block_t blkaddr;
+    u32 off;
+    struct page *page;
+    struct f2fs_magic_block *mb;
+    struct f2fs_magic_entry *me;
+    u32 entry_id = 0;
     // u32 ret_entry_id;
     // struct f2fs_magic_entry *ret_entry;
     if (!sbi->magic_info) {
@@ -689,12 +695,7 @@ int f2fs_magic_lookup(struct f2fs_sb_info *sbi, u32 src_ino,
     // 加锁保护整个查找/分配过程
     mutex_lock(&sbi->magic_info->mutex);
     for (i = 0; i < MAGIC_ENTRY_NR; i++) {
-        u32 entry_id = (h1 + i * h2) % MAGIC_ENTRY_NR;
-        block_t blkaddr;
-        u32 off;
-        struct page *page;
-        struct f2fs_magic_block *mb;
-        struct f2fs_magic_entry *me;
+        entry_id = (h1 + i * h2) % MAGIC_ENTRY_NR;
         blkaddr = magic_entry_to_blkaddr(sbi, entry_id);
         off     = magic_entry_to_offset(entry_id);
 
@@ -750,16 +751,19 @@ int f2fs_magic_lookup_or_alloc_hopscotch(
 {
     u32 home = magic_home(src_ino);
     u32 i;
-
+    u32 free;
+    struct page *free_page = NULL;
+    block_t blk;
+    u32 off;
+    struct page *page;
+    struct f2fs_magic_block *mb;
+    struct f2fs_magic_entry *me;
+    u32 eid;
     /* ---------- 1. 查询阶段：只扫 HOP_RANGE ---------- */
     for (i = 0; i < HOP_RANGE; i++) {
-        u32 eid = (home + i) % MAGIC_ENTRY_NR;
-        block_t blk = magic_entry_to_blkaddr(sbi, eid);
-        u32 off = magic_entry_to_offset(eid);
-        struct page *page;
-        struct f2fs_magic_block *mb;
-        struct f2fs_magic_entry *me;
-
+        eid = (home + i) % MAGIC_ENTRY_NR;
+        blk = magic_entry_to_blkaddr(sbi, eid);
+        off = magic_entry_to_offset(eid);
         page = f2fs_get_meta_page(sbi, blk);
         if (IS_ERR(page))
             return PTR_ERR(page);
@@ -780,15 +784,14 @@ int f2fs_magic_lookup_or_alloc_hopscotch(
     }
 
     /* ---------- 2. 插入阶段：找空槽 ---------- */
-    u32 free = home;
-    struct page *free_page = NULL;
+    free = home;
+    
 
     for (i = 0; i < MAGIC_ENTRY_NR; i++) {
-        u32 eid = (home + i) % MAGIC_ENTRY_NR;
-        block_t blk = magic_entry_to_blkaddr(sbi, eid);
-        u32 off = magic_entry_to_offset(eid);
-        struct page *page;
-        struct f2fs_magic_block *mb;
+        eid = (home + i) % MAGIC_ENTRY_NR;
+        blk = magic_entry_to_blkaddr(sbi, eid);
+        off = magic_entry_to_offset(eid);
+ 
 
         page = f2fs_get_meta_page(sbi, blk);
         if (IS_ERR(page))
@@ -900,9 +903,9 @@ bool is_snapshot_inode(struct inode *inode,
 {
     struct f2fs_sb_info *sbi = NULL;
     struct f2fs_magic_entry tmp_me;
-    memset(&tmp_me, 0, sizeof(tmp_me));
 	u32 tmp_entry_id = 0;
 
+    memset(&tmp_me, 0, sizeof(tmp_me));
     sbi = F2FS_I_SB(inode);
 	if (f2fs_magic_lookup(sbi, inode->i_ino, &tmp_entry_id, &tmp_me)) {// 未找到或者冲突未解决
 		pr_info("[snapfs dump]: not Found at entry_id\n");
@@ -956,16 +959,8 @@ int f2fs_cow(struct inode *pra_inode,
     umode_t mode;
     int ret = 0;
     struct qstr *d_name;
-    char *name;
     struct f2fs_sb_info *sbi = F2FS_I_SB(pra_inode);
-    struct page *dpage = NULL;
     nid_t ino;
-    // struct path parent_path;
-	// ret = kern_path("/mnt/", LOOKUP_FOLLOW | LOOKUP_REVAL, &parent_path);
-    // if (ret) {
-    //     pr_err("kern_path failed: %d\n", ret);
-    //     goto next_free;
-    // }
 
     // 安全检查
     if (unlikely(f2fs_cp_error(sbi))) {
@@ -996,7 +991,7 @@ int f2fs_cow(struct inode *pra_inode,
     d_name = &son_dentry->d_name;
     de = f2fs_find_entry(snap_inode, d_name, &page);
     if(de){
-        pr_info("[snapfs f2fs_cow]: dentry[%s] found in [%u]\n", d_name->name, snap_inode->i_ino);
+        pr_info("[snapfs f2fs_cow]: dentry[%s] found in [%lu]\n", d_name->name, snap_inode->i_ino);
         // 快照目录下对应的数据COW过, 那两个目录下的inode就不相等
         tmp_inode = f2fs_iget(sb, le32_to_cpu(de->ino));
         if (IS_ERR(tmp_inode)) {
@@ -1005,7 +1000,7 @@ int f2fs_cow(struct inode *pra_inode,
             goto next_free;
         }
         if((le32_to_cpu(de->ino) != son_inode->i_ino) && (tmp_inode->i_size == son_inode->i_size)){
-            pr_info("[snapfs f2fs_cow]: file[%s] of snap[%u] had cowed!!!\n",
+            pr_info("[snapfs f2fs_cow]: file[%s] of snap[%lu] had cowed!!!\n",
                     son_dentry->d_name.name, snap_inode->i_ino);
             *new_inode = tmp_inode;
             goto out_success;
@@ -1093,7 +1088,6 @@ int f2fs_snapshot_cow(struct inode *inode)
 {
     // 判断这个inode是否需要最做cow处理
     struct f2fs_magic_entry tmp_me;
-    memset(&tmp_me, 0, sizeof(tmp_me));
     u32 entry_id;
     struct inode *snap_inode = NULL;
     struct inode *tmp_inode = NULL;
@@ -1102,12 +1096,13 @@ int f2fs_snapshot_cow(struct inode *inode)
     struct inode *new_inode = NULL;
     struct f2fs_sb_info *sbi = sbi = F2FS_I_SB(inode);
     struct super_block *sb = inode->i_sb;
-    int i;
-    u8 snap_count = 0;
+    // u8 snap_count = 0;
     int ret;
     struct dentry *parent_dentry, *dentry;
     Stack_snap stack;
-    nid_t  pra_ino, son_ino, snap_ino;
+    nid_t  pra_ino, son_ino;//, snap_ino;
+
+    memset(&tmp_me, 0, sizeof(tmp_me));
     // 先判断这个inode是不是快照inode, 
     // 不用执行cow，后续更新引用关系即可
     if(!is_snapshot_inode(inode, &tmp_me, &entry_id)){

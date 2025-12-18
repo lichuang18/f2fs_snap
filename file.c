@@ -3490,23 +3490,6 @@ static int f2fs_snap_inline_to_dirdata(struct inode *dir, void *inline_dentry,st
 }
 
 
-static struct nat_entry *__loup_nat_cache(struct f2fs_nm_info *nm_i, nid_t n)
-{
-	struct nat_entry *ne;
-
-	ne = radix_tree_lookup(&nm_i->nat_root, n);
-
-	/* for recent accessed nat entry, move it to tail of lru list */
-	if (ne && !get_nat_flag(ne, IS_DIRTY)) {
-		spin_lock(&nm_i->nat_list_lock);
-		if (!list_empty(&ne->list))
-			list_move_tail(&ne->list, &nm_i->nat_entries);
-		spin_unlock(&nm_i->nat_list_lock);
-	}
-
-	return ne;
-}
-
 bool check_file_in_directory(struct dentry *dir_dentry, const char *filename){
 	struct dentry *dentry;
     struct qstr dname;
@@ -3539,7 +3522,7 @@ bool check_file_in_directory(struct dentry *dir_dentry, const char *filename){
 
 static int f2fs_read_snap_dump(struct file *filp, unsigned long arg)
 {
-	struct page *page;
+	// struct page *page;
 	struct f2fs_magic_entry me;
 	u32 entry_id = 0;
 	struct f2fs_sb_info *sbi = NULL;
@@ -3571,7 +3554,7 @@ static int f2fs_read_snap_dump(struct file *filp, unsigned long arg)
 		kfree(arg1);
 		return err;
 	}
-	pr_info("[snapfs dump]: myhash(ino[%u]), init entry_id[%u]\n", inode->i_ino, entry_id);
+	pr_info("[snapfs dump]: myhash(ino[%lu]), init entry_id[%u]\n", inode->i_ino, entry_id);
 	sbi = F2FS_I_SB(inode);
 	if (f2fs_magic_lookup(sbi, inode->i_ino, &entry_id, &me)) {// 未找到或者冲突未解决
 		pr_info("[snapfs dump]: not Found at entry_id\n");
@@ -3603,7 +3586,6 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 	struct fscrypt_str dotdot = FSTR_INIT("..", 2);
 	struct f2fs_inode *src_fi, *new_fi;
 	int idx;
-	struct f2fs_magic_info *magic_info = NULL;
 	if (copy_from_user(user_paths, (char __user * __user *)arg, sizeof(user_paths)))
 	return -EFAULT;
 	/* ---------- 从用户态复制路径字符串 ---------- */
@@ -3881,13 +3863,13 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		f2fs_update_dentry(snap_inode->i_ino, snap_inode->i_mode, &d, &dotdot, 0, 1);
 		f2fs_put_page(snap_dpage, 1);
 	}
-
+	f2fs_mark_inode_dirty_sync(snap_par_inode, true);
 	f2fs_mark_inode_dirty_sync(snap_inode, true);
 out_dput:
 	if (snap_dentry)
         dput(snap_dentry);
     path_put(&snap_par_path);
-out_put_src:
+
     path_put(&src_path);
 out_free:
 	kfree(snap_filename);
