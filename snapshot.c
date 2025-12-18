@@ -14,6 +14,8 @@
 #include <linux/delay.h>
 #include <linux/freezer.h>
 #include <linux/sched/signal.h>
+#include <linux/random.h>
+
 
 #include "f2fs.h"
 #include "node.h"
@@ -21,6 +23,7 @@
 #include "snapshot.h"
 #include "iostat.h"
 #include <trace/events/f2fs.h>
+
 
 
 typedef struct StacksnapNode {
@@ -336,7 +339,248 @@ int magic_reclaim_thread(void *data)
 // wake_up(&mgr->wq);
 // 2. truncate / unlink 多引用对象
 // 3. alloc 失败时（没有 free entry）
+int snapfs_is_extension_exist(const unsigned char *s, const char *sub,
+						bool tmp_ext)
+{
+	size_t slen = strlen(s);
+	size_t sublen = strlen(sub);
+	int i;
 
+	if (sublen == 1 && *sub == '*')
+		return 1;
+
+	/*
+	 * filename format of multimedia file should be defined as:
+	 * "filename + '.' + extension + (optional: '.' + temp extension)".
+	 */
+	if (slen < sublen + 2)
+		return 0;
+
+	if (!tmp_ext) {
+		/* file has no temp extension */
+		if (s[slen - sublen - 1] != '.')
+			return 0;
+		return !strncasecmp(s + slen - sublen, sub, sublen);
+	}
+
+	for (i = 1; i < slen - sublen; i++) {
+		if (s[i] != '.')
+			continue;
+		if (!strncasecmp(s + i + 1, sub, sublen))
+			return 1;
+	}
+
+	return 0;
+}
+
+void snapfs_set_compress_inode(struct f2fs_sb_info *sbi, struct inode *inode,
+						const unsigned char *name)
+{
+	__u8 (*extlist)[F2FS_EXTENSION_LEN] = sbi->raw_super->extension_list;
+	unsigned char (*noext)[F2FS_EXTENSION_LEN] = F2FS_OPTION(sbi).noextensions;
+	unsigned char (*ext)[F2FS_EXTENSION_LEN] = F2FS_OPTION(sbi).extensions;
+	unsigned char ext_cnt = F2FS_OPTION(sbi).compress_ext_cnt;
+	unsigned char noext_cnt = F2FS_OPTION(sbi).nocompress_ext_cnt;
+	int i, cold_count, hot_count;
+
+	if (!f2fs_sb_has_compression(sbi) ||
+			F2FS_I(inode)->i_flags & F2FS_NOCOMP_FL ||
+			!f2fs_may_compress(inode) ||
+			(!ext_cnt && !noext_cnt))
+		return;
+
+	down_read(&sbi->sb_lock);
+
+	cold_count = le32_to_cpu(sbi->raw_super->extension_count);
+	hot_count = sbi->raw_super->hot_ext_count;
+
+	for (i = cold_count; i < cold_count + hot_count; i++) {
+		if (snapfs_is_extension_exist(name, extlist[i], false)) {
+			up_read(&sbi->sb_lock);
+			return;
+		}
+	}
+
+	up_read(&sbi->sb_lock);
+
+	for (i = 0; i < noext_cnt; i++) {
+		if (snapfs_is_extension_exist(name, noext[i], false)) {
+			f2fs_disable_compressed_file(inode);
+			return;
+		}
+	}
+
+	if (is_inode_flag_set(inode, FI_COMPRESSED_FILE))
+		return;
+
+	for (i = 0; i < ext_cnt; i++) {
+		if (!snapfs_is_extension_exist(name, ext[i], false))
+			continue;
+
+		/* Do not use inline_data with compression */
+		stat_dec_inline_inode(inode);
+		clear_inode_flag(inode, FI_INLINE_DATA);
+		set_compress_context(inode);
+		return;
+	}
+}
+
+void snapfs_set_file_temperature(struct f2fs_sb_info *sbi, struct inode *inode,
+		const unsigned char *name)
+{
+	__u8 (*extlist)[F2FS_EXTENSION_LEN] = sbi->raw_super->extension_list;
+	int i, cold_count, hot_count;
+
+	down_read(&sbi->sb_lock);
+
+	cold_count = le32_to_cpu(sbi->raw_super->extension_count);
+	hot_count = sbi->raw_super->hot_ext_count;
+
+	for (i = 0; i < cold_count + hot_count; i++) {
+		if (snapfs_is_extension_exist(name, extlist[i], true))
+			break;
+	}
+
+	up_read(&sbi->sb_lock);
+
+	if (i == cold_count + hot_count)
+		return;
+
+	if (i < cold_count)
+		file_set_cold(inode);
+	else
+		file_set_hot(inode);
+}
+
+// 在你的 snapshot.c 中添加这个函数
+struct inode *snapfs_new_inode(struct inode *dir, umode_t mode)
+{
+	struct f2fs_sb_info *sbi = F2FS_I_SB(dir);
+	nid_t ino;
+	struct inode *inode;
+	bool nid_free = false;
+	bool encrypt = false;
+	int xattr_size = 0;
+	int err;
+
+	inode = new_inode(dir->i_sb);
+	if (!inode)
+		return ERR_PTR(-ENOMEM);
+
+	f2fs_lock_op(sbi);
+	if (!f2fs_alloc_nid(sbi, &ino)) {
+		f2fs_unlock_op(sbi);
+		err = -ENOSPC;
+		goto fail;
+	}
+	f2fs_unlock_op(sbi);
+
+	nid_free = true;
+
+	inode_init_owner(&init_user_ns, inode, dir, mode);
+
+	inode->i_ino = ino;
+	inode->i_blocks = 0;
+	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
+	F2FS_I(inode)->i_crtime = inode->i_mtime;
+	inode->i_generation = prandom_u32();
+
+	if (S_ISDIR(inode->i_mode))
+		F2FS_I(inode)->i_current_depth = 1;
+
+	err = insert_inode_locked(inode);
+	if (err) {
+		err = -EINVAL;
+		goto fail;
+	}
+
+	if (f2fs_sb_has_project_quota(sbi) &&
+		(F2FS_I(dir)->i_flags & F2FS_PROJINHERIT_FL))
+		F2FS_I(inode)->i_projid = F2FS_I(dir)->i_projid;
+	else
+		F2FS_I(inode)->i_projid = make_kprojid(&init_user_ns,
+							F2FS_DEF_PROJID);
+
+	err = fscrypt_prepare_new_inode(dir, inode, &encrypt);
+	if (err)
+		goto fail_drop;
+
+	err = f2fs_dquot_initialize(inode);
+	if (err)
+		goto fail_drop;
+
+	set_inode_flag(inode, FI_NEW_INODE);
+
+	if (encrypt)
+		f2fs_set_encrypted_inode(inode);
+
+	if (f2fs_sb_has_extra_attr(sbi)) {
+		set_inode_flag(inode, FI_EXTRA_ATTR);
+		F2FS_I(inode)->i_extra_isize = F2FS_TOTAL_EXTRA_ATTR_SIZE;
+	}
+
+	if (test_opt(sbi, INLINE_XATTR))
+		set_inode_flag(inode, FI_INLINE_XATTR);
+
+	if (f2fs_may_inline_dentry(inode))
+		set_inode_flag(inode, FI_INLINE_DENTRY);
+
+	if (f2fs_sb_has_flexible_inline_xattr(sbi)) {
+		f2fs_bug_on(sbi, !f2fs_has_extra_attr(inode));
+		if (f2fs_has_inline_xattr(inode))
+			xattr_size = F2FS_OPTION(sbi).inline_xattr_size;
+		/* Otherwise, will be 0 */
+	} else if (f2fs_has_inline_xattr(inode) ||
+				f2fs_has_inline_dentry(inode)) {
+		xattr_size = DEFAULT_INLINE_XATTR_ADDRS;
+	}
+	F2FS_I(inode)->i_inline_xattr_size = xattr_size;
+
+	f2fs_init_extent_tree(inode, NULL);
+
+	F2FS_I(inode)->i_flags =
+		f2fs_mask_flags(mode, F2FS_I(dir)->i_flags & F2FS_FL_INHERITED);
+
+	if (S_ISDIR(inode->i_mode))
+		F2FS_I(inode)->i_flags |= F2FS_INDEX_FL;
+
+	if (F2FS_I(inode)->i_flags & F2FS_PROJINHERIT_FL)
+		set_inode_flag(inode, FI_PROJ_INHERIT);
+
+	if (f2fs_sb_has_compression(sbi)) {
+		/* Inherit the compression flag in directory */
+		if ((F2FS_I(dir)->i_flags & F2FS_COMPR_FL) &&
+					f2fs_may_compress(inode))
+			set_compress_context(inode);
+	}
+
+	/* Should enable inline_data after compression set */
+	if (test_opt(sbi, INLINE_DATA) && f2fs_may_inline_data(inode))
+		set_inode_flag(inode, FI_INLINE_DATA);
+
+	stat_inc_inline_xattr(inode);
+	stat_inc_inline_inode(inode);
+	stat_inc_inline_dir(inode);
+
+	f2fs_set_inode_flags(inode);
+	return inode;
+
+fail:
+	make_bad_inode(inode);
+	if (nid_free)
+		set_inode_flag(inode, FI_FREE_NID);
+	iput(inode);
+	return ERR_PTR(err);
+fail_drop:
+	dquot_drop(inode);
+	inode->i_flags |= S_NOQUOTA;
+	if (nid_free)
+		set_inode_flag(inode, FI_FREE_NID);
+	clear_nlink(inode);
+	unlock_new_inode(inode);
+	iput(inode);
+	return ERR_PTR(err);
+}
 
 
 static inline u32 magic_hash1(u32 ino)
@@ -669,17 +913,179 @@ bool is_snapshot_inode(struct inode *inode,
     return true;
 }
 
-// me.count & 0x80：取最高位
-// me.count & 0x7F：取低 7 位
 
+// /mnt/df/dir/*  快照df /mnt/snap/dir/*
+// 原始df/dir、dir/* 就是pra_inode/son_inodes
+// 快照snap/dir、dir/* 就是snap_inode/new_inode
+// 两个dir inode不同
+// 函数作用: 创建新的inode，共享旧数据块引用，即生成new_inode
 
-int f2fs_cow(struct inode *src_inode,
+        // new_dentry = lookup_one_len(d_name->name, snap_dentry, strlen(d_name->name));
+        // if (IS_ERR(new_dentry)) {
+        //     ret = PTR_ERR(new_dentry);
+        //     new_dentry = NULL;
+        //     pr_info("[snapfs f2fs_cow]: lookup_one_len failed!!!\n");
+        // }
+        // // 添加目录项
+        // // 在snap_inode下创建一个新的inode，mode保持和被快照目录下的inode一致
+        // mode = snap_inode->i_mode;
+
+        // if(S_ISDIR(son_inode->i_mode)){
+        //     ret = vfs_mkdir(mnt_user_ns(parent_path), snap_inode, new_dentry, mode);
+        // }else if(S_ISREG(son_inode->i_mode)){
+        //     ret = vfs_create(mnt_user_ns(parent_path), snap_inode, new_dentry, mode, true);
+        // }
+
+        // tmp_inode = new_dentry->d_inode;
+        // if(!tmp_inode){
+        //     pr_info("[snapfs f2fs_cow]: tmp_inode failed!!!\n");
+        //     ret = -1;
+        //     goto next_free;
+        // }
+
+int f2fs_cow(struct inode *pra_inode,
              struct inode *snap_inode,
              struct inode *son_inode,
-             struct inode *new_inode){
+             struct inode **new_inode){
+    // 判断name of son_inode是否已经存在snap_inode下
+    struct dentry *snap_dentry, *son_dentry;
+	struct f2fs_dir_entry *de;
+    struct page *page;
+    struct super_block *sb = pra_inode->i_sb;
+    struct inode *tmp_inode = NULL;
+    umode_t mode;
+    int ret = 0;
+    struct qstr *d_name;
+    char *name;
+    struct f2fs_sb_info *sbi = F2FS_I_SB(pra_inode);
+    struct page *dpage = NULL;
+    nid_t ino;
+    // struct path parent_path;
+	// ret = kern_path("/mnt/", LOOKUP_FOLLOW | LOOKUP_REVAL, &parent_path);
+    // if (ret) {
+    //     pr_err("kern_path failed: %d\n", ret);
+    //     goto next_free;
+    // }
 
+    // 安全检查
+    if (unlikely(f2fs_cp_error(sbi))) {
+        ret = -EIO;
+        goto next_free;
+    }
+    
+    if (!f2fs_is_checkpoint_ready(sbi)) {
+        ret = -ENOSPC;
+        goto next_free;
+    }
 
-    return 0;
+    // 初始化配额
+    ret = f2fs_dquot_initialize(snap_inode);
+    if (ret)
+        goto next_free;
+
+    son_dentry = d_find_any_alias(son_inode);
+    if (!son_dentry)
+		goto next_free;
+    
+    snap_dentry = d_find_any_alias(snap_inode);
+    if (!snap_dentry)
+		goto next_free;
+
+    dget(son_dentry);
+    dget(snap_dentry);
+    d_name = &son_dentry->d_name;
+    de = f2fs_find_entry(snap_inode, d_name, &page);
+    if(de){
+        pr_info("[snapfs f2fs_cow]: dentry[%s] found in [%u]\n", d_name->name, snap_inode->i_ino);
+        // 快照目录下对应的数据COW过, 那两个目录下的inode就不相等
+        tmp_inode = f2fs_iget(sb, le32_to_cpu(de->ino));
+        if (IS_ERR(tmp_inode)) {
+            ret = PTR_ERR(tmp_inode);
+            tmp_inode = NULL;
+            goto next_free;
+        }
+        if((le32_to_cpu(de->ino) != son_inode->i_ino) && (tmp_inode->i_size == son_inode->i_size)){
+            pr_info("[snapfs f2fs_cow]: file[%s] of snap[%u] had cowed!!!\n",
+                    son_dentry->d_name.name, snap_inode->i_ino);
+            *new_inode = tmp_inode;
+            goto out_success;
+        }
+        // 快照目录下对应的数据没有COW过, 那两个目录下的inode就相等
+        f2fs_delete_entry(de, page, snap_inode, NULL);
+        page = NULL;
+        // 准备创建dentry
+        // 创建新的inode（使用son_inode的mode）
+        mode = son_inode->i_mode;
+        tmp_inode = snapfs_new_inode(snap_inode, mode);
+        if (IS_ERR(tmp_inode)) {
+            ret = PTR_ERR(tmp_inode);
+            pr_err("[snapfs f2fs_cow]: failed to create new inode: %d\n", ret);
+            goto next_free;
+        }
+        if (!test_opt(sbi, DISABLE_EXT_IDENTIFY))
+            snapfs_set_file_temperature(sbi, tmp_inode, d_name->name);
+        /* 3. 初始化 inode 元数据 */
+        snapfs_set_compress_inode(sbi, tmp_inode, d_name->name);
+        // 设置inode操作
+        if (S_ISREG(son_inode->i_mode)) {
+            tmp_inode->i_op = &f2fs_file_inode_operations;
+            tmp_inode->i_fop = &f2fs_file_operations;
+            tmp_inode->i_mapping->a_ops = &f2fs_dblock_aops;
+        } else if (S_ISDIR(son_inode->i_mode)) {
+            tmp_inode->i_op = &f2fs_dir_inode_operations;
+            tmp_inode->i_fop = &f2fs_dir_operations;
+            tmp_inode->i_mapping->a_ops = &f2fs_dblock_aops;
+            mapping_set_gfp_mask(tmp_inode->i_mapping, GFP_NOFS);
+            set_inode_flag(tmp_inode, FI_INC_LINK);
+        } else if (S_ISLNK(son_inode->i_mode)) {
+            tmp_inode->i_op = &f2fs_symlink_inode_operations;
+            tmp_inode->i_mapping->a_ops = &f2fs_dblock_aops;
+        }
+
+        ino = tmp_inode->i_ino;
+        f2fs_lock_op(sbi);
+        /* 4. 在 snap_inode 下创建目录项 link */
+        ret = f2fs_add_link(snap_dentry, tmp_inode);
+        if (ret) {
+            f2fs_unlock_op(sbi);
+            pr_err("[snapfs f2fs_cow]: failed to add link: %d\n", ret);
+            goto next_free;
+        }
+        f2fs_unlock_op(sbi);
+        f2fs_alloc_nid_done(sbi, ino);
+        // 复制inode的属性
+        tmp_inode->i_size = son_inode->i_size;
+        tmp_inode->i_atime = son_inode->i_atime;
+        tmp_inode->i_mtime = son_inode->i_mtime;
+        tmp_inode->i_ctime = son_inode->i_ctime;
+        tmp_inode->i_uid = son_inode->i_uid;
+        tmp_inode->i_gid = son_inode->i_gid;
+        if (S_ISDIR(mode)) {
+            // 目录的链接数：自身(.) + 父目录(..)
+            inc_nlink(tmp_inode);
+            // 父目录链接数增加
+            inc_nlink(snap_inode);
+            f2fs_mark_inode_dirty_sync(snap_inode, true);
+        }
+        f2fs_mark_inode_dirty_sync(tmp_inode, true);
+        *new_inode = tmp_inode;
+        goto out_success; 
+    }
+
+out_success:
+    ret = 0;
+
+next_free:
+    if (son_dentry)
+        dput(son_dentry);
+    if (snap_dentry)
+        dput(snap_dentry);
+    if (tmp_inode) {
+        iput(tmp_inode);
+    }
+    if (page)
+        f2fs_put_page(page, 1);
+    return ret;
 }
 
 
@@ -703,24 +1109,7 @@ int f2fs_snapshot_cow(struct inode *inode)
     Stack_snap stack;
     nid_t  pra_ino, son_ino, snap_ino;
     // 先判断这个inode是不是快照inode, 
-    // 常规文件，创建时就设置了数据块多引用，
     // 不用执行cow，后续更新引用关系即可
-
-    // inode 是快照inode
-    // if (S_ISDIR(inode)){
-    //     snap_count = tmp_me.count;
-    //     pr_info("[%u] is snapshot inode, snap_count[%u]\n",inode->i_ino, snap_count);
-    //     for(i = 0 ;i < snap_count; i++){
-    //         // todo. 多个快照版本的处理
-    //         snap_inode = f2fs_iget(sbi->sb, le32_to_cpu(tmp_me.snap_ino));
-    //         ret = f2fs_cow(inode, snap_inode, );
-    //         if(ret){
-    //             pr_info("inode self cow failed\n");
-    //             return 1;
-    //         }
-    //         // 执行cow
-    //     }
-    // }
     if(!is_snapshot_inode(inode, &tmp_me, &entry_id)){
         // 如果不是，就往上找父目录的快照情况
         // 找到后直接让其准备cow，在cow中判断是否已经触发过
@@ -754,7 +1143,7 @@ int f2fs_snapshot_cow(struct inode *inode)
                     son_inode = f2fs_iget(sb, son_ino);
                     parent_dentry = d_find_any_alias(pra_inode);
                     dentry = d_find_any_alias(son_inode);
-                    ret = f2fs_cow(pra_inode, snap_inode, son_inode, new_inode);
+                    ret = f2fs_cow(pra_inode, snap_inode, son_inode, &new_inode);
                     if(ret){
                         pr_info("parent cow failed\n");
                         return 1;

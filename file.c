@@ -3670,56 +3670,94 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		snap_dentry = NULL;
 		goto out_dput;
 	}
-	mode = src_inode->i_mode;
-	err = vfs_mkdir(mnt_user_ns(snap_par_path.mnt), snap_par_inode, snap_dentry, mode);
-	if (err) {
-		pr_info("[snapfs mk_snap]: mkdir '%s/%s' failed (%d)\n",
-				snap_par_path.dentry->d_name.name, snap_filename, err);
-		goto out_dput;
-	}
-	snap_inode = snap_dentry->d_inode;
-	if (!snap_inode) {
-		pr_info("[snapfs mk_snap]: Invalid snap_inode\n");
-		goto out_dput;
-	}
-	
-	// 修改src_inode对应的magic block区域的flag
-	sbi = F2FS_I_SB(src_inode);
-	//假设我们要插入或更新一个 src_ino 对应的 snap_ino：
-	struct page *page;
-	struct f2fs_magic_entry *me;
-	u32 entry_id;
-	err = f2fs_magic_lookup_or_alloc(sbi, src_inode->i_ino, &entry_id, &me, &page);
-	if (err) {
-		printk("magic table full!\n");
-		if(page) f2fs_put_page(page, 1);
-		goto out_dput;
-	}
-	pr_info("init snap_file[%u] of snaped_dir[%u] with count[%u]\n"
-		,me->snap_ino, me->src_ino, me->count);
-	// 此时 me 指向可用 entry，page 已加载 
-	// 1. 更新 entry 数据 
-	me->src_ino  = cpu_to_le32(src_inode->i_ino);
-	me->snap_ino = cpu_to_le32(snap_inode->i_ino);
-	me->next     = 0;
-	me->count   += 1;
-	pr_info("update snap_file[%u] of snaped_dir[%u] with count[%u] in entryid[%u]\n"
-		,me->snap_ino, me->src_ino, me->count, entry_id);
-	// 2. 更新 bitmap：标记该 slot 已使用 
-	{
-		struct f2fs_magic_block *mb = (struct f2fs_magic_block *)page_address(page);
-		u32 off = entry_id % MGENTRY_PER_BLOCK;
-		set_bit(off, (unsigned long *)mb->multi_bitmap);
-	}
-	// 3. 标记 page dirty，写回磁盘
-	set_page_dirty(page);
-	f2fs_put_page(page, 1);
 
-	// 创建快照目录
+	mode = src_inode->i_mode;
+	snap_inode = snapfs_new_inode(snap_par_inode, mode);
+	if (IS_ERR(snap_inode)) {
+		err = PTR_ERR(snap_inode);
+		pr_err("[snapfs f2fs_cow]: failed to create new inode: %d\n", err);
+		goto out_dput;
+	}
+	if (!test_opt(sbi, DISABLE_EXT_IDENTIFY))
+		snapfs_set_file_temperature(sbi, snap_inode, src_path.dentry->d_name.name);
+	/* 3. 初始化 inode 元数据 */
+	snapfs_set_compress_inode(sbi, snap_inode, src_path.dentry->d_name.name);
+	// 设置inode操作
+	snap_inode->i_op = &f2fs_dir_inode_operations;
+	snap_inode->i_fop = &f2fs_dir_operations;
+	snap_inode->i_mapping->a_ops = &f2fs_dblock_aops;
+	mapping_set_gfp_mask(snap_inode->i_mapping, GFP_NOFS);
+	set_inode_flag(snap_inode, FI_INC_LINK);
+
+	f2fs_lock_op(sbi);
+	/* 4. 在 snap_inode 下创建目录项 link */
+	err = f2fs_add_link(snap_dentry, snap_inode);
+	if (err) {
+		f2fs_unlock_op(sbi);
+		pr_err("[snapfs f2fs_cow]: failed to add link: %d\n", err);
+		goto out_dput;
+	}
+	f2fs_unlock_op(sbi);
+	// 复制inode的属性
+	snap_inode->i_size = src_inode->i_size;
+	snap_inode->i_atime = src_inode->i_atime;
+	snap_inode->i_mtime = src_inode->i_mtime;
+	snap_inode->i_ctime = src_inode->i_ctime;
+	snap_inode->i_uid = src_inode->i_uid;
+	snap_inode->i_gid = src_inode->i_gid;
+	// 目录的链接数：自身(.) + 父目录(..)
+	inc_nlink(snap_inode);
+	// 父目录链接数增加
+	inc_nlink(snap_par_inode);
+
+	// err = vfs_mkdir(mnt_user_ns(snap_par_path.mnt), snap_par_inode, snap_dentry, mode);
+	// if (err) {
+	// 	pr_info("[snapfs mk_snap]: mkdir '%s/%s' failed (%d)\n",
+	// 			snap_par_path.dentry->d_name.name, snap_filename, err);
+	// 	goto out_dput;
+	// }
+	// snap_inode = snap_dentry->d_inode;
+	// if (!snap_inode) {
+	// 	pr_info("[snapfs mk_snap]: Invalid snap_inode\n");
+	// 	goto out_dput;
+	// }
+	
+	// // 修改src_inode对应的magic block区域的flag
+	// sbi = F2FS_I_SB(src_inode);
+	// //假设我们要插入或更新一个 src_ino 对应的 snap_ino：
+	// struct page *page;
+	// struct f2fs_magic_entry *me;
+	// u32 entry_id;
+	// err = f2fs_magic_lookup_or_alloc(sbi, src_inode->i_ino, &entry_id, &me, &page);
+	// if (err) {
+	// 	printk("magic table full!\n");
+	// 	if(page) f2fs_put_page(page, 1);
+	// 	goto out_dput;
+	// }
+	// pr_info("init snap_file[%u] of snaped_dir[%u] with count[%u]\n"
+	// 	,me->snap_ino, me->src_ino, me->count);
+	// // 此时 me 指向可用 entry，page 已加载 
+	// // 1. 更新 entry 数据 
+	// me->src_ino  = cpu_to_le32(src_inode->i_ino);
+	// me->snap_ino = cpu_to_le32(snap_inode->i_ino);
+	// me->next     = 0;
+	// me->count   += 1;
+	// pr_info("update snap_file[%u] of snaped_dir[%u] with count[%u] in entryid[%u]\n"
+	// 	,me->snap_ino, me->src_ino, me->count, entry_id);
+	// // 2. 更新 bitmap：标记该 slot 已使用 
+	// {
+	// 	struct f2fs_magic_block *mb = (struct f2fs_magic_block *)page_address(page);
+	// 	u32 off = entry_id % MGENTRY_PER_BLOCK;
+	// 	set_bit(off, (unsigned long *)mb->multi_bitmap);
+	// }
+	// // 3. 标记 page dirty，写回磁盘
+	// set_page_dirty(page);
+	// f2fs_put_page(page, 1);
+
+	// 复制快照目录的数据
 	if (f2fs_has_inline_dentry(src_inode)) {
 		pr_info("[snapfs mk_snap]: src(%lu) with inline dentry\n", src_inode->i_ino);
 		set_inode_flag(snap_inode, FI_INLINE_DENTRY);
-
 		src_ipage = f2fs_get_node_page(sbi, src_inode->i_ino);
 		if (IS_ERR(src_ipage)) {
 			pr_err("[snapfs mk_snap]: failed to get src page[%lu]\n", src_inode->i_ino);
@@ -3844,6 +3882,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		f2fs_put_page(snap_dpage, 1);
 	}
 
+	f2fs_mark_inode_dirty_sync(snap_inode, true);
 out_dput:
 	if (snap_dentry)
         dput(snap_dentry);

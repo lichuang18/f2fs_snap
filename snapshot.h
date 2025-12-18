@@ -28,6 +28,15 @@ int f2fs_magic_lookup(struct f2fs_sb_info *sbi, u32 src_ino,
 
 int f2fs_snapshot_cow(struct inode *inode);
 
+struct inode *snapfs_new_inode(struct inode *dir, umode_t mode);
+void snapfs_set_file_temperature(struct f2fs_sb_info *sbi, struct inode *inode,
+		const unsigned char *name);
+void snapfs_set_compress_inode(struct f2fs_sb_info *sbi, struct inode *inode,
+						const unsigned char *name);
+
+int snapfs_is_extension_exist(const unsigned char *s, const char *sub,
+						bool tmp_ext);
+
 
 #define MAGIC_MAX		32678
 
