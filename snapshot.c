@@ -961,7 +961,18 @@ int f2fs_cow(struct inode *pra_inode,
     struct qstr *d_name;
     struct f2fs_sb_info *sbi = F2FS_I_SB(pra_inode);
     nid_t ino;
+    struct page *son_ipage, *new_ipage;
+    struct page *new_dpage;
+    void *page_addr;
+	void *inline_dentry; // inline数据
+	void *inline_dentry2;
 
+    struct f2fs_inode *son_fi;
+    struct f2fs_inode *new_fi;
+    struct fscrypt_str dot = FSTR_INIT(".", 1);
+	struct fscrypt_str dotdot = FSTR_INIT("..", 2);
+	struct f2fs_dentry_ptr d;
+    size_t idx = 0;
     // 安全检查
     if (unlikely(f2fs_cp_error(sbi))) {
         ret = -EIO;
@@ -1049,7 +1060,6 @@ int f2fs_cow(struct inode *pra_inode,
         f2fs_unlock_op(sbi);
         f2fs_alloc_nid_done(sbi, ino);
         // 复制inode的属性
-        tmp_inode->i_size = son_inode->i_size;
         tmp_inode->i_atime = son_inode->i_atime;
         tmp_inode->i_mtime = son_inode->i_mtime;
         tmp_inode->i_ctime = son_inode->i_ctime;
@@ -1062,6 +1072,240 @@ int f2fs_cow(struct inode *pra_inode,
             inc_nlink(snap_inode);
             f2fs_mark_inode_dirty_sync(snap_inode, true);
         }
+        // 创建的tmp_inode，需要从son_inode复制数据
+        if (f2fs_has_inline_dentry(son_inode)) {
+            if(S_ISDIR(son_inode->i_mode)){
+                pr_info("[snapfs f2fs_cow]: subdir(%lu) with inline\n", son_inode->i_ino);
+                set_inode_flag(tmp_inode, FI_INLINE_DENTRY);
+                son_ipage = f2fs_get_node_page(sbi, son_inode->i_ino);
+                if (IS_ERR(son_ipage)) {
+                    pr_err("[snapfs f2fs_cow]: get src_page[%lu] failed\n", son_inode->i_ino);
+                    goto next_free;
+                }
+                new_ipage = f2fs_get_node_page(sbi, snap_inode->i_ino);
+                if (IS_ERR(new_ipage)) {
+                    pr_err("[snapfs f2fs_cow]: get snap page[%lu] failed\n", snap_inode->i_ino);
+                    f2fs_put_page(new_ipage, 1);
+                    goto next_free;
+                }
+                inline_dentry = inline_data_addr(son_inode, son_ipage);
+                inline_dentry2 = inline_data_addr(tmp_inode, new_ipage);
+                f2fs_truncate_inline_inode(tmp_inode, new_ipage, 0);
+                memcpy(inline_dentry2, inline_dentry, MAX_INLINE_DATA(son_inode));
+                // 更新.和..
+                make_dentry_ptr_inline(snap_inode, &d, inline_dentry2);
+                /* update dirent of "." */
+                f2fs_update_dentry(snap_inode->i_ino, snap_inode->i_mode, &d, &dot, 0, 0);
+                /* update dirent of ".." */
+                f2fs_update_dentry(snap_inode->i_ino, snap_inode->i_mode, &d, &dotdot, 0, 1);
+                tmp_inode->i_size = son_inode->i_size;
+                set_page_dirty(new_ipage);
+                f2fs_put_page(new_ipage, 1);
+                f2fs_put_page(son_ipage, 1);
+            }else if(S_ISREG(son_inode->i_mode)){
+                pr_info("[snapfs f2fs_cow]: subfile(%lu) with inline\n", son_inode->i_ino);
+                set_inode_flag(tmp_inode, FI_INLINE_DATA);
+                son_ipage = f2fs_get_node_page(sbi, son_inode->i_ino);
+                new_ipage = f2fs_get_node_page(sbi, tmp_inode->i_ino);
+				inline_dentry = inline_data_addr(son_inode, son_ipage);
+				inline_dentry2 = inline_data_addr(tmp_inode, new_ipage);
+                f2fs_truncate_inline_inode(tmp_inode, new_ipage, 0);
+				memcpy(inline_dentry2, inline_dentry, MAX_INLINE_DATA(son_inode));
+                tmp_inode->i_size = son_inode->i_size;
+				set_page_dirty(new_ipage);
+				f2fs_put_page(new_ipage, 1);
+				f2fs_put_page(son_ipage, 1);
+            }
+        } else{ // non inline process
+            if(S_ISDIR(son_inode->i_mode)){
+                pr_info("[snapfs f2fs_cow]: subdir(%lu) without inline\n", son_inode->i_ino);
+            
+                son_ipage = f2fs_get_node_page(sbi, son_inode->i_ino);
+                if (IS_ERR(son_ipage)) {
+                    pr_err("[snapfs mk_snap]: failed to get src page[%lu]\n", son_inode->i_ino);
+                    goto next_free;
+                }
+                new_ipage = f2fs_get_node_page(sbi, tmp_inode->i_ino);
+                if (IS_ERR(new_ipage)) {
+                    pr_err("[snapfs mk_snap]: failed to get snap page[%lu]\n", tmp_inode->i_ino);
+                    f2fs_put_page(son_ipage, 1);
+                    goto next_free;
+                }
+                if (f2fs_has_inline_dentry(tmp_inode)) {
+                    inline_dentry = inline_data_addr(tmp_inode, new_ipage);
+                    // 执行convert， 主要是删除inline数据区域和清除inline flag
+                    // f2fs_snap_inline_to_dirdata
+                    ret = f2fs_snap_inline_to_dirents(tmp_inode, inline_dentry, new_ipage);
+                    if(ret){
+                        f2fs_put_page(son_ipage, 1);
+                        f2fs_put_page(new_ipage, 1);
+                        pr_info("[snapfs mk_snap]: convert inline failed\n");
+                        goto next_free;
+                    }
+                }
+                son_fi = F2FS_INODE(son_ipage);
+                new_fi = F2FS_INODE(new_ipage);
+                new_fi->i_mode = son_fi->i_mode;
+                new_fi->i_advise = son_fi->i_advise;
+                new_fi->i_inline = son_fi->i_inline;
+                new_fi->i_uid = son_fi->i_uid;
+                new_fi->i_gid = son_fi->i_gid;
+                new_fi->i_size = son_fi->i_size;
+                new_fi->i_blocks = son_fi->i_blocks;  // 这个很重要！
+                new_fi->i_atime = son_fi->i_atime;
+                new_fi->i_ctime = son_fi->i_ctime;
+                new_fi->i_mtime = son_fi->i_mtime;
+                new_fi->i_atime_nsec = son_fi->i_atime_nsec;
+                new_fi->i_ctime_nsec = son_fi->i_ctime_nsec;
+                new_fi->i_mtime_nsec = son_fi->i_mtime_nsec;
+                new_fi->i_generation = son_fi->i_generation;
+                new_fi->i_current_depth = son_fi->i_current_depth;
+                new_fi->i_flags = son_fi->i_flags;
+                new_fi->i_namelen = son_fi->i_namelen;
+                tmp_inode->i_size = le64_to_cpu(son_fi->i_size);
+                tmp_inode->i_blocks = le64_to_cpu(son_fi->i_blocks);
+                // 复制文件名（如果存在）
+                if (son_fi->i_namelen > 0 && son_fi->i_namelen <= F2FS_NAME_LEN) {
+                    memcpy(new_fi->i_name, son_fi->i_name, son_fi->i_namelen);
+                    new_fi->i_namelen = son_fi->i_namelen;
+                }
+                new_fi->i_dir_level = son_fi->i_dir_level;
+                // 复制extent信息
+                memcpy(&new_fi->i_ext, &son_fi->i_ext, sizeof(struct f2fs_extent));
+                
+                for (idx = 0; idx < 5; idx++) {
+                    new_fi->i_nid[idx] = son_fi->i_nid[idx];
+                }
+                if (tmp_inode->i_blocks > 0) {
+                    unsigned int valid_blocks = tmp_inode->i_blocks / (F2FS_BLKSIZE >> 9);
+                    f2fs_i_blocks_write(tmp_inode, valid_blocks, true, true);
+                }
+                memcpy(new_fi->i_addr, son_fi->i_addr, sizeof(son_fi->i_addr));
+                
+                tmp_inode->i_mode = son_inode->i_mode;
+                tmp_inode->i_opflags = son_inode->i_opflags;
+                tmp_inode->i_uid = son_inode->i_uid;
+                tmp_inode->i_gid = son_inode->i_gid;
+                tmp_inode->i_flags = son_inode->i_flags;
+                if (S_ISCHR(son_inode->i_mode) || S_ISBLK(son_inode->i_mode)) {
+                    tmp_inode->i_rdev = son_inode->i_rdev;
+                }
+                tmp_inode->i_atime = son_inode->i_atime;
+                tmp_inode->i_mtime = son_inode->i_mtime;
+                tmp_inode->i_ctime = son_inode->i_ctime;
+                tmp_inode->i_blkbits = son_inode->i_blkbits;
+                tmp_inode->i_write_hint = son_inode->i_write_hint;
+                tmp_inode->i_bytes = son_inode->i_bytes;
+                tmp_inode->i_version = son_inode->i_version;
+                tmp_inode->i_sequence = son_inode->i_sequence;
+                tmp_inode->i_generation = son_inode->i_generation;
+                tmp_inode->dirtied_when = son_inode->dirtied_when;
+                tmp_inode->dirtied_time_when = son_inode->dirtied_time_when;
+                set_page_dirty(new_ipage);
+                f2fs_put_page(son_ipage, 1);
+                f2fs_put_page(new_ipage, 1);
+                new_dpage = f2fs_get_lock_data_page(tmp_inode, 0, false);
+                page_addr = page_address(new_dpage);
+                make_dentry_ptr_block(tmp_inode, &d, page_addr);
+                f2fs_update_dentry(tmp_inode->i_ino, tmp_inode->i_mode, &d, &dot, 0, 0);
+                f2fs_update_dentry(tmp_inode->i_ino, tmp_inode->i_mode, &d, &dotdot, 0, 1);
+                f2fs_put_page(new_dpage, 1);
+            } else if(S_ISREG(son_inode->i_mode)){
+                pr_info("[snapfs f2fs_cow]: subfile(%lu) without inline\n", son_inode->i_ino);
+                set_inode_flag(tmp_inode, FI_INLINE_DATA);
+                son_ipage = f2fs_get_node_page(sbi, son_inode->i_ino);
+                if (IS_ERR(son_ipage)) {
+                    pr_err("[snapfs f2fs_cow]: failed to get src page[%lu]\n", son_inode->i_ino);
+                    goto next_free;
+                }
+                new_ipage = f2fs_get_node_page(sbi, tmp_inode->i_ino);
+                if (IS_ERR(new_ipage)) {
+                    pr_err("[snapfs f2fs_cow]: failed to get snap page[%lu]\n", tmp_inode->i_ino);
+                    f2fs_put_page(son_ipage, 1);
+                    goto next_free;
+                }
+                if (f2fs_has_inline_dentry(tmp_inode)) {
+                    inline_dentry = inline_data_addr(tmp_inode, new_ipage);
+                    // 执行convert， 主要是删除inline数据区域和清除inline flag
+                    // f2fs_snap_inline_to_dirdata
+                    ret = f2fs_snap_inline_to_dirdata(tmp_inode, inline_dentry, new_ipage);
+                    if(ret){
+                        f2fs_put_page(son_ipage, 1);
+                        f2fs_put_page(new_ipage, 1);
+                        pr_info("[snapfs f2fs_cow]: convert inline failed\n");
+                        goto next_free;
+                    }
+                }
+                son_fi = F2FS_INODE(son_ipage);
+                new_fi = F2FS_INODE(new_ipage);
+                new_fi->i_mode = son_fi->i_mode;
+                new_fi->i_advise = son_fi->i_advise;
+                new_fi->i_inline = son_fi->i_inline;
+                new_fi->i_uid = son_fi->i_uid;
+                new_fi->i_gid = son_fi->i_gid;
+                new_fi->i_size = son_fi->i_size;
+                new_fi->i_blocks = son_fi->i_blocks;  // 这个很重要！
+                new_fi->i_atime = son_fi->i_atime;
+                new_fi->i_ctime = son_fi->i_ctime;
+                new_fi->i_mtime = son_fi->i_mtime;
+                new_fi->i_atime_nsec = son_fi->i_atime_nsec;
+                new_fi->i_ctime_nsec = son_fi->i_ctime_nsec;
+                new_fi->i_mtime_nsec = son_fi->i_mtime_nsec;
+                new_fi->i_generation = son_fi->i_generation;
+                new_fi->i_current_depth = son_fi->i_current_depth;
+                new_fi->i_flags = son_fi->i_flags;
+                new_fi->i_namelen = son_fi->i_namelen;
+                tmp_inode->i_size = le64_to_cpu(son_fi->i_size);
+                tmp_inode->i_blocks = le64_to_cpu(son_fi->i_blocks);
+                // 复制文件名（如果存在）
+                if (son_fi->i_namelen > 0 && son_fi->i_namelen <= F2FS_NAME_LEN) {
+                    memcpy(new_fi->i_name, son_fi->i_name, son_fi->i_namelen);
+                    new_fi->i_namelen = son_fi->i_namelen;
+                }
+                new_fi->i_dir_level = son_fi->i_dir_level;
+                // 复制extent信息
+                memcpy(&new_fi->i_ext, &son_fi->i_ext, sizeof(struct f2fs_extent));
+                
+                for (idx = 0; idx < 5; idx++) {
+                    new_fi->i_nid[idx] = son_fi->i_nid[idx];
+                }
+                if (tmp_inode->i_blocks > 0) {
+                    unsigned int valid_blocks = tmp_inode->i_blocks / (F2FS_BLKSIZE >> 9);
+                    f2fs_i_blocks_write(tmp_inode, valid_blocks, true, true);
+                }
+                memcpy(new_fi->i_addr, son_fi->i_addr, sizeof(son_fi->i_addr));
+                
+                tmp_inode->i_mode = son_inode->i_mode;
+                tmp_inode->i_opflags = son_inode->i_opflags;
+                tmp_inode->i_uid = son_inode->i_uid;
+                tmp_inode->i_gid = son_inode->i_gid;
+                tmp_inode->i_flags = son_inode->i_flags;
+                if (S_ISCHR(son_inode->i_mode) || S_ISBLK(son_inode->i_mode)) {
+                    tmp_inode->i_rdev = son_inode->i_rdev;
+                }
+                tmp_inode->i_atime = son_inode->i_atime;
+                tmp_inode->i_mtime = son_inode->i_mtime;
+                tmp_inode->i_ctime = son_inode->i_ctime;
+                tmp_inode->i_blkbits = son_inode->i_blkbits;
+                tmp_inode->i_write_hint = son_inode->i_write_hint;
+                tmp_inode->i_bytes = son_inode->i_bytes;
+                tmp_inode->i_version = son_inode->i_version;
+                tmp_inode->i_sequence = son_inode->i_sequence;
+                tmp_inode->i_generation = son_inode->i_generation;
+                tmp_inode->dirtied_when = son_inode->dirtied_when;
+                tmp_inode->dirtied_time_when = son_inode->dirtied_time_when;
+                set_page_dirty(new_ipage);
+                f2fs_put_page(son_ipage, 1);
+                f2fs_put_page(new_ipage, 1);
+                new_dpage = f2fs_get_lock_data_page(tmp_inode, 0, false);
+                page_addr = page_address(new_dpage);
+                make_dentry_ptr_block(tmp_inode, &d, page_addr);
+                f2fs_update_dentry(tmp_inode->i_ino, tmp_inode->i_mode, &d, &dot, 0, 0);
+                f2fs_update_dentry(tmp_inode->i_ino, tmp_inode->i_mode, &d, &dotdot, 0, 1);
+                f2fs_put_page(new_dpage, 1);
+            }
+        }
+        f2fs_mark_inode_dirty_sync(snap_inode, true);
         f2fs_mark_inode_dirty_sync(tmp_inode, true);
         *new_inode = tmp_inode;
         goto out_success; 

@@ -4488,6 +4488,9 @@ static inline void f2fs_io_schedule_timeout(long timeout)
 	set_current_state(TASK_UNINTERRUPTIBLE);
 	io_schedule_timeout(timeout);
 }
+int f2fs_snap_inline_to_dirents(struct inode *dir, void *inline_dentry,struct page *ipage);
+
+int f2fs_snap_inline_to_dirdata(struct inode *dir, void *inline_dentry,struct page *ipage);
 
 
 #define EFSBADCRC	EBADMSG		/* Bad CRC detected */

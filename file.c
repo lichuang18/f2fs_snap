@@ -3459,7 +3459,7 @@ static int f2fs_get_compress_blocks(struct file *filp, unsigned long arg)
 
 // dump
 
-static int f2fs_snap_inline_to_dirents(struct inode *dir, void *inline_dentry,struct page *ipage){
+int f2fs_snap_inline_to_dirents(struct inode *dir, void *inline_dentry,struct page *ipage){
     f2fs_truncate_inline_inode(dir, ipage, 0);
 	stat_dec_inline_dir(dir);
 	clear_inode_flag(dir, FI_INLINE_DENTRY);
@@ -3473,7 +3473,7 @@ static int f2fs_snap_inline_to_dirents(struct inode *dir, void *inline_dentry,st
 	return 0;
 }
 
-static int f2fs_snap_inline_to_dirdata(struct inode *dir, void *inline_dentry,struct page *ipage){	
+int f2fs_snap_inline_to_dirdata(struct inode *dir, void *inline_dentry,struct page *ipage){	
     f2fs_truncate_inline_inode(dir, ipage, 0);
 	stat_dec_inline_dir(dir);
 	clear_inode_flag(dir, FI_INLINE_DATA);
