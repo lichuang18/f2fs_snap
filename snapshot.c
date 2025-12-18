@@ -916,36 +916,157 @@ bool is_snapshot_inode(struct inode *inode,
     return true;
 }
 
+int f2fs_set_mulref_blocks(struct inode *inode)
+{
+	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
+	loff_t isize;
+	pgoff_t lblk, max_lblk;
+	unsigned int blkbits;
+	struct f2fs_inode *fi;
+    struct page *ipage;
+    struct page *dn_ipage;
+    nid_t nid = 0;
+    block_t blkaddr = 0;
+    struct direct_node *dn;
+
+    struct page *indirect_page;
+    struct indirect_node *indirect;
+
+    struct page *indirect_page2;
+    struct indirect_node *indirect2;
+
+    long in_dn = 0;
+    long in_dn2 = 0;
+    long off_in_dn = 0;
+    long off_in_dn2 = 0;
+    
+
+    const long direct_index = ADDRS_PER_INODE(inode);
+	const long direct_blks = ADDRS_PER_BLOCK(inode);
+    const long level1_blks = direct_index + direct_blks;
+    const long level2_blks = level1_blks + direct_blks;
+    const long level3_blks = level2_blks + direct_blks * direct_blks;
+    const long level4_blks = level3_blks + direct_blks * direct_blks;
+    const long level5_blks = level4_blks + direct_blks * direct_blks * direct_blks;
+    const long double_dir_blk = direct_blks * direct_blks;
+
+
+	isize = i_size_read(inode);
+	blkbits = inode->i_blkbits;
+
+	if (isize == 0) {
+		pr_info("inode %lu: empty file\n", inode->i_ino);
+		return 1;
+	}
+	max_lblk = (isize + (1ULL << blkbits) - 1) >> blkbits;
+    ipage = f2fs_get_node_page(sbi, inode->i_ino);
+    if (IS_ERR(ipage)) {
+        pr_err("[snapfs setmulref]: get src_page[%lu] failed\n", inode->i_ino);
+        return 1;
+    }
+    fi = F2FS_INODE(ipage);
+
+	for (lblk = 0; lblk < max_lblk; lblk++) {
+        if(lblk <= direct_index){
+            if (__is_valid_data_blkaddr(fi->i_addr[lblk])) {
+                // 开始set mulref flag
+            }
+        }else if(lblk <= level1_blks){
+            nid = fi->i_nid[0];
+            if(nid == 0) continue; 
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[lblk - direct_index]);
+            if (__is_valid_data_blkaddr(blkaddr)) {
+                // 开始set mulref flag
+            }
+            f2fs_put_page(dn_ipage, 1);
+        }else if(lblk <= level2_blks){
+            nid = fi->i_nid[1];
+            if(nid == 0) continue; 
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[lblk - level1_blks]);
+            if (__is_valid_data_blkaddr(blkaddr)) {
+                // 开始set mulref flag
+            }
+            f2fs_put_page(dn_ipage, 1);
+        }else if(lblk <= level3_blks){
+            nid = fi->i_nid[2];
+            if(nid == 0) break; 
+            indirect_page = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(indirect_page))
+                return PTR_ERR(indirect_page);
+            in_dn = (lblk - level2_blks) / direct_blks;
+            off_in_dn = (lblk - level2_blks) % direct_blks;
+            indirect = (struct indirect_node *)page_address(dn_ipage);
+            nid = le32_to_cpu(indirect->nid[in_dn]);
+            if(nid == 0) break; 
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[off_in_dn]);
+            if (__is_valid_data_blkaddr(blkaddr)) {
+                // 开始set mulref flag
+            }
+            f2fs_put_page(dn_ipage, 1);
+            f2fs_put_page(indirect_page, 1);
+        }else if(lblk <= level4_blks){
+            nid = fi->i_nid[3];
+            if(nid == 0) break; 
+            indirect_page = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(indirect_page))
+                return PTR_ERR(indirect_page);
+            in_dn = (lblk - level3_blks) / direct_blks;
+            off_in_dn = (lblk - level3_blks) % direct_blks;
+            indirect = (struct indirect_node *)page_address(indirect_page);
+            nid = le32_to_cpu(indirect->nid[in_dn]);
+            if(nid == 0) break; 
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[off_in_dn]);
+            if (__is_valid_data_blkaddr(blkaddr)) {
+                // 开始set mulref flag
+            }
+            f2fs_put_page(dn_ipage, 1);
+            f2fs_put_page(indirect_page, 1);
+        }else if(lblk <= level5_blks){
+            nid = fi->i_nid[4];
+            if(nid == 0) break; 
+            indirect_page = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(indirect_page))
+                return PTR_ERR(indirect_page);
+            in_dn = (lblk - level3_blks) / double_dir_blk;
+            off_in_dn = (lblk - level3_blks) % double_dir_blk;
+            indirect = (struct indirect_node *)page_address(indirect_page);
+            nid = le32_to_cpu(indirect->nid[in_dn]);
+            if(nid == 0) break; 
+            indirect_page2 = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(indirect_page2))
+                return PTR_ERR(indirect_page2);
+            in_dn2 = in_dn / direct_blks;
+            off_in_dn2 = off_in_dn % direct_blks;
+            indirect2 = (struct indirect_node *)page_address(indirect_page2);
+            nid = le32_to_cpu(indirect2->nid[in_dn2]);
+            if(nid == 0) break; 
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[off_in_dn2]);
+            if (__is_valid_data_blkaddr(blkaddr)) {
+                // 开始set mulref flag
+            }
+            f2fs_put_page(dn_ipage, 1);
+            f2fs_put_page(indirect_page, 1);
+        }
+    }
+    return 0;
+}
+
 
 // /mnt/df/dir/*  快照df /mnt/snap/dir/*
 // 原始df/dir、dir/* 就是pra_inode/son_inodes
 // 快照snap/dir、dir/* 就是snap_inode/new_inode
 // 两个dir inode不同
 // 函数作用: 创建新的inode，共享旧数据块引用，即生成new_inode
-
-        // new_dentry = lookup_one_len(d_name->name, snap_dentry, strlen(d_name->name));
-        // if (IS_ERR(new_dentry)) {
-        //     ret = PTR_ERR(new_dentry);
-        //     new_dentry = NULL;
-        //     pr_info("[snapfs f2fs_cow]: lookup_one_len failed!!!\n");
-        // }
-        // // 添加目录项
-        // // 在snap_inode下创建一个新的inode，mode保持和被快照目录下的inode一致
-        // mode = snap_inode->i_mode;
-
-        // if(S_ISDIR(son_inode->i_mode)){
-        //     ret = vfs_mkdir(mnt_user_ns(parent_path), snap_inode, new_dentry, mode);
-        // }else if(S_ISREG(son_inode->i_mode)){
-        //     ret = vfs_create(mnt_user_ns(parent_path), snap_inode, new_dentry, mode, true);
-        // }
-
-        // tmp_inode = new_dentry->d_inode;
-        // if(!tmp_inode){
-        //     pr_info("[snapfs f2fs_cow]: tmp_inode failed!!!\n");
-        //     ret = -1;
-        //     goto next_free;
-        // }
-
 int f2fs_cow(struct inode *pra_inode,
              struct inode *snap_inode,
              struct inode *son_inode,
@@ -1173,15 +1294,15 @@ int f2fs_cow(struct inode *pra_inode,
                 // 复制extent信息
                 memcpy(&new_fi->i_ext, &son_fi->i_ext, sizeof(struct f2fs_extent));
                 
-                for (idx = 0; idx < 5; idx++) {
-                    new_fi->i_nid[idx] = son_fi->i_nid[idx];
-                }
                 if (tmp_inode->i_blocks > 0) {
                     unsigned int valid_blocks = tmp_inode->i_blocks / (F2FS_BLKSIZE >> 9);
                     f2fs_i_blocks_write(tmp_inode, valid_blocks, true, true);
                 }
-                memcpy(new_fi->i_addr, son_fi->i_addr, sizeof(son_fi->i_addr));
                 
+                memcpy(new_fi->i_addr, son_fi->i_addr, sizeof(son_fi->i_addr));
+                for (idx = 0; idx < 5; idx++) {
+                    new_fi->i_nid[idx] = son_fi->i_nid[idx];
+                }
                 tmp_inode->i_mode = son_inode->i_mode;
                 tmp_inode->i_opflags = son_inode->i_opflags;
                 tmp_inode->i_uid = son_inode->i_uid;
@@ -1212,7 +1333,7 @@ int f2fs_cow(struct inode *pra_inode,
                 f2fs_put_page(new_dpage, 1);
             } else if(S_ISREG(son_inode->i_mode)){
                 pr_info("[snapfs f2fs_cow]: subfile(%lu) without inline\n", son_inode->i_ino);
-                set_inode_flag(tmp_inode, FI_INLINE_DATA);
+                // set_inode_flag(tmp_inode, FI_INLINE_DATA);
                 son_ipage = f2fs_get_node_page(sbi, son_inode->i_ino);
                 if (IS_ERR(son_ipage)) {
                     pr_err("[snapfs f2fs_cow]: failed to get src page[%lu]\n", son_inode->i_ino);
