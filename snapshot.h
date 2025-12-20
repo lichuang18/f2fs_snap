@@ -34,7 +34,13 @@ void snapfs_set_compress_inode(struct f2fs_sb_info *sbi, struct inode *inode,
 int snapfs_is_extension_exist(const unsigned char *s, const char *sub,
 						bool tmp_ext);
 
+bool f2fs_is_mulref_blkaddr(struct f2fs_sb_info *sbi,
+					 block_t blkaddr);
 
+int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
+                          block_t old_blkaddr,
+                          nid_t new_nid);
+						  
 #define MAGIC_MAX		32678
 
 struct magic_mgr {

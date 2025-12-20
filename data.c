@@ -25,6 +25,7 @@
 #include "f2fs.h"
 #include "node.h"
 #include "segment.h"
+#include "snapshot.h"
 #include "iostat.h"
 #include <trace/events/f2fs.h>
 
@@ -2702,7 +2703,6 @@ int f2fs_do_write_data_page(struct f2fs_io_info *fio)
 		goto out;
 
 	fio->old_blkaddr = dn.data_blkaddr;
-
 	/* This page is already truncated */
 	if (fio->old_blkaddr == NULL_ADDR) {
 		ClearPageUptodate(page);
@@ -2757,8 +2757,8 @@ got_it:
 	if (err)
 		goto out_writepage;
 
-	// fio->version = ni.version;
-	fio->version = 0;
+	fio->version = ni.version;
+	// fio->version = 0;
 	err = f2fs_encrypt_one_page(fio);
 	if (err)
 		goto out_writepage;

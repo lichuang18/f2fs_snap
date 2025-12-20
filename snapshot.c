@@ -1726,3 +1726,122 @@ int f2fs_snapshot_cow(struct inode *inode)
     }
     return 0;
 }
+
+//  update mulref
+
+bool f2fs_is_mulref_blkaddr(struct f2fs_sb_info *sbi,
+					 block_t blkaddr)
+{
+	struct sit_mulref_info *smi = SIT_MR_I(sbi);
+	struct sit_mulref_entry *me;
+	unsigned int segno, blkoff;
+
+	/* 无 mulref 支持 */
+	if (unlikely(!smi))
+		return false;
+
+	/* NULL / NEW addr 一定不是 mulref */
+	if (blkaddr == NULL_ADDR || blkaddr == NEW_ADDR)
+		return false;
+
+	segno  = GET_SEGNO(sbi, blkaddr);
+
+	/* 只允许 main area / SSA 范围 */
+	if (segno >= le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count_ssa))
+		return false;
+
+	blkoff = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
+
+	down_read(&smi->smentry_lock);
+	me = &smi->smentries[segno];
+	if (unlikely(!me->mblocks)) {
+		up_read(&smi->smentry_lock);
+		return false;
+	}
+
+	if (test_bit(blkoff, (unsigned long *)me->mvalid_map)) {
+		up_read(&smi->smentry_lock);
+		return true;
+	}
+	up_read(&smi->smentry_lock);
+	return false;
+}
+
+static int f2fs_get_summary_by_addr(struct f2fs_sb_info *sbi,
+                                    block_t blkaddr,
+                                    struct f2fs_summary *sum)
+{
+    unsigned int segno = GET_SEGNO(sbi, blkaddr);
+    unsigned int blkoff = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
+    unsigned int type;
+    struct curseg_info *curseg;
+    struct f2fs_summary_block *sum_blk;
+    struct page *sum_page;
+
+    /* 1. 先查 curseg cache */
+    for (type = CURSEG_HOT_DATA; type <= CURSEG_COLD_DATA; type++) {
+        curseg = CURSEG_I(sbi, type);
+        if (curseg->segno == segno && curseg->sum_blk) {
+            *sum = curseg->sum_blk->entries[blkoff];
+            return 0;
+        }
+    }
+
+    /* 2. 不在 cache → 查 SSA */
+    sum_page = f2fs_get_sum_page(sbi, segno);
+    if (IS_ERR(sum_page))
+        return PTR_ERR(sum_page);
+
+    sum_blk = (struct f2fs_summary_block *)page_address(sum_page);
+    *sum = sum_blk->entries[blkoff];
+
+    f2fs_put_page(sum_page, 1);
+    return 0;
+}
+
+int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
+                          block_t old_blkaddr,
+                          nid_t new_nid)
+{
+    struct f2fs_summary old_sum, new_sum;
+    struct f2fs_mulref_block *mr_blk;
+    struct f2fs_mulref_entry *prev = NULL, *cur, *remain;
+    block_t mr_blkaddr;
+    int i;
+    int ret;
+    /* ---------- 1. 读取 old summary ---------- */
+    ret = f2fs_get_summary_by_addr(sbi, old_blkaddr, &old_sum);
+    if (ret)
+        return ret;
+
+    /* ---------- 2. 定位 mulref block ---------- */
+    mr_blkaddr = (block_t)le32_to_cpu(old_sum.nid);
+    // to do
+    
+
+    /* ---------- 3. 查找匹配 new_nid 的 entry ---------- */
+   
+    
+    /* ---------- 4. 删除该 entry，维护 next + count ---------- */
+    
+
+    /* ---------- 5. count == 1：触发降级 ---------- */
+    // if (mr_blk->count == 1) {
+        /* ---------- 6. 用剩余 entry 更新 old_sum ---------- */
+        // new_sum = old_sum;
+        // new_sum.nid     = remain->m_nid;
+        // new_sum.ofs     = remain->m_ofs;
+        // new_sum.version = remain->m_ver;
+        // f2fs_set_summary(sbi, old_blkaddr, &new_sum);
+
+        /* 删除 mulref block */
+    // }
+
+    /* ---------- 7. 更新 sit_mulref_entry ---------- */
+    update_sit_mulref_entry(sbi, old_blkaddr, false);
+
+out:
+    return 0;
+}
+
+

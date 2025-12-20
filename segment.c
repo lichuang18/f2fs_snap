@@ -22,6 +22,7 @@
 #include "gc.h"
 #include "iostat.h"
 #include <trace/events/f2fs.h>
+#include "snapshot.h"
 
 #define __reverse_ffz(x) __reverse_ffs(~(x))
 
@@ -3778,6 +3779,7 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	unsigned long long old_mtime;
 	bool from_gc = (type == CURSEG_ALL_DATA_ATGC);
 	struct seg_entry *se = NULL;
+
 // 	/* 添加的变量 */
 // 	// unsigned int new_segno = GET_SEGNO(sbi, *new_blkaddr);
 // 	struct f2fs_summary old_sum;
@@ -3798,11 +3800,9 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 // 	nid_t new_nid;
 // 	struct seg_entry *se = NULL;
 	
-
 // 	if(!fio){
 // 		goto skip_pre;
 // 	}
-
 // 	char s_type[10];
 // 	if(fio->type == DATA){
 // 		strcpy(s_type, "DATA");
@@ -3811,22 +3811,17 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 // 	}else {
 // 		strcpy(s_type, "OTHER");
 // 	}
-
 // 	// unsigned int nofs;
 // 	// struct node_info dni;
 // 	// int i, j, bit_pos;
 // 	// u16 entry_index;
-	
-
 // 	/* 添加的逻辑：通过old_addr获取对应的summary entry并打印信息 */
 // 	if (__is_valid_data_blkaddr(old_blkaddr) && fio->type == DATA) {
 // 		old_segno = GET_SEGNO(sbi, old_blkaddr);
 // 		new_nid = le32_to_cpu(sum->nid);
 // 		blk_off = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
-
 // 		down_read(&SM_I(sbi)->curseg_lock);
 // 		se = get_seg_entry(sbi, old_segno);
-
 // 		if (se && blk_off < sbi->blocks_per_seg) {
 // 			/* 使用cur_valid_map检查块是否有效 */
 // 			if (f2fs_test_bit(blk_off, se->cur_valid_map)) {
@@ -3915,6 +3910,11 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	mutex_lock(&curseg->curseg_mutex);
 	down_write(&sit_i->sentry_lock);
 
+	// 这是 “搬迁已有有效块”
+	// 与普通写入不同：
+	// old_blkaddr 一定合法
+	// old_mtime 要继承
+	// segment 类型必须匹配
 	if (from_gc) {
 		f2fs_bug_on(sbi, GET_SEGNO(sbi, old_blkaddr) == NULL_SEGNO);
 		se = get_seg_entry(sbi, GET_SEGNO(sbi, old_blkaddr));
@@ -3926,14 +3926,12 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	f2fs_bug_on(sbi, curseg->next_blkoff >= sbi->blocks_per_seg);
 	f2fs_wait_discard_bio(sbi, *new_blkaddr);
 
-
 	// if (is_multi_ref && mulref_page && !IS_ERR(mulref_page)) {
 	// 	pr_info("[update_snap_meta] more to one\n");
 	// 	// 需要恢复成单引用
 	// 	// 从multi读出多引用，然后删除new_blkaddr对应nid的entry
 	// 	mulref = (struct f2fs_mulref_block *)page_address(mulref_page);
 	// 	bitmap = mulref->multi_bitmap;
-
 	// 	old_sum.version--;
 	// 	if(old_sum.version == 0){
 	// 		if(sum->nid == mulref->mrentry[old_ofs_of_node].inoa){
@@ -3954,19 +3952,17 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	// 		// 需要修改multi的数据
 	// 		// __add_sum_entry(sbi, type, &old_sum);
 	// 	}
-		
 	// 	set_page_dirty(mulref_page);
 	// 	f2fs_put_page(mulref_page, 1);
 	// 	mulref_page = NULL;
 	// }	
-
 // normal:
+
 	/*
-	 * __add_sum_entry should be resided under the curseg_mutex
-	 * because, this function updates a summary entry in the
-	 * current summary block.
-	 */
-	
+	* __add_sum_entry should be resided under the curseg_mutex
+	* because, this function updates a summary entry in the
+	* current summary block.
+	*/
 	__add_sum_entry(sbi, type, sum);
 
 	__refresh_next_blkoff(sbi, curseg);
@@ -3988,8 +3984,25 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	update_sit_entry(sbi, *new_blkaddr, 1);
 	update_sit_entry(sbi, old_blkaddr, -1);	
 
-	// if (sum_page) f2fs_put_page(sum_page, 1);
-	// if (mulref_page) f2fs_put_page(mulref_page, 1);
+	if(!f2fs_is_mulref_blkaddr(sbi, fio->old_blkaddr)){
+		update_sit_entry(sbi, old_blkaddr, -1);	
+	} else{
+		// mulref process
+		// 1.找到old_blkaddr对应的旧的summary记录old_sum
+		// 2.根据old_sum->nid，找到mulref区域对应的mulref_blk[]
+		// 3.根据新的summary的sum->nid，查找mulref entry
+		//  用新的summary的sum->nid比对mulref entry的nid，
+		// 4.删除找到的这个entry，更新mulref_blk[]其他blk的信息，比如count--，next更新
+		// 5.如果count缩减为1，就将mulref_blk[]剩余的数据取出，然后删除这个entry
+		// 6.然后用取出的数据更新old_sum
+		// 7.最后update sit_mulref_entry: mblocks和validmap
+	}
+
+	// fio.type     → 这是在写什么？（数据 / 节点 / 元数据）
+	// fio.io_type  → 这次 IO 算在谁头上？（FS / GC / checkpoint / flush）
+	// 新写数据块，肯定不会涉及共享数据块
+	// 修改数据块，才可能触发共享数据块的变动 blk1 -> blk2
+
 
 	// 段空间管理，如果当前段空间不足
 	if (!__has_curseg_space(sbi, curseg)) {
@@ -4142,9 +4155,10 @@ void f2fs_outplace_write_data(struct dnode_of_data *dn,
 {
 	struct f2fs_sb_info *sbi = fio->sbi;
 	struct f2fs_summary sum;
+	f2fs_bug_on(sbi, dn->data_blkaddr == NULL_ADDR);
+
 	// 添加我的私货
 	// 修改ssa
-	f2fs_bug_on(sbi, dn->data_blkaddr == NULL_ADDR);
 	set_summary(&sum, dn->nid, dn->ofs_in_node, fio->version);
 	do_write_page(&sum, fio);
 	f2fs_update_data_blkaddr(dn, fio->new_blkaddr);

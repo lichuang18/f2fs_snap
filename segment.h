@@ -864,6 +864,8 @@ static inline void set_summary(struct f2fs_summary *sum, nid_t nid,
 	sum->version = version;
 }
 
+
+
 static inline block_t start_sum_block(struct f2fs_sb_info *sbi)
 {
 	return __start_cp_addr(sbi) +
