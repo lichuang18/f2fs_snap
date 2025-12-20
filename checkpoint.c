@@ -1665,6 +1665,7 @@ int f2fs_write_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 				SIT_I(sbi)->dirty_sentries == 0 &&
 				prefree_segments(sbi) == 0) {
 			f2fs_flush_sit_entries(sbi, cpc);
+			f2fs_flush_sit_mulref_entries(sbi); // 新增
 			f2fs_clear_prefree_segments(sbi, cpc);
 			unblock_operations(sbi);
 			goto out;
@@ -1688,6 +1689,11 @@ int f2fs_write_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	}
 
 	f2fs_flush_sit_entries(sbi, cpc);
+
+	/* --- 新增 sit_mulref flush --- */
+    if (SIT_MR_I(sbi)) {
+        f2fs_flush_sit_mulref_entries(sbi); // 新函数，无需 cpc，可自己扩展
+    }
 
 	/* save inmem log status */
 	f2fs_save_inmem_curseg(sbi);

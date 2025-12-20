@@ -27,6 +27,7 @@
 
 #include <linux/fscrypt.h>
 #include <linux/fsverity.h>
+// #include "snapshot.h"
 
 #define F2FS_DEBUG 1
 
@@ -1030,7 +1031,8 @@ struct f2fs_mulref_entry { // 12 Bytes
 	__le16 m_ofs;	/* inode offset */
 	__u8 m_ver;	  // version
 	__u8 m_count; // ref entry数量
-	__le32 next;  // next entry
+	__le32 next;  // next entry blkaddr
+	//  __le16 off;
 } __packed;
 
 /* 4KB-sized multi ref entry block */
@@ -1072,6 +1074,18 @@ struct f2fs_magic_info {
 	// struct f2fs_mulref_block mulref_blocks[TOTAL_MAGIC_BLK]; // 512 * segment_count_magic - 142;
 };
 
+struct curmulref_info {
+	struct mutex curmulref_mutex;   /* 串行化 alloc / free / rotate */
+	block_t blkaddr;               /* 当前 mulref block addr */
+	u16 next_free_entry;            /* hint，下一个可能的空闲 entry */
+	u16 used_entries;               /* 当前 block 已用 entry 数 */
+
+	bool inited;                    /* 是否已经初始化 */
+	/* cache */
+	struct f2fs_mulref_block *blk;  /* 缓存的 mulref block */
+	struct page *page;
+};
+
 struct f2fs_sm_info {
 	struct sit_info *sit_info;		/*- whole segment information */
 	struct free_segmap_info *free_info;	/* free segment information */
@@ -1079,6 +1093,10 @@ struct f2fs_sm_info {
 	struct curseg_info *curseg_array;	/* active segment information */
 
 	struct rw_semaphore curseg_lock;	/* for preventing curseg change */
+	//sihuo
+	struct curmulref_info curmulref_blk;
+	struct rw_semaphore curmulref_lock;
+	struct sit_mulref_info *sit_mr_info;
 
 	block_t seg0_blkaddr;		/* block address of 0'th segment */
 	block_t main_blkaddr;		/* start block address of main area */
@@ -2068,6 +2086,12 @@ static inline struct sit_info *SIT_I(struct f2fs_sb_info *sbi)
 {
 	return (struct sit_info *)(SM_I(sbi)->sit_info);
 }
+
+static inline struct sit_mulref_info *SIT_MR_I(struct f2fs_sb_info *sbi)
+{
+	return (struct sit_mulref_info *)(SM_I(sbi)->sit_mr_info);
+}
+
 
 static inline struct free_segmap_info *FREE_I(struct f2fs_sb_info *sbi)
 {
@@ -3600,6 +3624,8 @@ void f2fs_write_node_summaries(struct f2fs_sb_info *sbi, block_t start_blk);
 int f2fs_lookup_journal_in_cursum(struct f2fs_journal *journal, int type,
 			unsigned int val, int alloc);
 void f2fs_flush_sit_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc);
+void f2fs_flush_sit_mulref_entries(struct f2fs_sb_info *sbi);
+
 int f2fs_fix_curseg_write_pointer(struct f2fs_sb_info *sbi);
 int f2fs_check_write_pointer(struct f2fs_sb_info *sbi);
 int f2fs_build_segment_manager(struct f2fs_sb_info *sbi);

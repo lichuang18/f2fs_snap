@@ -24,6 +24,15 @@
 #include "iostat.h"
 #include <trace/events/f2fs.h>
 
+static void __add_sum_entry(struct f2fs_sb_info *sbi, int type,
+					struct f2fs_summary *sum)
+{
+	struct curseg_info *curseg = CURSEG_I(sbi, type);
+	void *addr = curseg->sum_blk;
+
+	addr += curseg->next_blkoff * sizeof(struct f2fs_summary);
+	memcpy(addr, sum, sizeof(struct f2fs_summary));
+}
 
 
 typedef struct StacksnapNode {
@@ -88,8 +97,6 @@ int snap_pop2(Stack_snap* stack, nid_t *ino, nid_t *ino2) {
 	return 0;	
 }
 
-
-
 // 释放栈的内存
 void freeStacksnap(Stack_snap* stack) {
     while (!snap_isEmpty(stack)) {
@@ -97,130 +104,6 @@ void freeStacksnap(Stack_snap* stack) {
     }
 }
 
-
-bool is_used_for_snap(struct f2fs_sb_info *sbi, u16 flag){
-	// 
-	return true;
-}
-// usage:
-// if (S_ISDIR(dn->inode->i_mode))
-// 	new_ni.s_flag = alloc_magic_flag(sbi);
-u16 alloc_magic_flag_from_reclaim(struct f2fs_sb_info *sbi)//快、无阻塞、无扫描
-{
-	struct magic_mgr *mgr = sbi->magic_mgr;
-	u16 flag;
-	u16 magic_count = le16_to_cpu(sbi->ckpt->magic_count);
-
-	spin_lock(&mgr->lock);
-	flag = find_next_bit(mgr->free, magic_count + 1, 1);
-	if (flag <= magic_count) {
-		clear_bit(flag, mgr->free);
-		set_bit(flag, mgr->used);
-		spin_unlock(&mgr->lock);
-		return flag;
-	}
-	spin_unlock(&mgr->lock);
-	return 0;
-}
-
-u16 alloc_magic_flag_force(struct f2fs_sb_info *sbi)//快、无阻塞、无扫描
-{
-	struct magic_mgr *mgr = sbi->magic_mgr;
-	struct f2fs_nm_info *nm_i = NM_I(sbi);
-	struct nat_entry *ne;
-	u16 stolen = 0;
-	mutex_lock(&mgr->force_lock);
-
-	/* ===== Phase 1: 再尝试一次 free 池 ===== */
-	spin_lock(&mgr->lock);
-	stolen = find_next_bit(mgr->free, MAGIC_MAX + 1, 1);
-	if (stolen <= MAGIC_MAX) {
-		clear_bit(stolen, mgr->free);
-		set_bit(stolen, mgr->used);
-		spin_unlock(&mgr->lock);
-		mutex_unlock(&mgr->force_lock);
-		return stolen;
-	}
-	spin_unlock(&mgr->lock);
-
-	/* ===== Phase 2: Force steal from NAT ===== */
-	down_write(&nm_i->nat_tree_lock);
-	/*
-	 * 注意：
-	 * 这里假设你能遍历 NAT cache。
-	 * 如果是 xarray / radix tree，请替换为对应遍历方式。
-	 */
-	list_for_each_entry(ne, &nm_i->nat_entries, list) {
-		u16 flag = ne->ni.s_flag;
-		if (!flag)
-			continue;
-
-		if (is_used_for_snap(sbi, flag))
-			continue;
-
-		/* ===== 真正的 steal ===== */
-		ne->ni.s_flag = 0;
-		set_nat_flag(ne, IS_DIRTY, true);
-		stolen = flag;
-		break;
-	}
-
-	up_write(&nm_i->nat_tree_lock);
-
-	if (stolen) {
-		spin_lock(&mgr->lock);
-		set_bit(stolen, mgr->used);
-		spin_unlock(&mgr->lock);
-	}
-
-	mutex_unlock(&mgr->force_lock);
-	return stolen;
-	return 0;
-}
-
-void magic_do_reclaim(struct f2fs_sb_info *sbi)
-{
-	struct magic_mgr *mgr = sbi->magic_mgr;
-	u16 flag;
-
-	spin_lock(&mgr->lock);
-
-	for (flag = 1; flag <= MAGIC_MAX; flag++) {
-		if (test_bit(flag, mgr->used) &&
-		    !is_used_for_snap(sbi, flag)) {
-			clear_bit(flag, mgr->used);
-			set_bit(flag, mgr->free);
-		}
-	}
-
-	atomic_set(&mgr->need_scan, 0);
-	spin_unlock(&mgr->lock);
-}
-
-int magic_reclaim_thread(void *data)
-{
-	struct f2fs_sb_info *sbi = data;
-	struct magic_mgr *mgr = sbi->magic_mgr;
-
-	set_freezable();
-
-	while (!kthread_should_stop()) {
-		wait_event_freezable_timeout(
-			mgr->wq,
-			kthread_should_stop() ||
-			!bitmap_empty(mgr->free, MAGIC_MAX + 1) ||
-			atomic_read(&mgr->need_scan),
-			msecs_to_jiffies(30000)
-		);
-
-		if (kthread_should_stop())
-			break;
-
-		magic_do_reclaim(sbi);
-	}
-
-	return 0;
-}
 // 在 f2fs_fill_super() 成功后：
 // sbi->magic_mgr = kzalloc(sizeof(struct magic_mgr), GFP_KERNEL);
 // spin_lock_init(&sbi->magic_mgr->lock);
@@ -230,28 +113,278 @@ int magic_reclaim_thread(void *data)
 // sbi->magic_mgr->thread =
 // 	kthread_run(magic_reclaim_thread, sbi, "f2fs_magic");
 
+static int curmulref_rotate_block(struct f2fs_sb_info *sbi)
+{
+    struct curmulref_info *cmr = &SM_I(sbi)->curmulref_blk;
+    block_t new_blkaddr;
+
+    /* 当前函数一定在 curmulref_mutex 保护下被调用 */
+    /* 1. 分配新的 mulref block */
+    new_blkaddr = cmr->blkaddr + 1;
+    if (new_blkaddr == NULL_ADDR)
+        return -ENOSPC;
+    /*
+     * 2. 提交旧 block
+     *    注意：这里只是标记 dirty，不强制 writeback
+     */
+    if (cmr->page) {
+        set_page_dirty(cmr->page);
+        f2fs_put_page(cmr->page, 1);
+    }
+
+    /* 3. 切换 runtime 当前 block */
+    cmr->blkaddr = new_blkaddr;
+    cmr->page = f2fs_get_meta_page(sbi, new_blkaddr);
+    if (!cmr->page)
+        return -EIO;
+
+    cmr->blk = (struct f2fs_mulref_block *)page_address(cmr->page);
+    /*
+     * 4. 记录到 ckpt（只是记录，真正写盘在 checkpoint）
+     */
+    sbi->ckpt->cur_mulref_blk = new_blkaddr;
+
+    return 0;
+}
+
+
+
+int curmulref_alloc_entry(struct f2fs_sb_info *sbi, u16 *eidx)
+{
+	struct curmulref_info *cmr = &SM_I(sbi)->curmulref_blk;
+	struct f2fs_mulref_block *blk;
+	u16 idx;
+    int err = 0;
+	mutex_lock(&cmr->curmulref_mutex);
+
+	if (!cmr->inited) {
+		mutex_unlock(&cmr->curmulref_mutex);
+		return -EINVAL;
+	}
+retry_find:
+	blk = cmr->blk;
+	idx = find_next_zero_bit((unsigned long *)blk->multi_bitmap,
+				 MRENTRY_PER_BLOCK,
+				 cmr->next_free_entry);
+
+	if (idx >= MRENTRY_PER_BLOCK) {
+        err = curmulref_rotate_block(sbi);
+        if (err)
+            goto out_unlock;
+        goto retry_find;
+	}
+    
+	set_bit(idx, (unsigned long *)blk->multi_bitmap);
+	memset(&blk->mrentries[idx], 0,
+	       sizeof(struct f2fs_mulref_entry));
+	cmr->used_entries++;
+	cmr->next_free_entry = idx + 1;
+
+	set_page_dirty(cmr->page);
+	*eidx = idx;
+
+out_unlock:
+    mutex_unlock(&cmr->curmulref_mutex);
+	return err;
+}
+
+void mark_block_mulref(struct f2fs_sb_info *sbi, block_t blkaddr)
+{
+	// unsigned int segno = GET_SEGNO(sbi, blkaddr);
+	// unsigned int off   = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
+	// struct sit_mulref_entry *me;
+
+	// down_write(&sbi->sit_mulref->lock);
+
+	// me = &sbi->sit_mulref->sentries[segno];
+
+	// if (!test_bit(off, me->mvalid_map)) {
+	// 	set_bit(off, me->mvalid_map);
+	// 	me->mblocks++;
+	// }
+
+	// up_write(&sbi->sit_mulref->lock);
+}
+
+// set = true ：标记为多引用
+// set = false ：取消多引用（为回收逻辑留接口） 
+void update_sit_mulref_entry(struct f2fs_sb_info *sbi,
+			     block_t blkaddr,
+			     bool set)
+{
+	struct sit_mulref_info *smi = SIT_MR_I(sbi);
+	struct sit_mulref_entry *me;
+	unsigned int segno;
+	unsigned int blkoff;
+	bool old;
+
+	if (!smi)
+		return;
+
+	segno  = GET_SEGNO(sbi, blkaddr);
+	blkoff = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
+
+	if (segno >= le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count_ssa))
+		return;
+
+	down_write(&smi->smentry_lock);
+
+	me = &smi->smentries[segno];
+
+	/* 原状态 */
+	old = test_bit(blkoff, (unsigned long *)me->mvalid_map);
+
+	if (set) {//设置多引用
+		if (!old) { //如果原来是0，就设置为1，然后blk数量+1，dirty
+			__set_bit(blkoff,
+				(unsigned long *)me->mvalid_map);
+			me->mblocks++;
+			me->dirty = true;
+		}
+	} else {// 取消多引用设置
+		if (old) {// 如果原来是1，就设置为0，然后blk数量-1，同样dirty
+			__clear_bit(blkoff,
+				(unsigned long *)me->mvalid_map);
+			if (me->mblocks > 0)
+				me->mblocks--;
+			me->dirty = true;
+		}
+	}
+
+	if (me->dirty)
+        me->m_mtime = cpu_to_le64(get_mtime(sbi, false));
+		// me->m_mtime = cpu_to_le64(ktime_get_real_seconds());
+
+	up_write(&smi->smentry_lock);
+}
 
 
 // mulref
-// int alloc_mulref_entry(struct f2fs_sb_info *sbi,
-// 		       struct f2fs_mulref_entry **out)
-// {
-// 	struct mulref_mgr *mgr = sbi->mulref_mgr;
-// 	struct f2fs_mulref_block *blk;
-// 	int idx;
+int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
+			    block_t *blkaddr, nid_t ino)
+{
+    struct f2fs_sm_info *sm = SM_I(sbi);
+	struct curmulref_info *cmr = &sm->curmulref_blk;
+	int ret;
+    struct f2fs_summary sum;
+    struct f2fs_summary old_sum;
+    struct page *sum_page;
+    struct page *mulref_page;
+    struct page *mulref_page2;
+    struct f2fs_mulref_block *blk, *blk2;
+    bool is_mulref = false;
+    u16 eidx_tmp = 0;
+	down_write(&sm->curmulref_lock);
+	ret = curmulref_alloc_entry(sbi, &eidx_tmp);
+	if (ret) {
+        pr_info("alloc failed\n");
+		up_write(&sm->curmulref_lock);
+        return ret;
+	}
+    u16 eidx1 = eidx_tmp;
+    block_t blkaddr1 = cmr->blkaddr;
 
-// 	blk = read_mulref_block(mgr->cur_blk);
+    /* 2. 分配第二个 entry，对应传入的 ino */
+    ret = curmulref_alloc_entry(sbi, &eidx_tmp);
+    if (ret) {
+        pr_info("alloc second entry failed\n");
+        up_write(&sm->curmulref_lock);
+        return ret;
+    }
+    u16 eidx2 = eidx_tmp;
+    block_t blkaddr2 = cmr->blkaddr;
 
-// 	idx = find_first_zero_bit(blk->multi_bitmap, MRENTRY_PER_BLOCK);
-// 	if (idx < MRENTRY_PER_BLOCK) {
-// 		set_bit(idx, blk->multi_bitmap);
-// 		*out = &blk->mrentries[idx];
-// 		return 0;
-// 	}
+    struct curseg_info *old_curseg = NULL;
+    unsigned int old_type;
+    unsigned int old_segno, blk_off;
+    struct f2fs_summary_block *sum_blk;
+    struct f2fs_mulref_entry *mgentry, *mgentry2;
+    old_curseg = NULL;
+    block_t old_blkaddr = *blkaddr;
+    old_segno = GET_SEGNO(sbi, old_blkaddr);
+    blk_off = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
 
-// 	/* 当前块满了，换新块（已有逻辑） */
-// 	return -ENOSPC;
-// }
+    for (old_type = CURSEG_HOT_DATA; old_type <= CURSEG_COLD_DATA; old_type++) {
+        struct curseg_info *ci = CURSEG_I(sbi, old_type);
+        if (ci->segno == old_segno) {
+            old_curseg = ci;
+            break;
+        }
+    }
+    if (old_curseg) {
+        sum_blk = old_curseg->sum_blk;
+        if (!sum_blk) {
+            pr_err("sum_blk is NULL\n");
+        }
+        old_sum = sum_blk->entries[blk_off];
+        // old_nid = le32_to_cpu(old_sum.nid);
+        // old_ofs_in_node = le16_to_cpu(old_sum.ofs_in_node);
+        // old_version = old_sum.version;
+    } else {
+        // 2) 不属于任何 curseg，说明是“封存”的旧 segment，
+        // 这时 SSA 上的 summary 应该已经写好了，再用 f2fs_get_sum_page()。
+        sum_page = f2fs_get_sum_page(sbi, old_segno);
+        if (!IS_ERR(sum_page)) {
+            sum_blk = (struct f2fs_summary_block *)page_address(sum_page);
+            old_sum = sum_blk->entries[blk_off];	
+            f2fs_put_page(sum_page, 1);
+        }
+    }
+    
+    // maybe 加锁
+    if(!is_mulref){
+        if (blkaddr1 == blkaddr2) {
+            mulref_page = cmr->page;
+            if (!mulref_page){
+                up_write(&sm->curmulref_lock);
+                return -EIO;
+            }
+            get_page(mulref_page);
+        } else {
+            mulref_page = f2fs_get_meta_page(sbi, blkaddr1);
+        }
+        // mulref_page = cmr->page;
+        // if (!mulref_page)
+        //     return -EIO;
+        // get_page(mulref_page); 
+        blk = (struct f2fs_mulref_block *)page_address(mulref_page);
+        mgentry = &blk->mrentries[eidx1];
+        mgentry->m_nid = old_sum.nid;
+        mgentry->m_ofs = old_sum.ofs_in_node;
+        mgentry->m_ver = old_sum.version;
+        mgentry->m_count += 2;
+        mgentry->next = (blkaddr2 - sbi->magic_info->mulref_blkaddr) * MRENTRY_PER_BLOCK + eidx2;;
+        
+        sum.nid = blkaddr1;
+        sum.ofs_in_node = eidx1;
+        sum.version = old_sum.version;	
+        __add_sum_entry(sbi, DATA, &sum);
+        
+
+        mulref_page2 = cmr->page;
+        get_page(mulref_page2);
+        if (!mulref_page2){
+            up_write(&sm->curmulref_lock);
+            set_page_dirty(mulref_page);
+            f2fs_put_page(mulref_page, 1);
+            return -EIO;
+        }
+        blk2 = (struct f2fs_mulref_block *)page_address(mulref_page2);
+        mgentry2 = &blk2->mrentries[eidx2];
+        mgentry2->m_nid = ino;
+        mgentry2->m_ofs = old_sum.ofs_in_node;
+        mgentry2->m_ver = old_sum.version;
+        mgentry2->m_count = mgentry->m_count;
+        mgentry2->next = 0;
+        set_page_dirty(mulref_page);
+        set_page_dirty(mulref_page2);
+        f2fs_put_page(mulref_page, 1);
+        f2fs_put_page(mulref_page2, 1);
+    }
+    up_write(&sm->curmulref_lock);
+	return ret;
+}
+
 
 // bool mulref_entry_is_invalid(struct f2fs_sb_info *sbi,
 // 			     struct f2fs_mulref_entry *e)
@@ -916,6 +1049,43 @@ bool is_snapshot_inode(struct inode *inode,
     return true;
 }
 
+
+
+
+int set_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr, nid_t ino){ //, struct page *ipage
+    // unsigned int segno = GET_SEGNO(sbi, blkaddr);
+    // unsigned short blkoff = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
+
+    // struct page *sum_page;
+    // struct f2fs_summary_block *sum_node;
+    // struct f2fs_summary *sum;
+    // nid_t  nid;
+    // unsigned int ofs_in_node;
+    // u8 version;
+    int ret;
+    // sum_page = f2fs_get_sum_page(sbi, segno);
+    // if (IS_ERR(sum_page))
+    //     return PTR_ERR(sum_page);
+    // sum_node = (struct f2fs_summary_block *)page_address(sum_page);
+    // sum = &sum_node->entries[blkoff];
+    // nid = le32_to_cpu(sum.nid);
+    // ofs_in_node = le16_to_cpu(sum.ofs_in_node);
+    // version = sum.version;
+    // f2fs_put_page(sum_page, 1);
+
+    ret = f2fs_alloc_mulref_entry(sbi, blkaddr, ino);
+    if(!ret){
+        pr_info("set mulref flag success!\n");
+        update_sit_mulref_entry(sbi, blkaddr, 1);
+    }else{
+        pr_info("set mulref flag failed!\n");
+        return ret;
+    }
+    return 0;
+}
+
+
+
 int f2fs_set_mulref_blocks(struct inode *inode)
 {
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
@@ -940,6 +1110,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
     long off_in_dn = 0;
     long off_in_dn2 = 0;
     
+    int ret = 0;
 
     const long direct_index = ADDRS_PER_INODE(inode);
 	const long direct_blks = ADDRS_PER_BLOCK(inode);
@@ -970,6 +1141,11 @@ int f2fs_set_mulref_blocks(struct inode *inode)
         if(lblk <= direct_index){
             if (__is_valid_data_blkaddr(fi->i_addr[lblk])) {
                 // 开始set mulref flag
+                ret = set_mulref_entry(sbi, fi->i_addr[lblk], inode->i_ino);
+                if(ret){
+                    pr_info("set mulref flag failed![direct_index]\n");
+                    return ret;
+                }
             }
         }else if(lblk <= level1_blks){
             nid = fi->i_nid[0];
@@ -979,6 +1155,11 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             blkaddr = le32_to_cpu(dn->addr[lblk - direct_index]);
             if (__is_valid_data_blkaddr(blkaddr)) {
                 // 开始set mulref flag
+                ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
+                if(ret){
+                    pr_info("set mulref flag failed![level1_blks]\n");
+                    return ret;
+                }
             }
             f2fs_put_page(dn_ipage, 1);
         }else if(lblk <= level2_blks){
@@ -989,6 +1170,11 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             blkaddr = le32_to_cpu(dn->addr[lblk - level1_blks]);
             if (__is_valid_data_blkaddr(blkaddr)) {
                 // 开始set mulref flag
+                ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
+                if(ret){
+                    pr_info("set mulref flag failed![level2_blks]\n");
+                    return ret;
+                }
             }
             f2fs_put_page(dn_ipage, 1);
         }else if(lblk <= level3_blks){
@@ -1007,6 +1193,11 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             blkaddr = le32_to_cpu(dn->addr[off_in_dn]);
             if (__is_valid_data_blkaddr(blkaddr)) {
                 // 开始set mulref flag
+                ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
+                if(ret){
+                    pr_info("set mulref flag failed![level3_blks]\n");
+                    return ret;
+                }
             }
             f2fs_put_page(dn_ipage, 1);
             f2fs_put_page(indirect_page, 1);
@@ -1026,6 +1217,11 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             blkaddr = le32_to_cpu(dn->addr[off_in_dn]);
             if (__is_valid_data_blkaddr(blkaddr)) {
                 // 开始set mulref flag
+                ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
+                if(ret){
+                    pr_info("set mulref flag failed![level4_blks]\n");
+                    return ret;
+                }
             }
             f2fs_put_page(dn_ipage, 1);
             f2fs_put_page(indirect_page, 1);
@@ -1053,6 +1249,11 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             blkaddr = le32_to_cpu(dn->addr[off_in_dn2]);
             if (__is_valid_data_blkaddr(blkaddr)) {
                 // 开始set mulref flag
+                ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
+                if(ret){
+                    pr_info("set mulref flag failed![level5_blks]\n");
+                    return ret;
+                }
             }
             f2fs_put_page(dn_ipage, 1);
             f2fs_put_page(indirect_page, 1);
@@ -1135,6 +1336,7 @@ int f2fs_cow(struct inode *pra_inode,
             pr_info("[snapfs f2fs_cow]: file[%s] of snap[%lu] had cowed!!!\n",
                     son_dentry->d_name.name, snap_inode->i_ino);
             *new_inode = tmp_inode;
+            tmp_inode = NULL;
             goto out_success;
         }
         // 快照目录下对应的数据没有COW过, 那两个目录下的inode就相等
@@ -1429,11 +1631,13 @@ int f2fs_cow(struct inode *pra_inode,
         f2fs_mark_inode_dirty_sync(snap_inode, true);
         f2fs_mark_inode_dirty_sync(tmp_inode, true);
         *new_inode = tmp_inode;
+        tmp_inode = NULL;
         goto out_success; 
     }
 
 out_success:
-    ret = 0;
+    ret = f2fs_set_mulref_blocks(*new_inode);
+    // ret = 0;
 
 next_free:
     if (son_dentry)

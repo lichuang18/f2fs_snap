@@ -4768,6 +4768,52 @@ static void remove_sits_in_journal(struct f2fs_sb_info *sbi)
 	up_write(&curseg->journal_rwsem);
 }
 
+void f2fs_flush_sit_mulref_entries(struct f2fs_sb_info *sbi)
+{
+    struct sit_mulref_info *smi = SIT_MR_I(sbi);
+    struct sit_mulref_entry *sme;
+    struct page *page = NULL;
+    struct f2fs_sit_mulref_block *raw_sit_mulref;
+    unsigned int segno;
+    unsigned int start, end;
+    block_t blkaddr;
+
+    down_write(&smi->smentry_lock);
+
+    /* 遍历所有 segment entries */
+    for (segno = 0; segno < sbi->raw_super->segment_count_ssa; segno++) {
+        sme = &smi->smentries[segno];
+
+        /* 判断是否 dirty，这里你需要自己加标记字段，例如 sme->dirty */
+        if (!sme->dirty)
+            continue;
+
+        /* 计算对应 disk block 和 offset */
+        blkaddr = smi->base_addr + (segno / smi->sments_per_block);
+        start = segno % smi->sments_per_block;
+
+        /* 获取 page */
+        page = f2fs_get_meta_page(sbi, blkaddr);
+        if (IS_ERR(page))
+            continue; // 出错就跳过，可改为返回错误
+
+        raw_sit_mulref = (struct f2fs_sit_mulref_block *)page_address(page);
+
+        /* 写回 disk block 对应 entry */
+        memcpy(&raw_sit_mulref->entries[start], sme, sizeof(struct sit_mulref_entry));
+
+        /* 标记 page dirty 等待 writeback */
+        set_page_dirty(page);
+        f2fs_put_page(page, 1);
+
+        /* 清理 dirty 标记 */
+        sme->dirty = false;
+    }
+
+    up_write(&smi->smentry_lock);
+}
+
+
 /*
  * CP calls this function, which flushes SIT entries including sit_journal,
  * and moves prefree segs to free segs.
@@ -4891,6 +4937,48 @@ out:
 
 	set_prefree_as_free_segments(sbi);
 }
+
+static int build_sit_mulref_info(struct f2fs_sb_info *sbi)
+{
+	struct f2fs_super_block *raw_super = F2FS_RAW_SUPER(sbi);
+	struct sit_mulref_info *smi;
+	unsigned int segs;
+
+	/* allocate mulref SIT info */
+	smi = f2fs_kzalloc(sbi, sizeof(struct sit_mulref_info), GFP_KERNEL);
+	if (!smi)
+		return -ENOMEM;
+
+	/* 挂到 sbi（或 sm_info，看你设计） */
+	sbi->sm_info->sit_mr_info = smi;
+
+	/*
+	 * geometry
+	 *
+	 * mulref 区域是：
+	 *   segment_count_ssa * 64B
+	 * 已由你在 mkfs / superblock 中确定
+	 */
+	segs = le32_to_cpu(raw_super->segment_count_ssa);
+	smi->base_addr = le32_to_cpu(raw_super->magic_blkaddr) + 1024;
+	smi->sit_mulref_blocks = DIV_ROUND_UP(segs * 64, F2FS_BLKSIZE);
+	smi->sments_per_block = F2FS_BLKSIZE / sizeof(struct sit_mulref_entry);
+
+	/*
+	 * allocate in-memory cache
+	 * one entry per segment
+	 */
+	smi->smentries = f2fs_kvzalloc(sbi,
+			array_size(sizeof(struct sit_mulref_entry), segs),
+			GFP_KERNEL);
+	if (!smi->smentries)
+		return -ENOMEM;
+
+	/* init lock */
+	init_rwsem(&smi->smentry_lock);
+	return 0;
+}
+
 
 static int build_sit_info(struct f2fs_sb_info *sbi)
 {
@@ -5066,6 +5154,80 @@ static int build_curseg(struct f2fs_sb_info *sbi)
 	}
 	return restore_curseg_summaries(sbi);
 }
+
+static int build_sit_mulref_entries(struct f2fs_sb_info *sbi)
+{
+	struct sit_mulref_info *smi = SIT_MR_I(sbi);
+	struct sit_mulref_entry *me;
+	struct page *page;
+	struct f2fs_sit_mulref_block *raw;
+	unsigned int start_blk = 0;
+	unsigned int readed;
+	unsigned int start, end;
+	unsigned int seg;
+	block_t blkaddr;
+	unsigned int total_segs;
+	int err = 0;
+
+	if (!smi || !smi->smentries)
+		return -EINVAL;
+
+	total_segs = le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count_ssa);
+
+	/*
+	 * 顺序 readahead 扫描 sit_mulref 区域
+	 * 和 build_sit_entries() 一样的模式
+	 */
+	do {
+		readed = f2fs_ra_meta_pages(
+				sbi,
+				smi->base_addr + start_blk,
+				BIO_MAX_VECS,
+				META_GENERIC,
+				true);
+
+		start = start_blk * smi->sments_per_block;
+		end   = (start_blk + readed) * smi->sments_per_block;
+
+		for (; start < end && start < total_segs; start++) {
+			unsigned int blkoff;
+
+			seg = start;
+			blkaddr = smi->base_addr +
+				  (seg / smi->sments_per_block);
+			blkoff  = seg % smi->sments_per_block;
+
+			page = f2fs_get_meta_page(sbi, blkaddr);
+			if (IS_ERR(page)) {
+				err = PTR_ERR(page);
+				goto out;
+			}
+
+			raw = (struct f2fs_sit_mulref_block *)page_address(page);
+			me  = &smi->smentries[seg];
+
+			/* -------- load entry -------- */
+			me->mblocks =
+				le16_to_cpu(raw->entries[blkoff].mblocks);
+
+			memcpy(me->mvalid_map,
+			       raw->entries[blkoff].mvalid_map,
+			       SIT_VBLOCK_MAP_SIZE);
+
+			me->m_mtime =
+				le64_to_cpu(raw->entries[blkoff].m_mtime);
+			/* ---------------------------- */
+
+			f2fs_put_page(page, 1);
+		}
+
+		start_blk += readed;
+	} while (start_blk < smi->sit_mulref_blocks);
+
+out:
+	return err;
+}
+
 
 static int build_sit_entries(struct f2fs_sb_info *sbi)
 {
@@ -5791,6 +5953,11 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	err = build_sit_info(sbi);
 	if (err)
 		return err;
+	
+	err = build_sit_mulref_info(sbi);
+	if (err)
+		return err;
+
 	err = build_free_segmap(sbi);
 	if (err)
 		return err;
@@ -5800,6 +5967,9 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 
 	/* reinit free segmap based on SIT */
 	err = build_sit_entries(sbi);
+	if (err)
+		return err;
+	err = build_sit_mulref_entries(sbi);
 	if (err)
 		return err;
 

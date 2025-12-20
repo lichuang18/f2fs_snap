@@ -5,18 +5,15 @@
  * xmu lch
  * 
  */
+
 #include "f2fs.h"
-
-u16 alloc_magic_flag_from_reclaim(struct f2fs_sb_info *sbi);
-u16 alloc_magic_flag_force(struct f2fs_sb_info *sbi);
-
-void magic_mark_reclaim(struct f2fs_sb_info *sbi, u16 flag);
-
+#include <linux/types.h>
 int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                                u32 src_ino,
                                u32 *ret_entry_id,
                                struct f2fs_magic_entry **ret_entry,
                                struct page **ret_page);
+
 
 int f2fs_magic_lookup_or_alloc_hopscotch(struct f2fs_sb_info *sbi,
                                u32 src_ino,
@@ -52,8 +49,6 @@ struct magic_mgr {
 	/* 防止并发 force steal */
 	struct mutex force_lock;
 };
-
-
 
 // f2fs_mgr_init.  参考GC
 // magic_mgr_init(sbi)
@@ -93,3 +88,14 @@ struct magic_mgr {
 // 	...
 // 	struct mulref_mgr *mulref_mgr;
 // };
+
+
+
+// init
+// if (!cur->inited) {
+//     cur->blkaddr = ckpt->cur_mulref_blkaddr;
+//     cur->page = f2fs_get_meta_page(sbi, cur->blkaddr);
+//     cur->blk  = page_address(cur->page);
+//     cur->inited = true;
+// }
+

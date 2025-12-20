@@ -208,6 +208,7 @@ struct seg_entry {
 	unsigned int valid_blocks:10;	/* # of valid blocks */
 	unsigned int ckpt_valid_blocks:10;	/* # of valid blocks last cp */
 	unsigned int padding:6;		/* padding */
+	// unsigned short mblocks;
 	unsigned char *cur_valid_map;	/* validity bitmap of blocks */
 #ifdef CONFIG_F2FS_CHECK_FS
 	unsigned char *cur_valid_map_mir;	/* mirror of current valid bitmap */
@@ -231,6 +232,26 @@ struct inmem_pages {
 	struct list_head list;
 	struct page *page;
 	block_t old_addr;		/* for revoking when fail to commit */
+};
+
+struct sit_mulref_entry {
+    __le16 mblocks;                          /* on-disk */
+    __u8 mvalid_map[SIT_VBLOCK_MAP_SIZE];    /* on-disk bitmap */
+    __le64 m_mtime;                           /* on-disk */
+
+    bool dirty;                               /* in-memory only flag */
+    // struct page *page;                        /* cached page pointer */
+};
+
+struct sit_mulref_info {
+	/* on-disk layout */
+	block_t base_addr;            /* start block addr of sit_mulref area */
+	block_t sit_mulref_blocks;  /* # of blocks used by sit_mulref area */
+	unsigned int sments_per_block; /* entries per block (same as SIT) */
+
+	/* in-memory cache */
+	struct rw_semaphore smentry_lock;   /* protect mulref sentries */
+	struct sit_mulref_entry *smentries; /* segment-level mulref cache */
 };
 
 struct sit_info {
@@ -382,6 +403,7 @@ static inline void seg_info_from_raw_sit(struct seg_entry *se,
 {
 	se->valid_blocks = GET_SIT_VBLOCKS(rs);
 	se->ckpt_valid_blocks = GET_SIT_VBLOCKS(rs);
+	// se->mblocks = GET_SIT_MBLOCKS(rs);// le16_to_cpu(rs->mblocks);   /* <<< 新增这一行 */
 	memcpy(se->cur_valid_map, rs->valid_map, SIT_VBLOCK_MAP_SIZE);
 	memcpy(se->ckpt_valid_map, rs->valid_map, SIT_VBLOCK_MAP_SIZE);
 #ifdef CONFIG_F2FS_CHECK_FS
@@ -397,6 +419,7 @@ static inline void __seg_info_to_raw_sit(struct seg_entry *se,
 	unsigned short raw_vblocks = (se->type << SIT_VBLOCKS_SHIFT) |
 					se->valid_blocks;
 	rs->vblocks = cpu_to_le16(raw_vblocks);
+	// rs->mblocks = cpu_to_le16(se->mblocks);   // 新增这一行
 	memcpy(rs->valid_map, se->cur_valid_map, SIT_VBLOCK_MAP_SIZE);
 	rs->mtime = cpu_to_le64(se->mtime);
 }
