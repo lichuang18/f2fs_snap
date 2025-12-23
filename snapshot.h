@@ -9,10 +9,10 @@
 #include "f2fs.h"
 #include <linux/types.h>
 int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
-                               u32 src_ino,
-                               u32 *ret_entry_id,
-                               struct f2fs_magic_entry **ret_entry,
-                               struct page **ret_page);
+                               u32 src_ino, u32 snap_ino);//,
+                            //    u32 *ret_entry_id,
+                            //    struct f2fs_magic_entry **ret_entry,
+                            //    struct page **ret_page);
 
 
 int f2fs_magic_lookup_or_alloc_hopscotch(struct f2fs_sb_info *sbi,
@@ -40,7 +40,8 @@ bool f2fs_is_mulref_blkaddr(struct f2fs_sb_info *sbi,
 int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
                           block_t old_blkaddr,
                           nid_t new_nid);
-						  
+
+void f2fs_mulref_replace_block(struct f2fs_sb_info *sbi, block_t old_addr, block_t new_addr, struct f2fs_summary *old_sum);
 #define MAGIC_MAX		32678
 
 struct magic_mgr {

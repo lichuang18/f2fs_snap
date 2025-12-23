@@ -261,7 +261,7 @@ retry:
 			}
 
 			if (cur->old_addr == NEW_ADDR) {
-				f2fs_invalidate_blocks(sbi, dn.data_blkaddr);
+				f2fs_invalidate_blocks(sbi, dn.data_blkaddr, dn.nid);
 				f2fs_update_data_blkaddr(&dn, NEW_ADDR);
 			} else
 				f2fs_replace_block(sbi, &dn, dn.data_blkaddr,
@@ -2361,10 +2361,11 @@ static void update_sit_entry(struct f2fs_sb_info *sbi, block_t blkaddr, int del)
 		get_sec_entry(sbi, segno)->valid_blocks += del;
 }
 
-void f2fs_invalidate_blocks(struct f2fs_sb_info *sbi, block_t addr)
+void f2fs_invalidate_blocks(struct f2fs_sb_info *sbi, block_t addr, nid_t nid)
 {
 	unsigned int segno = GET_SEGNO(sbi, addr);
 	struct sit_info *sit_i = SIT_I(sbi);
+	int ret = 0;
 
 	f2fs_bug_on(sbi, addr == NULL_ADDR);
 	if (addr == NEW_ADDR || addr == COMPRESS_ADDR)
@@ -2377,7 +2378,14 @@ void f2fs_invalidate_blocks(struct f2fs_sb_info *sbi, block_t addr)
 	down_write(&sit_i->sentry_lock);
 
 	update_segment_mtime(sbi, addr, 0);
-	update_sit_entry(sbi, addr, -1);
+
+	if(!f2fs_is_mulref_blkaddr(sbi, addr)){
+		update_sit_entry(sbi, addr, -1);	
+	} else{
+		// mulref process
+		ret = f2fs_mulref_overwrite(sbi, addr, nid);
+		if(ret) pr_info("invalidate faild!\n");
+	}
 
 	/* add it into dirty seglist */
 	locate_dirty_segment(sbi, segno);
@@ -3779,7 +3787,7 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	unsigned long long old_mtime;
 	bool from_gc = (type == CURSEG_ALL_DATA_ATGC);
 	struct seg_entry *se = NULL;
-
+	int ret = 0;
 // 	/* 添加的变量 */
 // 	// unsigned int new_segno = GET_SEGNO(sbi, *new_blkaddr);
 // 	struct f2fs_summary old_sum;
@@ -3982,20 +3990,13 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	 * since SSR needs latest valid block information.
 	 */
 	update_sit_entry(sbi, *new_blkaddr, 1);
-	update_sit_entry(sbi, old_blkaddr, -1);	
 
 	if(!f2fs_is_mulref_blkaddr(sbi, fio->old_blkaddr)){
 		update_sit_entry(sbi, old_blkaddr, -1);	
 	} else{
 		// mulref process
-		// 1.找到old_blkaddr对应的旧的summary记录old_sum
-		// 2.根据old_sum->nid，找到mulref区域对应的mulref_blk[]
-		// 3.根据新的summary的sum->nid，查找mulref entry
-		//  用新的summary的sum->nid比对mulref entry的nid，
-		// 4.删除找到的这个entry，更新mulref_blk[]其他blk的信息，比如count--，next更新
-		// 5.如果count缩减为1，就将mulref_blk[]剩余的数据取出，然后删除这个entry
-		// 6.然后用取出的数据更新old_sum
-		// 7.最后update sit_mulref_entry: mblocks和validmap
+		ret = f2fs_mulref_overwrite(sbi,old_blkaddr,le32_to_cpu(sum->nid));
+		if(ret) pr_info("allocate mulref update failed\n");
 	}
 
 	// fio.type     → 这是在写什么？（数据 / 节点 / 元数据）
@@ -4243,11 +4244,12 @@ void f2fs_do_replace_block(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 	int type;
 	unsigned short old_blkoff;
 	unsigned char old_alloc_type;
-
+	struct f2fs_summary old_sum;
 	segno = GET_SEGNO(sbi, new_blkaddr);
 	se = get_seg_entry(sbi, segno);
 	type = se->type;
-
+	int ret = 0;
+	bool mulref_flag= false;
 	down_write(&SM_I(sbi)->curseg_lock);
 
 	if (!recover_curseg) {
@@ -4285,8 +4287,18 @@ void f2fs_do_replace_block(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 	}
 
 	curseg->next_blkoff = GET_BLKOFF_FROM_SEG0(sbi, new_blkaddr);
-	__add_sum_entry(sbi, type, sum);
-
+	// sihuo
+	
+	if(f2fs_is_mulref_blkaddr(sbi, old_blkaddr)){
+		mulref_flag = true;
+	}
+	if(mulref_flag){
+		f2fs_mulref_replace_block(sbi,old_blkaddr,new_blkaddr,&old_sum);
+		__add_sum_entry(sbi, type, &old_sum);
+	}else{
+		__add_sum_entry(sbi, type, sum);
+	}
+	
 	if (!recover_curseg || recover_newaddr) {
 		if (!from_gc)
 			update_segment_mtime(sbi, new_blkaddr, 0);
@@ -4298,7 +4310,14 @@ void f2fs_do_replace_block(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 		f2fs_invalidate_compress_page(sbi, old_blkaddr);
 		if (!from_gc)
 			update_segment_mtime(sbi, old_blkaddr, 0);
-		update_sit_entry(sbi, old_blkaddr, -1);
+		// 原本的无效sit的函数改成判断
+		if(!mulref_flag){
+			update_sit_entry(sbi, old_blkaddr, -1);	
+		} else{
+			// mulref process
+			ret = f2fs_mulref_overwrite(sbi,old_blkaddr,le32_to_cpu(sum->nid));
+			if(ret) pr_info("replace update mulref failed!\n");
+		}
 	}
 
 	locate_dirty_segment(sbi, GET_SEGNO(sbi, old_blkaddr));
