@@ -915,7 +915,7 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                         }
                         tmp_mb = (struct f2fs_magic_block *)page_address(tmp_page);
                         tmp_me = &tmp_mb->mgentries[tmp_off];
-
+                        tmp_me->count = me->count;
                         if(!tmp_me->next){
                             //wanmei. 找到tail了
                             blkaddr3 = tmp_blkaddr;
@@ -942,7 +942,6 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                                 }
                                 break;    
                             }
-                            tmp_me->count = me->count;
                             tmp_me->next = tmp_off + blkaddr3 * MGENTRY_PER_BLOCK;
                             off2 = (off + 1) % MGENTRY_PER_BLOCK;
                             me3->src_ino = cpu_to_le32(src_ino);

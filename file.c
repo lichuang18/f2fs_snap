@@ -3672,7 +3672,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 	struct fscrypt_str dot = FSTR_INIT(".", 1);
 	struct fscrypt_str dotdot = FSTR_INIT("..", 2);
 	struct f2fs_inode *src_fi, *new_fi;
-	int idx;
+	// int idx;
 	if (copy_from_user(user_paths, (char __user * __user *)arg, sizeof(user_paths)))
 	return -EFAULT;
 	/* ---------- 从用户态复制路径字符串 ---------- */
@@ -3865,6 +3865,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 	}
 	f2fs_mark_inode_dirty_sync(snap_par_inode, true);
 	f2fs_mark_inode_dirty_sync(snap_inode, true);
+
 	f2fs_magic_lookup_or_alloc(sbi, src_inode->i_ino, snap_inode->i_ino);
 out_dput:
 	if (snap_dentry)
