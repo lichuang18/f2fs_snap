@@ -89,7 +89,6 @@ int snap_pop2(Stack_snap* stack, nid_t *ino, nid_t *ino2) {
     StacksnapNode* temp;
 	temp = stack->top;
     if (temp->next == NULL) {
-        // pr_info("栈元素: ino[%lu]\n", temp->i_ino);
         return 1;
     }
 	*ino = temp->i_ino;
@@ -1206,7 +1205,7 @@ bool is_snapshot_inode(struct inode *inode,
     memset(&tmp_me, 0, sizeof(tmp_me));
     sbi = F2FS_I_SB(inode);
 	if (f2fs_magic_lookup(sbi, inode->i_ino, &tmp_entry_id, &tmp_me)) {// 未找到或者冲突未解决
-		pr_info("[snapfs dump]: not Found at entry_id\n");
+		// pr_info("[snapfs dump]: not Found at entry_id\n");
         return false;
 	}
     memcpy(me, &tmp_me, sizeof(tmp_me));
@@ -1867,7 +1866,8 @@ int f2fs_snapshot_cow(struct inode *inode)
                 }
             }
             if(parent_dentry == sb->s_root){
-                break;
+                return 1;
+                // break;
             }
             tmp_inode = parent_dentry->d_inode;
         }

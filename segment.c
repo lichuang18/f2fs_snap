@@ -4647,7 +4647,6 @@ static int build_sit_mulref_entries(struct f2fs_sb_info *sbi)
 	block_t blkaddr;
 	unsigned int total_segs;
 	int err = 0;
-
 	if (!smi || !smi->smentries)
 		return -EINVAL;
 
@@ -4664,10 +4663,8 @@ static int build_sit_mulref_entries(struct f2fs_sb_info *sbi)
 				BIO_MAX_VECS,
 				META_GENERIC,
 				true);
-
 		start = start_blk * smi->sments_per_block;
 		end   = (start_blk + readed) * smi->sments_per_block;
-
 		for (; start < end && start < total_segs; start++) {
 			unsigned int blkoff;
 
@@ -4675,34 +4672,26 @@ static int build_sit_mulref_entries(struct f2fs_sb_info *sbi)
 			blkaddr = smi->base_addr +
 				  (seg / smi->sments_per_block);
 			blkoff  = seg % smi->sments_per_block;
-
 			page = f2fs_get_meta_page(sbi, blkaddr);
 			if (IS_ERR(page)) {
 				err = PTR_ERR(page);
 				goto out;
 			}
-
 			raw = (struct f2fs_sit_mulref_block *)page_address(page);
 			me  = &smi->smentries[seg];
-
 			/* -------- load entry -------- */
 			me->mblocks =
 				le16_to_cpu(raw->entries[blkoff].mblocks);
-
 			memcpy(me->mvalid_map,
 			       raw->entries[blkoff].mvalid_map,
 			       SIT_VBLOCK_MAP_SIZE);
-
 			me->m_mtime =
 				le64_to_cpu(raw->entries[blkoff].m_mtime);
 			/* ---------------------------- */
-
 			f2fs_put_page(page, 1);
 		}
-
 		start_blk += readed;
 	} while (start_blk < smi->sit_mulref_blocks);
-
 out:
 	return err;
 }
@@ -5443,7 +5432,6 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	err = build_curseg(sbi);
 	if (err)
 		return err;
-
 	/* reinit free segmap based on SIT */
 	err = build_sit_entries(sbi);
 	if (err)
@@ -5451,16 +5439,14 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	err = build_sit_mulref_entries(sbi);
 	if (err)
 		return err;
-
 	init_free_segmap(sbi);
 	err = build_dirty_segmap(sbi);
 	if (err)
 		return err;
-
 	err = sanity_check_curseg(sbi);
 	if (err)
 		return err;
-
+	
 	init_min_max_mtime(sbi);
 	return 0;
 }

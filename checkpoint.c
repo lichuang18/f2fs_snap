@@ -263,6 +263,7 @@ int f2fs_ra_meta_pages(struct f2fs_sb_info *sbi, block_t start, int nrpages,
 		case META_SSA:
 		case META_CP:
 		case META_POR:
+		case META_GENERIC:
 			fio.new_blkaddr = blkno;
 			break;
 		default:
