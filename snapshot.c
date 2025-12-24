@@ -291,6 +291,17 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
     struct f2fs_mulref_block *blk, *blk2;
     bool is_mulref = false;
     u16 eidx_tmp = 0;
+    u16 eidx1, eidx2;
+    block_t blkaddr1 = cmr->blkaddr;
+    block_t blkaddr2 = cmr->blkaddr;
+    block_t old_blkaddr = *blkaddr;
+
+    struct curseg_info *old_curseg = NULL;
+    unsigned int old_type;
+    unsigned int old_segno, blk_off;
+    struct f2fs_summary_block *sum_blk;
+    struct f2fs_mulref_entry *mgentry, *mgentry2;
+
 	down_write(&sm->curmulref_lock);
 	ret = curmulref_alloc_entry(sbi, &eidx_tmp);
 	if (ret) {
@@ -298,9 +309,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
 		up_write(&sm->curmulref_lock);
         return ret;
 	}
-    u16 eidx1 = eidx_tmp;
-    block_t blkaddr1 = cmr->blkaddr;
-
+    eidx1 = eidx_tmp;
     /* 2. 分配第二个 entry，对应传入的 ino */
     ret = curmulref_alloc_entry(sbi, &eidx_tmp);
     if (ret) {
@@ -308,16 +317,9 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         up_write(&sm->curmulref_lock);
         return ret;
     }
-    u16 eidx2 = eidx_tmp;
-    block_t blkaddr2 = cmr->blkaddr;
-
-    struct curseg_info *old_curseg = NULL;
-    unsigned int old_type;
-    unsigned int old_segno, blk_off;
-    struct f2fs_summary_block *sum_blk;
-    struct f2fs_mulref_entry *mgentry, *mgentry2;
+    eidx2 = eidx_tmp;
     old_curseg = NULL;
-    block_t old_blkaddr = *blkaddr;
+    
     old_segno = GET_SEGNO(sbi, old_blkaddr);
     blk_off = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
 
@@ -1216,27 +1218,10 @@ bool is_snapshot_inode(struct inode *inode,
 
 
 int set_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr, nid_t ino){ //, struct page *ipage
-    // unsigned int segno = GET_SEGNO(sbi, blkaddr);
-    // unsigned short blkoff = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
 
-    // struct page *sum_page;
-    // struct f2fs_summary_block *sum_node;
-    // struct f2fs_summary *sum;
-    // nid_t  nid;
-    // unsigned int ofs_in_node;
-    // u8 version;
     int ret;
-    // sum_page = f2fs_get_sum_page(sbi, segno);
-    // if (IS_ERR(sum_page))
-    //     return PTR_ERR(sum_page);
-    // sum_node = (struct f2fs_summary_block *)page_address(sum_page);
-    // sum = &sum_node->entries[blkoff];
-    // nid = le32_to_cpu(sum.nid);
-    // ofs_in_node = le16_to_cpu(sum.ofs_in_node);
-    // version = sum.version;
-    // f2fs_put_page(sum_page, 1);
-
-    ret = f2fs_alloc_mulref_entry(sbi, blkaddr, ino);
+    block_t local_blk = blkaddr;
+    ret = f2fs_alloc_mulref_entry(sbi, &local_blk, ino);
     if(!ret){
         pr_info("set mulref flag success!\n");
         update_sit_mulref_entry(sbi, blkaddr, 1);
@@ -2030,7 +2015,7 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
     struct f2fs_mulref_entry *cur_entry = NULL;
     block_t cur_mr_blkaddr, next_mr_blkaddr, prev_mr_blkaddr;
     u16 cur_eidx, next_eidx, prev_eidx;
-    u32 next;
+    // u32 next;
     u32 cur_next, prev_next;
     int ret = 0;
     block_t base = sbi->magic_info->mulref_blkaddr;
@@ -2056,7 +2041,7 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
     }
 
     /* 初始化 prev 指针 */
-    prev_mr_blkaddr = NULL;
+    prev_mr_blkaddr = 0;
     prev_eidx = 0;
     prev_blk = NULL;
     prev_next = 0;
@@ -2217,7 +2202,7 @@ void f2fs_mulref_replace_block(struct f2fs_sb_info *sbi, block_t old_addr, block
     unsigned int segno, blkoff;
     unsigned short old_offset;
     // struct f2fs_summary old_sum;
-    block_t mulref_blk_addr;
+    // block_t mulref_blk_addr;
     int ret = 0;
 
     // 判断旧地址是否有效
@@ -2243,7 +2228,7 @@ void f2fs_mulref_replace_block(struct f2fs_sb_info *sbi, block_t old_addr, block
     old_offset = blkoff;
     // 如果old_addr对应的块是无效的，直接返回
     if (!test_bit(old_offset, (unsigned long *)me->mvalid_map)) {
-        pr_warn("Old block %llu is not a valid mulref block.\n", old_addr);
+        pr_warn("Old block %u is not a valid mulref block.\n", old_addr);
         up_write(&smi->smentry_lock);
         return;
     }

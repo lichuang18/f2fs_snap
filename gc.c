@@ -1422,7 +1422,7 @@ out:
 }
 
 static int move_data_page(struct inode *inode, block_t bidx, int gc_type,
-							unsigned int segno, int off, u8 version)
+							unsigned int segno, int off)
 {
 	struct page *page;
 	int err = 0;
@@ -1470,7 +1470,7 @@ static int move_data_page(struct inode *inode, block_t bidx, int gc_type,
 			.need_lock = LOCK_REQ,
 			.io_type = FS_GC_DATA_IO,
 		};
-		fio.version = version; 
+		// fio.version = version; 
 		is_dirty = PageDirty(page);
 
 retry:
@@ -1588,14 +1588,12 @@ next_step:
 	for (off = 0; off < usable_blks_in_seg; off++, entry++) {
 		struct page *data_page;
 		struct inode *inode;
-		// struct node_info dni; /* dnode info for the data */
-		// unsigned int ofs_in_node, nofs;
-		unsigned int ofs_in_node;
+		struct node_info dni; /* dnode info for the data */
+		unsigned int ofs_in_node, nofs;
+		// unsigned int ofs_in_node;
 		block_t start_bidx;
 		nid_t nid = le32_to_cpu(entry->nid);
 
-		struct node_info dni_s;
-		unsigned int nofs_s;
 		/*
 		 * stop BG_GC if there is not enough free sections.
 		 * Or, stop GC if the segment becomes fully valid caused by
@@ -1609,402 +1607,124 @@ next_step:
 		if (check_valid_map(sbi, segno, off) == 0)
 			continue;
 
-		// if(entry->version != 0){// 非0 就是多引用， 注意要把原本写入时的version是从原NAT中读的
-		// 	struct node_info dni[2];
-		// 	unsigned int nofs[2];
-		// 	struct f2fs_mulref_entry mulref_entry;
-		// 	int nid_i = 0;
-		// 	int nid_mulref[2]  = {0};
-   		// 	u16 ofs_mulref[2] = {0};
+		if (phase == 0) {
+			f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), 1,
+							META_NAT, true);
+			continue;
+		}
 
-		// 	block_t mr_blkaddr = le32_to_cpu(entry->nid);          // sum->nid 里存的 mr_blkaddr
-		// 	u16 mr_index       = le16_to_cpu(entry->ofs_in_node);
-		// 	pr_info("seg.off[%u,%u], entry->version[%u], start addr[%x], mr_addr[%x],mr_index[%u],\n",segno,off,entry->version, start_addr + off,mr_blkaddr,mr_index);
-		// 	ret = get_mulref_nid(sbi, mr_blkaddr, mr_index, &mulref_entry);
-		// 	if (ret) {
-		// 		// ret = 0  normal
-		// 		pr_info("get_mulref_nid failed...\n");
-		// 		continue;
-		// 	}
-		// 	nid_mulref[0] = le32_to_cpu(mulref_entry.inoa);
-		// 	nid_mulref[1] = le32_to_cpu(mulref_entry.inob);
-		// 	ofs_mulref[0] = le16_to_cpu(mulref_entry.a_offset);
-		// 	ofs_mulref[1] = le16_to_cpu(mulref_entry.b_offset);
-		// 	// 将GC过程分为5个阶段，减少锁竞争
-		// 	// 提前预读所需元数据，优化IO
-		// 	if (phase == 0) { // 预读NAT页
-		// 		for(nid_i = 0; nid_i < 2; nid_i++){
-		// 			if (!nid_mulref[nid_i])
-		// 				continue;
-		// 			f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid_mulref[nid_i]), 1,
-		// 						META_NAT, true);
-		// 		}
-		// 		// f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), 1,
-		// 		// 				META_NAT, true);
-		// 		continue;
-		// 	}
-				
-		// 	if (phase == 1) { // 预读node页
-		// 		for(nid_i = 0; nid_i < 2; nid_i++){
-		// 			if (!nid_mulref[nid_i])
-		// 				continue;
-		// 			f2fs_ra_node_page(sbi, nid_mulref[nid_i]);
-		// 		}
-		// 		// f2fs_ra_node_page(sbi, nid);
-		// 		continue;
-		// 	}
-		// 	/* Get an inode by ino with checking validity */
-		// 	// if (!is_alive(sbi, entry, &dni, start_addr + off, &nofs))
+		if (phase == 1) {
+			f2fs_ra_node_page(sbi, nid);
+			continue;
+		}
 
-		// 	if (!is_alive_mulref(sbi, &mulref_entry, dni, start_addr + off, nofs))
-		// 		continue;
+		/* Get an inode by ino with checking validity */
+		if (!is_alive(sbi, entry, &dni, start_addr + off, &nofs))
+			continue;
 
-		// 	if (phase == 2) {
-		// 		for(nid_i = 0; nid_i < 2; nid_i++){
-		// 			f2fs_ra_node_page(sbi, dni[nid_i].ino);
-		// 		}
-		// 		continue;
-		// 	}
+		if (phase == 2) {
+			f2fs_ra_node_page(sbi, dni.ino);
+			continue;
+		}
 
-		// 	// ofs_in_node = le16_to_cpu(entry->ofs_in_node);
+		ofs_in_node = le16_to_cpu(entry->ofs_in_node);
 
-		// 	if (phase == 3) { //准备GC数据
-		// 		for(nid_i = 0; nid_i < 2; nid_i++){
-		// 			// ofs_in_node = ofs_mulref[nid_i];
+		if (phase == 3) {
+			inode = f2fs_iget(sb, dni.ino);
+			if (IS_ERR(inode) || is_bad_inode(inode) ||
+					special_file(inode->i_mode))
+				continue;
 
-		// 			inode = f2fs_iget(sb, dni[nid_i].ino);
-		// 			if (IS_ERR(inode) || is_bad_inode(inode) ||
-		// 					special_file(inode->i_mode))
-		// 				continue;
-
-		// 			if (f2fs_has_inline_data(inode)) {
-		// 				iput(inode);
-		// 				set_sbi_flag(sbi, SBI_NEED_FSCK);
-		// 				printk_ratelimited("%sRDFFS-fs (%s): "
-		// 					"inode %lx has both inline_data flag and "
-		// 					"data block, nid=%u, ofs_in_node=%u",
-		// 					KERN_ERR, sbi->sb->s_id,
-		// 					inode->i_ino, dni[nid_i].nid, ofs_mulref[nid_i]);
-		// 				continue;
-		// 			}
-
-		// 			if (!down_write_trylock(
-		// 				&F2FS_I(inode)->i_gc_rwsem[WRITE])) {
-		// 				iput(inode);
-		// 				sbi->skipped_gc_rwsem++;
-		// 				continue;
-		// 			}
-
-		// 			start_bidx = f2fs_start_bidx_of_node(nofs[nid_i], inode) +
-		// 								ofs_mulref[nid_i];
-
-		// 			if (f2fs_post_read_required(inode)) {
-		// 				int err = ra_data_block(inode, start_bidx);
-
-		// 				up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
-		// 				if (err) {
-		// 					iput(inode);
-		// 					continue;
-		// 				}
-		// 				add_gc_inode(gc_list, inode);
-		// 				continue;
-		// 			}
-
-		// 			data_page = f2fs_get_read_data_page(inode,
-		// 						start_bidx, REQ_RAHEAD, true);
-		// 			up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
-		// 			if (IS_ERR(data_page)) {
-		// 				iput(inode);
-		// 				continue;
-		// 			}
-
-		// 			f2fs_put_page(data_page, 0);
-		// 			add_gc_inode(gc_list, inode);
-		// 		}
-		// 		continue;
-		// 	}
-
-		// 	/* phase 4 */  // 实际迁移数据 这里需要特殊处理一下。
-		// 	// 应该只要迁移一个数据块，没必要在for循环内调用2次
-		// 	// AI给的方案是，for循环保留用以选择一个主有效的nid
-		// 	// 有效的nid，这样的话从is_alive_mulref就应该给出判断哪一个是有效的
-			
-		// 	rep = -1;		/* 代表引用下标 */
-		// 	new_blkaddr = 0;
-
-		// 	/* 4.1 选一个“代表引用”来做真正的 move_data_* */
-		// 	for (nid_i = 0; nid_i < 2; nid_i++) {
-		// 		struct inode *inode;
-
-		// 		if (f2fs_check_nid_range(sbi, dni[nid_i].ino))
-		// 			continue;
-
-		// 		inode = find_gc_inode(gc_list, dni[nid_i].ino);
-		// 		if (!inode)
-		// 			continue;
-		// 		if (!S_ISREG(inode->i_mode))
-		// 			continue;
-
-		// 		rep = nid_i;
-		// 		break;
-		// 	}
-
-		// 	if (rep < 0) {
-		// 		/* 没有任何有效的 inode（很极端的情况），跳过这个 off */
-		// 		continue;
-		// 	}
-
-		// 	/* 4.2 对代表引用执行一次标准 GC 迁移流程 */
-		// 	do {
-		// 		struct f2fs_inode_info *fi;
-		// 		bool locked = false;
-		// 		int err;
-		// 		// unsigned int ofs_in_node = ofs_mulref[rep];
-
-		// 		inode = find_gc_inode(gc_list, dni[rep].ino);
-		// 		if (!inode)
-		// 			break;
-
-		// 		fi = F2FS_I(inode);
-		// 		if (S_ISREG(inode->i_mode)) {
-		// 			if (!down_write_trylock(&fi->i_gc_rwsem[READ])) {
-		// 				sbi->skipped_gc_rwsem++;
-		// 				break;
-		// 			}
-		// 			if (!down_write_trylock(&fi->i_gc_rwsem[WRITE])) {
-		// 				sbi->skipped_gc_rwsem++;
-		// 				up_write(&fi->i_gc_rwsem[READ]);
-		// 				break;
-		// 			}
-		// 			locked = true;
-		// 			inode_dio_wait(inode);
-		// 		}
-		// 		start_bidx = f2fs_start_bidx_of_node(nofs[rep], inode) +
-		// 				ofs_in_node;
-		// 		if (f2fs_post_read_required(inode))
-		// 			err = move_data_block(inode, start_bidx,
-		// 						gc_type, segno, off);
-		// 		else //正常数据页的gc走的是下面的这个分支
-		// 			err = move_data_page(inode, start_bidx,
-		// 						gc_type, segno, off, entry->version);
-		// 		if (!err && (gc_type == FG_GC ||
-		// 				f2fs_post_read_required(inode)))
-		// 			submitted++;
-		// 		if (locked) {
-		// 			up_write(&fi->i_gc_rwsem[WRITE]);
-		// 			up_write(&fi->i_gc_rwsem[READ]);
-		// 		}
-		// 		if (err)
-		// 			break;
-
-		// 		stat_inc_data_blk_count(sbi, 1, gc_type);
-		// 		/* 4.3 通过代表引用的 node，读出新的物理块地址 new_blkaddr */
-		// 		{
-		// 			struct page *np;
-		// 			block_t blk;
-
-		// 			np = f2fs_get_node_page(sbi, dni[rep].nid);
-		// 			if (IS_ERR(np))
-		// 				break;
-		// 			blk = data_blkaddr(NULL, np, ofs_in_node);
-		// 			f2fs_put_page(np, 1);
-		// 			/* 如果迁移成功，这里应该是新的物理块号 */
-		// 			new_blkaddr = blk;
-		// 		}
-		// 	} while (0);
-
-		// 	if (!new_blkaddr) {
-		// 		/* 代表引用迁移失败或无法获取新块地址，跳过同步其它引用 */
-		// 		continue;
-		// 	}
-
-		// 	/* 4.4 更新其它仍然引用这个旧块的 inode 的 node 映射 */
-		// 	for (nid_i = 0; nid_i < 2; nid_i++) {
-		// 		struct inode *inode;
-		// 		struct f2fs_inode_info *fi;
-		// 		struct page *np;
-		// 		unsigned int ofs_in_node;
-		// 		block_t cur;
-
-		// 		if (nid_i == rep)
-		// 			continue;
-
-		// 		if (f2fs_check_nid_range(sbi, dni[nid_i].ino))
-		// 			continue;
-
-		// 		inode = find_gc_inode(gc_list, dni[nid_i].ino);
-		// 		if (!inode)
-		// 			continue;
-
-		// 		fi = F2FS_I(inode);
-		// 		if (!down_write_trylock(&fi->i_gc_rwsem[WRITE])) {
-		// 			sbi->skipped_gc_rwsem++;
-		// 			continue;
-		// 		}
-
-		// 		np = f2fs_get_node_page(sbi, dni[nid_i].nid);
-		// 		if (IS_ERR(np)) {
-		// 			up_write(&fi->i_gc_rwsem[WRITE]);
-		// 			continue;
-		// 		}
-
-		// 		ofs_in_node = ofs_mulref[nid_i];
-		// 		cur = data_blkaddr(NULL, np, ofs_in_node);
-
-		// 		/* 只有当前还指向旧 blkaddr 的引用才需要更新 */
-		// 		if (cur == start_addr + off) {
-		// 			struct dnode_of_data dn = { 0 };
-		// 			dn.inode        = inode;              // 当前 nid_i 对应的 inode
-		// 			dn.inode_page   = NULL;               // 不用就设 NULL
-		// 			dn.node_page    = np;                 // f2fs_get_node_page 拿到的 np
-		// 			dn.nid          = dni[nid_i].nid;     // 这个 node 的 nid
-		// 			dn.ofs_in_node  = ofs_in_node;        // ofs_mulref[nid_i]
-		// 			dn.inode_page_locked = false;         // 没锁 inode_page
-		// 			dn.node_changed = false;              // 初始 false，helper 内部会设置
-		// 			dn.cur_level    = 0;
-		// 			dn.max_level    = 0;
-		// 			dn.data_blkaddr = new_blkaddr;        // 代表引用迁移后的新物理块
-
-		// 			f2fs_set_data_blkaddr(&dn);
-		// 		// 	struct f2fs_node *rn = F2FS_NODE(np);
-		// 		// 	__le32 *addr_array;
-
-		// 		// 	if (IS_INODE(np)) {
-		// 		// 		/* inode node：数据块地址在 i.i_addr[] 里 */
-		// 		// 		addr_array = rn->i.i_addr;
-		// 		// 	} else {
-		// 		// 		/* direct node：数据块地址在 dn.addr[] 里 */
-		// 		// 		addr_array = rn->dn.addr;
-		// 		// 	}
-		// 		// 	/* 这里 ofs_in_node 就是你之前 data_blkaddr 用的下标 */
-		// 		// 	addr_array[ofs_in_node] = cpu_to_le32(new_blkaddr);
-		// 		// 	set_page_dirty(np);
-		// 		}
-
-		// 		f2fs_put_page(np, 1);
-		// 		up_write(&fi->i_gc_rwsem[WRITE]);
-		// 	}
-		// }else{
-		// 	pr_info("normal process seg[%u],off[%u]\n",segno,off);
-			if (phase == 0) {
-				f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), 1,
-								META_NAT, true);
+			if (f2fs_has_inline_data(inode)) {
+				iput(inode);
+				set_sbi_flag(sbi, SBI_NEED_FSCK);
+				printk_ratelimited("%sF2FS-fs (%s): "
+					"inode %lx has both inline_data flag and "
+					"data block, nid=%u, ofs_in_node=%u",
+					KERN_ERR, sbi->sb->s_id,
+					inode->i_ino, dni.nid, ofs_in_node);
 				continue;
 			}
 
-			if (phase == 1) {
-				f2fs_ra_node_page(sbi, nid);
+			if (!down_write_trylock(//inode加锁，disk op前
+				&F2FS_I(inode)->i_gc_rwsem[WRITE])) {
+				iput(inode);
+				sbi->skipped_gc_rwsem++;
 				continue;
 			}
 
-			/* Get an inode by ino with checking validity */
-			if (!is_alive(sbi, entry, &dni_s, start_addr + off, &nofs_s))
-				continue;
+			start_bidx = f2fs_start_bidx_of_node(nofs, inode) +
+								ofs_in_node;
 
-			if (phase == 2) {
-				f2fs_ra_node_page(sbi, dni_s.ino);
-				continue;
-			}
+			if (f2fs_post_read_required(inode)) {
+				int err = ra_data_block(inode, start_bidx);
 
-			ofs_in_node = le16_to_cpu(entry->ofs_in_node);
-
-			if (phase == 3) {
-				inode = f2fs_iget(sb, dni_s.ino);
-				if (IS_ERR(inode) || is_bad_inode(inode) ||
-						special_file(inode->i_mode))
-					continue;
-
-				if (f2fs_has_inline_data(inode)) {
-					iput(inode);
-					set_sbi_flag(sbi, SBI_NEED_FSCK);
-					printk_ratelimited("%sF2FS-fs (%s): "
-						"inode %lx has both inline_data flag and "
-						"data block, nid=%u, ofs_in_node=%u",
-						KERN_ERR, sbi->sb->s_id,
-						inode->i_ino, dni_s.nid, ofs_in_node);
-					continue;
-				}
-
-				if (!down_write_trylock(
-					&F2FS_I(inode)->i_gc_rwsem[WRITE])) {
-					iput(inode);
-					sbi->skipped_gc_rwsem++;
-					continue;
-				}
-
-				start_bidx = f2fs_start_bidx_of_node(nofs_s, inode) +
-									ofs_in_node;
-
-				if (f2fs_post_read_required(inode)) {
-					int err = ra_data_block(inode, start_bidx);
-
-					up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
-					if (err) {
-						iput(inode);
-						continue;
-					}
-					add_gc_inode(gc_list, inode);
-					continue;
-				}
-
-				data_page = f2fs_get_read_data_page(inode,
-							start_bidx, REQ_RAHEAD, true);
 				up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
-				if (IS_ERR(data_page)) {
+				if (err) {
 					iput(inode);
 					continue;
 				}
-
-				f2fs_put_page(data_page, 0);
 				add_gc_inode(gc_list, inode);
 				continue;
 			}
 
-			/* phase 4 */
-			inode = find_gc_inode(gc_list, dni_s.ino);
-			if (inode) {
-				struct f2fs_inode_info *fi = F2FS_I(inode);
-				bool locked = false;
-				int err;
-
-				if (S_ISREG(inode->i_mode)) {
-					if (!down_write_trylock(&fi->i_gc_rwsem[READ])) {
-						sbi->skipped_gc_rwsem++;
-						continue;
-					}
-					if (!down_write_trylock(
-							&fi->i_gc_rwsem[WRITE])) {
-						sbi->skipped_gc_rwsem++;
-						up_write(&fi->i_gc_rwsem[READ]);
-						continue;
-					}
-					locked = true;
-
-					/* wait for all inflight aio data */
-					inode_dio_wait(inode);
-				}
-
-				start_bidx = f2fs_start_bidx_of_node(nofs_s, inode)
-									+ ofs_in_node;
-				if (f2fs_post_read_required(inode))
-					err = move_data_block(inode, start_bidx,
-								gc_type, segno, off);
-				else
-					err = move_data_page(inode, start_bidx, gc_type,
-									segno, off, entry->version);
-
-				if (!err && (gc_type == FG_GC ||
-						f2fs_post_read_required(inode)))
-					submitted++;
-
-				if (locked) {
-					up_write(&fi->i_gc_rwsem[WRITE]);
-					up_write(&fi->i_gc_rwsem[READ]);
-				}
-
-				stat_inc_data_blk_count(sbi, 1, gc_type);
+			data_page = f2fs_get_read_data_page(inode,
+						start_bidx, REQ_RAHEAD, true);
+			up_write(&F2FS_I(inode)->i_gc_rwsem[WRITE]);
+			if (IS_ERR(data_page)) {
+				iput(inode);
+				continue;
 			}
-		// }
+
+			f2fs_put_page(data_page, 0);
+			add_gc_inode(gc_list, inode);
+			continue;
+		}
+
+		/* phase 4 */
+		inode = find_gc_inode(gc_list, dni.ino);
+		if (inode) {
+			struct f2fs_inode_info *fi = F2FS_I(inode);
+			bool locked = false;
+			int err;
+
+			if (S_ISREG(inode->i_mode)) {
+				if (!down_write_trylock(&fi->i_gc_rwsem[READ])) {
+					sbi->skipped_gc_rwsem++;
+					continue;
+				}
+				if (!down_write_trylock(
+						&fi->i_gc_rwsem[WRITE])) {
+					sbi->skipped_gc_rwsem++;
+					up_write(&fi->i_gc_rwsem[READ]);
+					continue;
+				}
+				locked = true;
+
+				/* wait for all inflight aio data */
+				inode_dio_wait(inode);
+			}
+
+			start_bidx = f2fs_start_bidx_of_node(nofs, inode)
+								+ ofs_in_node;
+			if (f2fs_post_read_required(inode))
+				err = move_data_block(inode, start_bidx,
+							gc_type, segno, off);
+			else
+				err = move_data_page(inode, start_bidx, gc_type,
+								segno, off);
+
+			if (!err && (gc_type == FG_GC ||
+					f2fs_post_read_required(inode)))
+				submitted++;
+
+			if (locked) {
+				up_write(&fi->i_gc_rwsem[WRITE]);
+				up_write(&fi->i_gc_rwsem[READ]);
+			}
+
+			stat_inc_data_blk_count(sbi, 1, gc_type);
+		}
 	}
 
 	if (++phase < 5)
@@ -2034,7 +1754,7 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 	struct page *sum_page;
 	struct f2fs_summary_block *sum;
 	struct blk_plug plug;
-	unsigned int segno = start_segno;
+	unsigned int segno = start_segno;//当前处理的段号
 	unsigned int end_segno = start_segno + sbi->segs_per_sec;
 	int seg_freed = 0, migrated = 0;
 	unsigned char type = IS_DATASEG(get_seg_entry(sbi, segno)->type) ?
@@ -2060,7 +1780,7 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 					end_segno - segno, META_SSA, true);
 
 	/* reference all summary page */
-	while (segno < end_segno) {
+	while (segno < end_segno) { //处理一个zone内的seg，目前考虑1个seg的处理
 		sum_page = f2fs_get_sum_page(sbi, segno++);
 		if (IS_ERR(sum_page)) {
 			int err = PTR_ERR(sum_page);
@@ -2088,13 +1808,16 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 
 		if (get_valid_blocks(sbi, segno, false) == 0)
 			goto freed;
+		// 后台GC，并且大段，并且已经迁移的块数大于 迁移粒度，就跳过
 		if (gc_type == BG_GC && __is_large_section(sbi) &&
 				migrated >= sbi->migration_granularity)
 			goto skip;
+		//当前页面数据不一致，或者cp error，跳过这个段
 		if (!PageUptodate(sum_page) || unlikely(f2fs_cp_error(sbi)))
 			goto skip;
 
 		sum = page_address(sum_page);
+		// 检查当前段的类型是否和预期的一致， 不一致要跳过
 		if (type != GET_SUM_TYPE((&sum->footer))) {
 			f2fs_err(sbi, "Inconsistent segment (%u) type [%d, %d] in SSA and SIT",
 				 segno, type, GET_SUM_TYPE((&sum->footer)));
