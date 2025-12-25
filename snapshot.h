@@ -42,6 +42,12 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
                           nid_t new_nid);
 
 void f2fs_mulref_replace_block(struct f2fs_sb_info *sbi, block_t old_addr, block_t new_addr, struct f2fs_summary *old_sum);
+
+void update_f2fs_inode(struct f2fs_inode *src_fi,struct f2fs_inode *new_fi);
+void update_f2fs_inode_inline(struct f2fs_inode *src_fi,struct f2fs_inode *new_fi);
+void f2fs_cow_update_inode(struct inode *src_inode,struct inode *snap_inode);
+
+
 #define MAGIC_MAX		32678
 
 struct magic_mgr {

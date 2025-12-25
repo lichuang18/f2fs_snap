@@ -3563,93 +3563,6 @@ static int f2fs_read_snap_dump(struct file *filp, unsigned long arg)
 	return 0;
 }
 
-void update_f2fs_inode(struct f2fs_inode *src_fi,struct f2fs_inode *new_fi){
-	int idx = 0;
-	new_fi->i_mode = src_fi->i_mode;
-	new_fi->i_advise = src_fi->i_advise;
-	new_fi->i_inline = src_fi->i_inline;
-	new_fi->i_uid = src_fi->i_uid;
-	new_fi->i_gid = src_fi->i_gid;
-	new_fi->i_size = src_fi->i_size;
-	new_fi->i_blocks = src_fi->i_blocks;  // 这个很重要！
-	new_fi->i_atime = src_fi->i_atime;
-	new_fi->i_ctime = src_fi->i_ctime;
-	new_fi->i_mtime = src_fi->i_mtime;
-	new_fi->i_atime_nsec = src_fi->i_atime_nsec;
-	new_fi->i_ctime_nsec = src_fi->i_ctime_nsec;
-	new_fi->i_mtime_nsec = src_fi->i_mtime_nsec;
-	new_fi->i_generation = src_fi->i_generation;
-	new_fi->i_current_depth = src_fi->i_current_depth;
-	new_fi->i_flags = src_fi->i_flags;
-	new_fi->i_namelen = src_fi->i_namelen;
-	// 复制文件名（如果存在）
-	if (src_fi->i_namelen > 0 && src_fi->i_namelen <= F2FS_NAME_LEN) {
-		memcpy(new_fi->i_name, src_fi->i_name, src_fi->i_namelen);
-		new_fi->i_namelen = src_fi->i_namelen;
-	}
-	new_fi->i_dir_level = src_fi->i_dir_level;
-	// 复制extent信息
-	memcpy(&new_fi->i_ext, &src_fi->i_ext, sizeof(struct f2fs_extent));
-	
-	for (idx = 0; idx < 5; idx++) {
-		new_fi->i_nid[idx] = src_fi->i_nid[idx];
-	}
-	memcpy(new_fi->i_addr, src_fi->i_addr, sizeof(src_fi->i_addr));
-}
-void update_f2fs_inode_inline(struct f2fs_inode *src_fi,struct f2fs_inode *new_fi){
-	new_fi->i_mode = src_fi->i_mode;
-	new_fi->i_advise = src_fi->i_advise;
-	new_fi->i_inline = src_fi->i_inline;
-	new_fi->i_uid = src_fi->i_uid;
-	new_fi->i_gid = src_fi->i_gid;
-	new_fi->i_size = src_fi->i_size;
-	// new_fi->i_blocks = src_fi->i_blocks;  // 这个很重要！
-	new_fi->i_atime = src_fi->i_atime;
-	new_fi->i_ctime = src_fi->i_ctime;
-	new_fi->i_mtime = src_fi->i_mtime;
-	new_fi->i_atime_nsec = src_fi->i_atime_nsec;
-	new_fi->i_ctime_nsec = src_fi->i_ctime_nsec;
-	new_fi->i_mtime_nsec = src_fi->i_mtime_nsec;
-	new_fi->i_generation = src_fi->i_generation;
-	new_fi->i_current_depth = src_fi->i_current_depth;
-	new_fi->i_flags = src_fi->i_flags;
-	new_fi->i_namelen = src_fi->i_namelen;
-	// 复制文件名（如果存在）
-	if (src_fi->i_namelen > 0 && src_fi->i_namelen <= F2FS_NAME_LEN) {
-		memcpy(new_fi->i_name, src_fi->i_name, src_fi->i_namelen);
-		new_fi->i_namelen = src_fi->i_namelen;
-	}
-	new_fi->i_dir_level = src_fi->i_dir_level;
-	// 复制extent信息
-	memcpy(&new_fi->i_ext, &src_fi->i_ext, sizeof(struct f2fs_extent));
-}
-
-void f2fs_cow_update_inode(struct inode *src_inode,struct inode *snap_inode){
-	snap_inode->i_mode = src_inode->i_mode;
-	snap_inode->i_opflags = src_inode->i_opflags;
-	snap_inode->i_uid = src_inode->i_uid;
-	snap_inode->i_gid = src_inode->i_gid;
-	snap_inode->i_flags = src_inode->i_flags;
-	if (S_ISCHR(src_inode->i_mode) || S_ISBLK(src_inode->i_mode)) {
-		snap_inode->i_rdev = src_inode->i_rdev;
-	}
-	snap_inode->i_atime = src_inode->i_atime;
-	snap_inode->i_mtime = src_inode->i_mtime;
-	snap_inode->i_ctime = src_inode->i_ctime;
-	snap_inode->i_blkbits = src_inode->i_blkbits;
-	snap_inode->i_write_hint = src_inode->i_write_hint;
-	snap_inode->i_bytes = src_inode->i_bytes;
-	snap_inode->i_version = src_inode->i_version;
-	snap_inode->i_sequence = src_inode->i_sequence;
-	snap_inode->i_generation = src_inode->i_generation;
-	snap_inode->dirtied_when = src_inode->dirtied_when;
-	snap_inode->dirtied_time_when = src_inode->dirtied_time_when;
-	if (snap_inode->i_blocks > 0) {
-		unsigned int valid_blocks = snap_inode->i_blocks / (F2FS_BLKSIZE >> 9);
-		f2fs_i_blocks_write(snap_inode, valid_blocks, true, true);
-	}
-}
-
 static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 {
 	char __user *user_paths[3];  // 从用户空间复制的指针数组
@@ -4784,6 +4697,7 @@ static ssize_t f2fs_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 	if (!f2fs_is_compress_backend_ready(inode))
 		return -EOPNOTSUPP;
 	pr_info("TP 1\n");
+
 	ret = generic_file_read_iter(iocb, iter);
 	pr_info("TP 2\n");
 	if (ret > 0)
