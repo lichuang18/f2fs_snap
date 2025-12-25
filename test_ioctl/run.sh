@@ -21,3 +21,4 @@ sync
 # snapshot前，一定要确保所有数据都已分配有效block，持久化到盘
 echo "create snapshot time (with 199 files);"
 time ./a.out $DIR $SNAP_DIR snap3
+sync

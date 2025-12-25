@@ -32,17 +32,12 @@
 #define F2FS_DEBUG 1
 
 #define MRENTRY_PER_BLOCK 336
-#define MGENTRY_PER_BLOCK   304
+#define MGENTRY_PER_BLOCK   139
 
 #define TOTAL_MAGIC_BLK 2048 //4M
 #define MAGIC_ENTRY_NR     311296   // 总 entry 数
 
 #define HOP_RANGE 32
-
-// block_offset = entry_id / MGENTRY_PER_BLOCK
-// entry_offset = entry_id % MGENTRY_PER_BLOCK
-
-
 
 
 #ifdef CONFIG_F2FS_CHECK_FS
@@ -1046,21 +1041,20 @@ struct f2fs_mulref_block { // 12 Byte * 338 + 40 Byte = 4096 K Byte
 } __packed;
 
 
-struct f2fs_magic_entry {
+struct f2fs_magic_entry { //29B
     __le32 snap_ino;     /* snap inode number */
 	__le32 src_ino; 
 	__le32 next; 
-	__u8 count; // 最高位用来判断inode是否修改过      
+	__u8 count; 
+	struct timespec64 c_time; //快照创建时间      
 } __packed;
-
 
 struct f2fs_magic_block {
 	__u8 multi_bitmap[38];
     struct f2fs_magic_entry mgentries[MGENTRY_PER_BLOCK];
 	__u16 v_mgentry;// valid entrys
 	__u16 next_free_mgentry;
-	__u8 modified[38];
-	__u8 reserved[119];
+	__u8 reserved[23];
 } __packed;
 
 
@@ -1068,10 +1062,8 @@ struct f2fs_magic_info {
 	struct mutex mutex;   
 	block_t magic_blkaddr;		/* start block address of magic area */
 	__le32 segment_count_magic; // 2MB * segment_count_magic
-	// struct f2fs_magic_block magic_blocks[TOTAL_MAGIC_BLK];  // 记录32K个record，就需要142个块
 	block_t mulref_flag_blkaddr;
 	block_t mulref_blkaddr;
-	// struct f2fs_mulref_block mulref_blocks[TOTAL_MAGIC_BLK]; // 512 * segment_count_magic - 142;
 };
 
 struct curmulref_info {

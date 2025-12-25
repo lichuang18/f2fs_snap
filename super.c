@@ -4238,7 +4238,6 @@ try_onemore:
 			 err);
 		goto free_sm;
 	}
-	pr_info("pass tp1!n");
 	err = f2fs_build_node_manager(sbi);
 	if (err) {
 		f2fs_err(sbi, "Failed to initialize F2FS node manager (%d)",

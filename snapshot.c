@@ -15,7 +15,7 @@
 #include <linux/freezer.h>
 #include <linux/sched/signal.h>
 #include <linux/random.h>
-
+#include <linux/namei.h>
 
 #include "f2fs.h"
 #include "node.h"
@@ -404,87 +404,6 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
 	return ret;
 }
 
-
-// bool mulref_entry_is_invalid(struct f2fs_sb_info *sbi,
-// 			     struct f2fs_mulref_entry *e)
-// {
-// 	struct inode *inode;
-
-// 	if (e->m_count == 0)
-// 		return true;
-
-// 	inode = f2fs_iget(sbi->sb, le32_to_cpu(e->m_nid));
-// 	if (IS_ERR(inode))
-// 		return true;
-
-// 	if (inode->i_version != e->m_ver) {
-// 		iput(inode);
-// 		return true;
-// 	}
-
-// 	iput(inode);
-// 	return false;
-// }
-
-
-
-// void mulref_do_reclaim(struct f2fs_sb_info *sbi)
-// {
-// 	block_t blkaddr;
-// 	struct f2fs_mulref_block *blk;
-// 	int i;
-
-// 	for_each_mulref_block(sbi, blkaddr) {
-
-// 		blk = read_mulref_block(blkaddr);
-
-// 		for (i = 0; i < MRENTRY_PER_BLOCK; i++) {
-
-// 			if (!test_bit(i, blk->multi_bitmap))
-// 				continue;
-
-// 			if (!mulref_entry_is_invalid(sbi, &blk->mrentries[i]))
-// 				continue;
-
-// 			/* 回收 entry */
-// 			clear_bit(i, blk->multi_bitmap);
-// 			memset(&blk->mrentries[i], 0,
-// 			       sizeof(struct f2fs_mulref_entry));
-
-// 			if (blk->next_free_mrentry > i)
-// 				blk->next_free_mrentry = i;
-// 		}
-
-// 		mark_mulref_block_dirty(blk);
-// 	}
-// }
-
-
-// int mulref_reclaim_thread(void *data)
-// {
-// 	struct f2fs_sb_info *sbi = data;
-// 	struct mulref_mgr *mgr = sbi->mulref_mgr;
-
-// 	set_freezable();
-
-// 	while (!kthread_should_stop()) {
-// 		wait_event_freezable_timeout(
-// 			mgr->wq,
-// 			kthread_should_stop() ||
-// 			atomic_read(&mgr->need_scan),
-// 			msecs_to_jiffies(30000)
-// 		);
-
-// 		if (kthread_should_stop())
-// 			break;
-
-// 		atomic_set(&mgr->need_scan, 0);
-// 		mulref_do_reclaim(sbi);
-// 	}
-
-// 	return 0;
-// }
-
 // 什么时候触发 need_scan（非常重要）
 // 1. inode 删除
 // atomic_set(&mgr->need_scan, 1);
@@ -792,11 +711,14 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
     struct f2fs_magic_block *tmp_mb;
     struct f2fs_magic_block *mb2;
     struct f2fs_magic_block *mb3;
+    struct inode *snap_inode;
+    int ret = 0;
     u32 entry_id = 0;
     if (!sbi->magic_info) {
         pr_err("magic_info is NULL!\n");
         return -ENOENT;
     }
+    snap_inode = f2fs_iget(sbi->sb, snap_ino);
     // 加锁保护整个查找/分配过程
     mutex_lock(&sbi->magic_info->mutex);
     for (i = 0; i < MAGIC_ENTRY_NR; i++) {
@@ -814,13 +736,14 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
         /* bitmap 判断 */
         if (!test_bit(off,(unsigned long *)(mb->multi_bitmap))) {
             /* 空槽：可以直接使用 */
-            pr_info("Create new_snap addr/off[%u,%u]\n"
+            pr_info("[snapfs set_flag]: write magic page addr/off[%u,%u]\n"
                     ,blkaddr, off);
-            
+            set_bit(off, (unsigned long *)(mb->multi_bitmap));
             me->src_ino = cpu_to_le32(src_ino);
             me->snap_ino = cpu_to_le32(snap_ino);
             me->count += 1;
             me->next = 0;
+            me->c_time = current_time(snap_inode);
             // *ret_entry_id = entry_id;
             // *ret_entry = &mb->mgentries[off];
             // *ret_page = page;
@@ -857,6 +780,7 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                     }
                     break;    
                 }
+                set_bit(off2, (unsigned long *)(mb->multi_bitmap));
                 me->count += 1;
                 me->next = cpu_to_le32(off2 + blkaddr2 * MGENTRY_PER_BLOCK);
                 me2 = &mb2->mgentries[off2];
@@ -864,6 +788,7 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                 me2->snap_ino = cpu_to_le32(snap_ino);
                 me2->count = me->count;
                 me2->next = 0;
+                me2->c_time = current_time(snap_inode);
             }else if(me->count > 1){
                 me->count += 1;
                 tmp_next = le32_to_cpu(me->next);
@@ -896,12 +821,14 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                                 }
                                 break;    
                             }
+                            set_bit(off3, (unsigned long *)(mb->multi_bitmap));
                             tmp_me->count = me->count;
                             tmp_me->next = tmp_off + blkaddr3 * MGENTRY_PER_BLOCK;
                             me3->src_ino = cpu_to_le32(src_ino);
                             me3->snap_ino = cpu_to_le32(snap_ino);
                             me3->count = me->count;
                             me3->next = 0;
+                            me3->c_time = current_time(snap_inode);
                             break; 
                         }else{
                             tmp_next = tmp_me->next;
@@ -943,12 +870,14 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                                 }
                                 break;    
                             }
+                            set_bit(off3, (unsigned long *)(mb->multi_bitmap));
                             tmp_me->next = tmp_off + blkaddr3 * MGENTRY_PER_BLOCK;
                             off2 = (off + 1) % MGENTRY_PER_BLOCK;
                             me3->src_ino = cpu_to_le32(src_ino);
                             me3->snap_ino = cpu_to_le32(snap_ino);
                             me3->count = me->count;
                             me3->next = 0;
+                            me3->c_time = current_time(snap_inode);
                             break; 
                         }else{
                             tmp_next = tmp_me->next;
@@ -964,11 +893,13 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
         /* 冲突：继续 probing */
         f2fs_put_page(page, 1);
     }
+    ret = -ENOSPC;  /* 所有 slot 都被占满 */
 out:
+    iput(snap_inode);
     set_page_dirty(page);
     f2fs_put_page(page, 1);
     mutex_unlock(&sbi->magic_info->mutex);
-    return -ENOSPC;  /* 所有 slot 都被占满 */
+    return ret;  /* 所有 slot 都被占满 */
 }
 
 int f2fs_magic_lookup(struct f2fs_sb_info *sbi, u32 src_ino,
@@ -1201,20 +1132,18 @@ bool is_snapshot_inode(struct inode *inode,
     struct f2fs_sb_info *sbi = NULL;
     struct f2fs_magic_entry tmp_me;
 	u32 tmp_entry_id = 0;
-
     memset(&tmp_me, 0, sizeof(tmp_me));
     sbi = F2FS_I_SB(inode);
+
 	if (f2fs_magic_lookup(sbi, inode->i_ino, &tmp_entry_id, &tmp_me)) {// 未找到或者冲突未解决
-		// pr_info("[snapfs dump]: not Found at entry_id\n");
+		// pr_info("[%u] is not snapshot\n", inode->i_ino);
         return false;
 	}
     memcpy(me, &tmp_me, sizeof(tmp_me));
     *entry_id = tmp_entry_id;
+    // pr_info("[%u] is snapshot: \n",inode->i_ino);
     return true;
 }
-
-
-
 
 int set_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr, nid_t ino){ //, struct page *ipage
 
@@ -1421,6 +1350,7 @@ int f2fs_cow(struct inode *pra_inode,
              struct inode **new_inode){
     // 判断name of son_inode是否已经存在snap_inode下
     struct dentry *snap_dentry, *son_dentry;
+    struct dentry *new_dentry;
 	struct f2fs_dir_entry *de;
     struct page *page;
     struct super_block *sb = pra_inode->i_sb;
@@ -1435,13 +1365,14 @@ int f2fs_cow(struct inode *pra_inode,
     void *page_addr;
 	void *inline_dentry; // inline数据
 	void *inline_dentry2;
-
+    char *filename;
     struct f2fs_inode *son_fi;
     struct f2fs_inode *new_fi;
     struct fscrypt_str dot = FSTR_INIT(".", 1);
 	struct fscrypt_str dotdot = FSTR_INIT("..", 2);
 	struct f2fs_dentry_ptr d;
     size_t idx = 0;
+    pr_info("start cow!\n");
     // 安全检查
     if (unlikely(f2fs_cp_error(sbi))) {
         ret = -EIO;
@@ -1471,7 +1402,6 @@ int f2fs_cow(struct inode *pra_inode,
     d_name = &son_dentry->d_name;
     de = f2fs_find_entry(snap_inode, d_name, &page);
     if(de){
-        pr_info("[snapfs f2fs_cow]: dentry[%s] found in [%lu]\n", d_name->name, snap_inode->i_ino);
         // 快照目录下对应的数据COW过, 那两个目录下的inode就不相等
         tmp_inode = f2fs_iget(sb, le32_to_cpu(de->ino));
         if (IS_ERR(tmp_inode)) {
@@ -1488,10 +1418,15 @@ int f2fs_cow(struct inode *pra_inode,
         }
         // 快照目录下对应的数据没有COW过, 那两个目录下的inode就相等
         f2fs_delete_entry(de, page, snap_inode, NULL);
+        // de = f2fs_find_entry(snap_inode, d_name, &page);
+        // if(!de){
+        //     pr_info("删除成功!!!\n");
+        // }
         page = NULL;
         // 准备创建dentry
         // 创建新的inode（使用son_inode的mode）
         mode = son_inode->i_mode;
+        // iput(tmp_inode);
         tmp_inode = snapfs_new_inode(snap_inode, mode);
         if (IS_ERR(tmp_inode)) {
             ret = PTR_ERR(tmp_inode);
@@ -1519,16 +1454,26 @@ int f2fs_cow(struct inode *pra_inode,
         }
 
         ino = tmp_inode->i_ino;
+        filename = son_dentry->d_name.name;
+        new_dentry = lookup_one_len(filename, snap_dentry, strlen(filename));
         f2fs_lock_op(sbi);
         /* 4. 在 snap_inode 下创建目录项 link */
-        ret = f2fs_add_link(snap_dentry, tmp_inode);
+        ret = f2fs_add_link(new_dentry, tmp_inode);
         if (ret) {
             f2fs_unlock_op(sbi);
+              
             pr_err("[snapfs f2fs_cow]: failed to add link: %d\n", ret);
             goto next_free;
         }
         f2fs_unlock_op(sbi);
         f2fs_alloc_nid_done(sbi, ino);
+	    d_instantiate_new(new_dentry, tmp_inode);
+
+        pr_info("[snapfs f2fs_cow]: dentry[%s/%u] found in [%s/%u], new[%s/%u]\n", 
+            d_name->name, le32_to_cpu(de->ino), 
+            d_find_any_alias(snap_inode)->d_name.name, snap_inode->i_ino,
+            new_dentry->d_name.name, tmp_inode->i_ino);
+
         // 复制inode的属性
         tmp_inode->i_atime = son_inode->i_atime;
         tmp_inode->i_mtime = son_inode->i_mtime;
@@ -1696,8 +1641,6 @@ int f2fs_cow(struct inode *pra_inode,
                 }
                 if (f2fs_has_inline_dentry(tmp_inode)) {
                     inline_dentry = inline_data_addr(tmp_inode, new_ipage);
-                    // 执行convert， 主要是删除inline数据区域和清除inline flag
-                    // f2fs_snap_inline_to_dirdata
                     ret = f2fs_snap_inline_to_dirdata(tmp_inode, inline_dentry, new_ipage);
                     if(ret){
                         f2fs_put_page(son_ipage, 1);
@@ -1744,7 +1687,6 @@ int f2fs_cow(struct inode *pra_inode,
                     f2fs_i_blocks_write(tmp_inode, valid_blocks, true, true);
                 }
                 memcpy(new_fi->i_addr, son_fi->i_addr, sizeof(son_fi->i_addr));
-                
                 tmp_inode->i_mode = son_inode->i_mode;
                 tmp_inode->i_opflags = son_inode->i_opflags;
                 tmp_inode->i_uid = son_inode->i_uid;
@@ -1764,15 +1706,10 @@ int f2fs_cow(struct inode *pra_inode,
                 tmp_inode->i_generation = son_inode->i_generation;
                 tmp_inode->dirtied_when = son_inode->dirtied_when;
                 tmp_inode->dirtied_time_when = son_inode->dirtied_time_when;
+
                 set_page_dirty(new_ipage);
                 f2fs_put_page(son_ipage, 1);
                 f2fs_put_page(new_ipage, 1);
-                new_dpage = f2fs_get_lock_data_page(tmp_inode, 0, false);
-                page_addr = page_address(new_dpage);
-                make_dentry_ptr_block(tmp_inode, &d, page_addr);
-                f2fs_update_dentry(tmp_inode->i_ino, tmp_inode->i_mode, &d, &dot, 0, 0);
-                f2fs_update_dentry(tmp_inode->i_ino, tmp_inode->i_mode, &d, &dotdot, 0, 1);
-                f2fs_put_page(new_dpage, 1);
             }
         }
         f2fs_mark_inode_dirty_sync(snap_inode, true);
@@ -1794,6 +1731,9 @@ next_free:
     if (tmp_inode) {
         iput(tmp_inode);
     }
+    if (new_dentry) {
+        dput(new_dentry);
+    }
     if (page)
         f2fs_put_page(page, 1);
     return ret;
@@ -1810,11 +1750,15 @@ int f2fs_snapshot_cow(struct inode *inode)
     struct inode *pra_inode = NULL;
     struct inode *son_inode = NULL;
     struct inode *new_inode = NULL;
+    struct inode *tmp2_inode = NULL;
+    struct inode *old_tmp = NULL;
+    struct inode *tmp_pra_inode = NULL;
     struct f2fs_sb_info *sbi = sbi = F2FS_I_SB(inode);
     struct super_block *sb = inode->i_sb;
     // u8 snap_count = 0;
     int ret;
-    struct dentry *parent_dentry, *dentry;
+    struct dentry *parent_dentry = NULL, *dentry = NULL;
+    struct dentry *tmp_dentry = NULL;
     Stack_snap stack;
     nid_t  pra_ino, son_ino;//, snap_ino;
 
@@ -1828,51 +1772,85 @@ int f2fs_snapshot_cow(struct inode *inode)
         memset(&tmp_me, 0, sizeof(tmp_me));
         entry_id = 0;
         tmp_inode = inode;
-
         snap_initStack(&stack);
         snap_push(&stack, tmp_inode->i_ino);
         while (tmp_inode) {
+            if(dentry) dput(dentry);
             dentry = d_find_any_alias(tmp_inode);  // 获取 inode 对应的 dentry
             if (!dentry) {
                 pr_err("[snapfs cow]: get dentry failed with inode %lu\n", tmp_inode->i_ino);
                 break;
             }
+            if(parent_dentry) dput(parent_dentry);
             parent_dentry = dget_parent(dentry);
             pra_inode = parent_dentry->d_inode;
             snap_push(&stack, parent_dentry->d_inode->i_ino);
             if(is_snapshot_inode(pra_inode, &tmp_me, &entry_id)){
+                if(timespec64_compare(&(tmp_me.c_time), &(inode->i_ctime)) < 0){
+                    // 新文件或者创建快照后修改文件 都直接返回，不需要做cow
+                    pr_info("It is snap, but file is newfile\n");
+                    goto out;
+                }
                 snap_inode = f2fs_iget(sb, le32_to_cpu(tmp_me.snap_ino));
+                tmp2_inode = snap_inode;
                 // 获取push压栈的目录路径
-                while (!snap_isEmpty(&stack)) {
+                while (!snap_isEmpty(&stack)) {    
+                                   
                     ret = snap_pop2(&stack, &pra_ino, &son_ino);
                     if(ret) {
                         pr_info("cow stack is done\n");
                         break;
                     }
+                    // if (tmp_dentry) dput(tmp_dentry);
                     pra_ino = snap_pop(&stack);
-                    pra_inode = f2fs_iget(sb, pra_ino); 
+                    // if(tmp_pra_inode) iput(tmp_pra_inode);
+                    pra_inode = f2fs_iget(sb, pra_ino);//tmp_pra_inode
+                    // if(son_inode) iput(son_inode);
                     son_inode = f2fs_iget(sb, son_ino);
+                    // tmp_dentry = d_find_any_alias(pra_inode);
                     parent_dentry = d_find_any_alias(pra_inode);
                     dentry = d_find_any_alias(son_inode);
-                    ret = f2fs_cow(pra_inode, snap_inode, son_inode, &new_inode);
+                    ret = f2fs_cow(pra_inode, tmp2_inode, son_inode, &new_inode);
                     if(ret){
                         pr_info("parent cow failed\n");
-                        return 1;
+                        goto success;
                     }
-                    snap_inode = new_inode;
-                    // if(S_ISREG(son_inode)){
-                    //     break;
+                    tmp2_inode = new_inode;
+                    // new_inode = NULL;
+                    // if (old_tmp != snap_inode) {
+                    //     iput(old_tmp);           // 释放旧的（如果不是最初的）
+                    //     old_tmp = NULL;
                     // }
                 }
-            }
-            if(parent_dentry == sb->s_root){
-                return 1;
-                // break;
+            } 
+            if(parent_dentry == sb->s_root){// 找到根了
+                ret = 1;
+                goto success;
             }
             tmp_inode = parent_dentry->d_inode;
         }
     }
-    return 0;
+    
+success:
+    if (pra_inode)
+        iput(pra_inode);
+    if (son_inode)
+        iput(son_inode);
+    if (snap_inode)
+        iput(snap_inode);
+    if (tmp2_inode && tmp2_inode != snap_inode) {
+        iput(tmp2_inode);
+        tmp2_inode = NULL;
+    }
+
+out:
+    if (parent_dentry)
+        dput(parent_dentry);
+    if (dentry)
+        dput(dentry);
+    if (tmp_dentry)
+        dput(tmp_dentry);
+    return ret;
 }
 
 //  update mulref
@@ -2177,10 +2155,7 @@ out:
     if (head_blk) {
         f2fs_put_mulref_block(sbi, (block_t)le32_to_cpu(old_sum.nid), head_blk);
     }
-    // if (prev_blk && prev_blk != head_blk && prev_blk != cur_blk) {
-    //     f2fs_put_mulref_block(sbi, prev_mr_blkaddr, prev_blk);
-    // }
-    
+
     if (cur_blk && cur_blk != head_blk && cur_blk != prev_blk) {
         f2fs_put_mulref_block(sbi, cur_mr_blkaddr, cur_blk);
     }

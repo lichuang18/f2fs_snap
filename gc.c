@@ -1405,64 +1405,6 @@ out:
 	return err;
 }
 
-
-// int get_mulref_nid(struct f2fs_sb_info *sbi, nid_t mr_blkaddr, u16 entry_index,
-// 	 	struct f2fs_mulref_entry *entry){
-// 	struct page *mulref_page;
-// 	struct f2fs_mulref_block *mulref;
-// 	struct f2fs_mulref_entry *src;
-	
-// 	char *base_ptr;
-// 	bool used;
-// 	u8 byte;
-// 	u8 bit;
-// 	// int ret = 0;
-
-// 	pr_info("get mulref nid info\n");
-// 	if (entry_index >= 312) {
-// 			pr_err("mulref: entry_index out of range: %u (max 311)\n",
-// 					entry_index);
-// 			return -EINVAL;
-// 	}
-// 	 /* 1. 读出对应 meta page */
-// 	mulref_page = f2fs_get_meta_page(sbi, mr_blkaddr);
-// 	if (IS_ERR(mulref_page)) {
-// 			pr_err("mulref: failed to get meta page / get_mulref_nid: %ld\n",
-// 					PTR_ERR(mulref_page));
-// 			return PTR_ERR(mulref_page);
-// 	}
-
-// 	mulref = (struct f2fs_mulref_block *)kmap(mulref_page);
-// 	if (!mulref) {
-// 		pr_err("mulref: kmap failed / get_mulref_nid\n");
-// 		f2fs_put_page(mulref_page, 1);
-// 		return -EFAULT;
-// 	}
-// 	base_ptr = (char *)mulref;
-// 	/* 2. 可选：先检查 bitmap，看看这个 entry 是否被占用 */
-// 	byte = mulref->multi_bitmap[entry_index / 8];
-// 	bit  = 1 << (entry_index % 8);
-// 	used = !!(byte & bit);
-
-// 	if (!used) {
-// 		pr_info("mulref: entry_index %u not used (bitmap=0x%02x, bit=%u)\n",
-// 					entry_index, byte, entry_index % 8);
-// 		kunmap(mulref_page);
-// 		f2fs_put_page(mulref_page, 1);
-// 		return 1;
-// 	}
-// 	/* 3. 直接通过结构体下标访问对应 entry */
-// 	src = &mulref->mrentry[entry_index];
-// 	memcpy(entry, src, sizeof(*entry));
-// 	pr_info("mulref: read entry @ blk=%llu, idx=%u, entry=%p (base=%p)\n",
-// 			(unsigned long long)mr_blkaddr, entry_index, entry, base_ptr);
-
-// 	kunmap(mulref_page);
-// 	f2fs_put_page(mulref_page, 1);
-
-// 	return 0;
-// }
-
 /*
  * This function tries to get parent node of victim data block, and identifies
  * data block validity. If the block is valid, copy that with cold status and

@@ -3603,7 +3603,7 @@ void update_f2fs_inode_inline(struct f2fs_inode *src_fi,struct f2fs_inode *new_f
 	new_fi->i_uid = src_fi->i_uid;
 	new_fi->i_gid = src_fi->i_gid;
 	new_fi->i_size = src_fi->i_size;
-	new_fi->i_blocks = src_fi->i_blocks;  // 这个很重要！
+	// new_fi->i_blocks = src_fi->i_blocks;  // 这个很重要！
 	new_fi->i_atime = src_fi->i_atime;
 	new_fi->i_ctime = src_fi->i_ctime;
 	new_fi->i_mtime = src_fi->i_mtime;
@@ -3740,7 +3740,9 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		snap_dentry = NULL;
 		goto out_dput;
 	}
-	
+	sbi = F2FS_I_SB(src_inode);
+
+
 	mode = src_inode->i_mode;
 	snap_inode = snapfs_new_inode(snap_par_inode, mode);
 	if (IS_ERR(snap_inode)) {
@@ -3748,13 +3750,11 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		pr_err("[snapfs f2fs_cow]: failed to create new inode: %d\n", err);
 		goto out_dput;
 	}
-	sbi = F2FS_I_SB(src_inode);
-
-	if (!test_opt(sbi, DISABLE_EXT_IDENTIFY)){
-		snapfs_set_file_temperature(sbi, snap_inode, src_path.dentry->d_name.name);
-	}
+	// if (!test_opt(sbi, DISABLE_EXT_IDENTIFY)){
+	// 	snapfs_set_file_temperature(sbi, snap_inode, src_path.dentry->d_name.name);
+	// }
 	/* 3. 初始化 inode 元数据 */
-	snapfs_set_compress_inode(sbi, snap_inode, src_path.dentry->d_name.name);
+	// snapfs_set_compress_inode(sbi, snap_inode, src_path.dentry->d_name.name);
 	// 设置inode操作
 	snap_inode->i_op = &f2fs_dir_inode_operations;
 	snap_inode->i_fop = &f2fs_dir_operations;
@@ -3770,7 +3770,15 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		goto out_dput;
 	}
 	f2fs_unlock_op(sbi);
-	
+
+	f2fs_alloc_nid_done(sbi, snap_inode->i_ino);
+	d_instantiate_new(snap_dentry, snap_inode);
+
+	err = f2fs_magic_lookup_or_alloc(sbi, src_inode->i_ino, snap_inode->i_ino);
+	if(err){
+		pr_info("magic alloc failed\n");
+	}
+
 	// 复制inode的属性
 	snap_inode->i_size = src_inode->i_size;
 	snap_inode->i_atime = src_inode->i_atime;
@@ -3805,12 +3813,12 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		f2fs_truncate_inline_inode(snap_inode, snap_ipage, 0);
 		memcpy(inline_dentry2, inline_dentry, MAX_INLINE_DATA(src_inode));
 
-		src_fi = F2FS_INODE(src_ipage);
-		new_fi = F2FS_INODE(snap_ipage);
-		update_f2fs_inode_inline(src_fi, new_fi);
-		snap_inode->i_size = le64_to_cpu(src_fi->i_size);
-		snap_inode->i_blocks = le64_to_cpu(src_fi->i_blocks);
-		f2fs_cow_update_inode(src_inode, snap_inode);
+		// src_fi = F2FS_INODE(src_ipage);
+		// new_fi = F2FS_INODE(snap_ipage);
+		// update_f2fs_inode_inline(src_fi, new_fi);
+		// snap_inode->i_size = le64_to_cpu(src_fi->i_size);
+		// snap_inode->i_blocks = le64_to_cpu(src_fi->i_blocks);
+		// f2fs_cow_update_inode(src_inode, snap_inode);
 
 		// 更新.和..
 		make_dentry_ptr_inline(snap_inode, &d, inline_dentry2);
@@ -3869,7 +3877,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 	}
 	f2fs_mark_inode_dirty_sync(snap_par_inode, true);
 	f2fs_mark_inode_dirty_sync(snap_inode, true);
-	f2fs_magic_lookup_or_alloc(sbi, src_inode->i_ino, snap_inode->i_ino);
+	
 out_dput:
 	if (snap_dentry)
         dput(snap_dentry);
@@ -4772,16 +4780,17 @@ static ssize_t f2fs_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file_inode(file);
 	int ret;
-
+	pr_info(" come on baby see you? \n");
 	if (!f2fs_is_compress_backend_ready(inode))
 		return -EOPNOTSUPP;
-
+	pr_info("TP 1\n");
 	ret = generic_file_read_iter(iocb, iter);
-
+	pr_info("TP 2\n");
 	if (ret > 0)
 		f2fs_update_iostat(F2FS_I_SB(inode), APP_READ_IO, ret);
 	
 	// ssleep(5);
+	pr_info("are you still here?\n");
 	return ret;
 }
 
@@ -4796,7 +4805,9 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	// 我添加的私货
 	// 我需要判断文件inode 是否是一个快照目录下的文件
 	// 目前的方法是循环往上找父节点信息,要遍历到挂载根节点
-	
+
+	pr_info("start write: [%s]\n",d_find_any_alias(inode)->d_name.name);
+
 
 	if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
 		pr_info("normal write with cow\n");
