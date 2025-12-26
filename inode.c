@@ -756,7 +756,7 @@ void f2fs_evict_inode(struct inode *inode)
 
 	if (test_opt(sbi, COMPRESS_CACHE) && f2fs_compressed_file(inode))
 		f2fs_invalidate_compress_pages(sbi, inode->i_ino);
-
+	
 	if (inode->i_ino == F2FS_NODE_INO(sbi) ||
 			inode->i_ino == F2FS_META_INO(sbi) ||
 			inode->i_ino == F2FS_COMPRESS_INO(sbi))
@@ -768,8 +768,7 @@ void f2fs_evict_inode(struct inode *inode)
 	f2fs_destroy_extent_tree(inode);
 
 	if (inode->i_nlink || is_bad_inode(inode))
-		goto no_delete;
-
+		goto no_delete;	
 	err = f2fs_dquot_initialize(inode);
 	if (err) {
 		err = 0;
@@ -779,7 +778,6 @@ void f2fs_evict_inode(struct inode *inode)
 	f2fs_remove_ino_entry(sbi, inode->i_ino, APPEND_INO);
 	f2fs_remove_ino_entry(sbi, inode->i_ino, UPDATE_INO);
 	f2fs_remove_ino_entry(sbi, inode->i_ino, FLUSH_INO);
-
 	if (!is_sbi_flag_set(sbi, SBI_IS_FREEZING))
 		sb_start_intwrite(inode->i_sb);
 	set_inode_flag(inode, FI_NO_ALLOC);
@@ -787,7 +785,6 @@ void f2fs_evict_inode(struct inode *inode)
 retry:
 	if (F2FS_HAS_BLOCKS(inode))
 		err = f2fs_truncate(inode);
-
 	if (time_to_inject(sbi, FAULT_EVICT_INODE)) {
 		f2fs_show_injection_info(sbi, FAULT_EVICT_INODE);
 		err = -EIO;
@@ -814,7 +811,6 @@ retry:
 			}
 		}
 	}
-
 	/* give more chances, if ENOMEM case */
 	if (err == -ENOMEM) {
 		err = 0;
@@ -830,7 +826,6 @@ retry:
 		sb_end_intwrite(inode->i_sb);
 no_delete:
 	dquot_drop(inode);
-
 	stat_dec_inline_xattr(inode);
 	stat_dec_inline_dir(inode);
 	stat_dec_inline_inode(inode);
@@ -869,7 +864,7 @@ no_delete:
 out_clear:
 	fscrypt_put_encryption_info(inode);
 	fsverity_cleanup_inode(inode);
-	clear_inode(inode);
+    clear_inode(inode);
 }
 
 /* caller should call f2fs_lock_op() */

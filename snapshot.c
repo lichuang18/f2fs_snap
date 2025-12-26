@@ -105,6 +105,7 @@ void f2fs_cow_update_inode(struct inode *src_inode,struct inode *snap_inode){
 	snap_inode->i_generation = src_inode->i_generation;
 	snap_inode->dirtied_when = src_inode->dirtied_when;
 	snap_inode->dirtied_time_when = src_inode->dirtied_time_when;
+    snap_inode->i_count = src_inode->i_count;
 	if (snap_inode->i_blocks > 0) {
 		unsigned int valid_blocks = snap_inode->i_blocks / (F2FS_BLKSIZE >> 9);
 		f2fs_i_blocks_write(snap_inode, valid_blocks, true, true);
@@ -1740,7 +1741,6 @@ int f2fs_cow(struct inode *pra_inode,
                 tmp_inode->i_size = le64_to_cpu(son_inode->i_size);
                 tmp_inode->i_blocks = le64_to_cpu(son_inode->i_blocks);
                 f2fs_cow_update_inode(son_inode, tmp_inode);
-                
                 set_page_dirty(new_ipage);
                 f2fs_put_page(son_ipage, 1);
                 f2fs_put_page(new_ipage, 1);

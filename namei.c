@@ -537,8 +537,12 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 	struct page *page;
 	int err;
 
-	trace_f2fs_unlink_enter(dir, dentry);
+	// pr_info("f2fs_unlink START:i_count=%d, i_nlink=%d\n",
+    //         atomic_read(&inode->i_count), inode->i_nlink);
+	// pr_info("f2fs_unlink START: i_state=0x%x\n",
+    //     	inode->i_state);
 
+	trace_f2fs_unlink_enter(dir, dentry);
 	if (unlikely(f2fs_cp_error(sbi))) {
 		err = -EIO;
 		goto fail;
@@ -557,7 +561,6 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 			err = PTR_ERR(page);
 		goto fail;
 	}
-
 	f2fs_balance_fs(sbi, true);
 
 	f2fs_lock_op(sbi);
@@ -579,11 +582,12 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 		d_invalidate(dentry);
 #endif
 	f2fs_unlock_op(sbi);
-
 	if (IS_DIRSYNC(dir))
 		f2fs_sync_fs(sbi->sb, 1);
 fail:
 	trace_f2fs_unlink_exit(inode, err);
+	pr_info("f2fs_unlink over ~~\n");
+	
 	return err;
 }
 
