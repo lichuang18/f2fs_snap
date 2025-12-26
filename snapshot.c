@@ -1306,13 +1306,18 @@ int f2fs_set_mulref_blocks(struct inode *inode)
                 ret = set_mulref_entry(sbi, fi->i_addr[lblk], inode->i_ino);
                 if(ret){
                     pr_info("set mulref flag failed![direct_index]\n");
-                    return ret;
+                    goto out;
+                    // return ret;
                 }
             }
         }else if(lblk <= level1_blks){
             nid = fi->i_nid[0];
             if(nid == 0) continue; 
             dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) {
+                pr_err("[snapfs setmulref]: get dn_ipage failed[%d < direct_index]\n", lblk);
+                goto out;
+            }
             dn = (struct direct_node *)page_address(dn_ipage);
             blkaddr = le32_to_cpu(dn->addr[lblk - direct_index]);
             if (__is_valid_data_blkaddr(blkaddr)) {
@@ -1320,7 +1325,9 @@ int f2fs_set_mulref_blocks(struct inode *inode)
                 ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
                 if(ret){
                     pr_info("set mulref flag failed![level1_blks]\n");
-                    return ret;
+                    f2fs_put_page(dn_ipage, 1);
+                    goto out;
+                    // return ret;
                 }
             }
             f2fs_put_page(dn_ipage, 1);
@@ -1328,6 +1335,10 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             nid = fi->i_nid[1];
             if(nid == 0) continue; 
             dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) {
+                pr_err("[snapfs setmulref]: get dn_ipage failed[%d < level2_blks]\n", lblk);
+                goto out;
+            }
             dn = (struct direct_node *)page_address(dn_ipage);
             blkaddr = le32_to_cpu(dn->addr[lblk - level1_blks]);
             if (__is_valid_data_blkaddr(blkaddr)) {
@@ -1335,7 +1346,9 @@ int f2fs_set_mulref_blocks(struct inode *inode)
                 ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
                 if(ret){
                     pr_info("set mulref flag failed![level2_blks]\n");
-                    return ret;
+                    f2fs_put_page(dn_ipage, 1);
+                    goto out;
+                    // return ret;
                 }
             }
             f2fs_put_page(dn_ipage, 1);
@@ -1343,14 +1356,22 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             nid = fi->i_nid[2];
             if(nid == 0) break; 
             indirect_page = f2fs_get_node_page(sbi, nid);
-            if (IS_ERR(indirect_page))
-                return PTR_ERR(indirect_page);
+            if (IS_ERR(indirect_page)){
+                pr_err("[snapfs setmulref]: get indirect_page failed[%d < level3_blks]\n", lblk);
+                goto out;
+                // return PTR_ERR(indirect_page);
+            }
             in_dn = (lblk - level2_blks) / direct_blks;
             off_in_dn = (lblk - level2_blks) % direct_blks;
             indirect = (struct indirect_node *)page_address(dn_ipage);
             nid = le32_to_cpu(indirect->nid[in_dn]);
             if(nid == 0) break; 
             dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) {
+                pr_err("[snapfs setmulref]: get dn_ipage failed[%d < level3_blks]\n", lblk);
+                f2fs_put_page(indirect_page, 1);
+                goto out;
+            }
             dn = (struct direct_node *)page_address(dn_ipage);
             blkaddr = le32_to_cpu(dn->addr[off_in_dn]);
             if (__is_valid_data_blkaddr(blkaddr)) {
@@ -1358,7 +1379,10 @@ int f2fs_set_mulref_blocks(struct inode *inode)
                 ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
                 if(ret){
                     pr_info("set mulref flag failed![level3_blks]\n");
-                    return ret;
+                    f2fs_put_page(dn_ipage, 1);
+                    f2fs_put_page(indirect_page, 1);
+                    goto out;
+                    // return ret;
                 }
             }
             f2fs_put_page(dn_ipage, 1);
@@ -1367,14 +1391,22 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             nid = fi->i_nid[3];
             if(nid == 0) break; 
             indirect_page = f2fs_get_node_page(sbi, nid);
-            if (IS_ERR(indirect_page))
-                return PTR_ERR(indirect_page);
+            if (IS_ERR(indirect_page)){
+                pr_err("[snapfs setmulref]: get indirect_page failed[%d < level4_blks]\n", lblk);
+                goto out;
+                // return PTR_ERR(indirect_page);
+            }
             in_dn = (lblk - level3_blks) / direct_blks;
             off_in_dn = (lblk - level3_blks) % direct_blks;
             indirect = (struct indirect_node *)page_address(indirect_page);
             nid = le32_to_cpu(indirect->nid[in_dn]);
             if(nid == 0) break; 
             dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) {
+                pr_err("[snapfs setmulref]: get dn_ipage failed[%d < level3_blks]\n", lblk);
+                f2fs_put_page(indirect_page, 1);
+                goto out;
+            }
             dn = (struct direct_node *)page_address(dn_ipage);
             blkaddr = le32_to_cpu(dn->addr[off_in_dn]);
             if (__is_valid_data_blkaddr(blkaddr)) {
@@ -1382,7 +1414,10 @@ int f2fs_set_mulref_blocks(struct inode *inode)
                 ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
                 if(ret){
                     pr_info("set mulref flag failed![level4_blks]\n");
-                    return ret;
+                    f2fs_put_page(dn_ipage, 1);
+                    f2fs_put_page(indirect_page, 1);
+                    goto out;
+                    // return ret;
                 }
             }
             f2fs_put_page(dn_ipage, 1);
@@ -1391,22 +1426,35 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             nid = fi->i_nid[4];
             if(nid == 0) break; 
             indirect_page = f2fs_get_node_page(sbi, nid);
-            if (IS_ERR(indirect_page))
-                return PTR_ERR(indirect_page);
+            if (IS_ERR(indirect_page)){
+                pr_err("[snapfs setmulref]: get indirect_page failed[%d < level5_blks]\n", lblk);
+                goto out;
+                // return PTR_ERR(indirect_page);
+            }
             in_dn = (lblk - level3_blks) / double_dir_blk;
             off_in_dn = (lblk - level3_blks) % double_dir_blk;
             indirect = (struct indirect_node *)page_address(indirect_page);
             nid = le32_to_cpu(indirect->nid[in_dn]);
             if(nid == 0) break; 
             indirect_page2 = f2fs_get_node_page(sbi, nid);
-            if (IS_ERR(indirect_page2))
-                return PTR_ERR(indirect_page2);
+            if (IS_ERR(indirect_page2)){
+                pr_err("[snapfs setmulref]: get indirect_page2 failed[%d < level5_blks]\n", lblk);
+                f2fs_put_page(indirect_page, 1);
+                goto out;
+                // return PTR_ERR(indirect_page);
+            }
             in_dn2 = in_dn / direct_blks;
             off_in_dn2 = off_in_dn % direct_blks;
             indirect2 = (struct indirect_node *)page_address(indirect_page2);
             nid = le32_to_cpu(indirect2->nid[in_dn2]);
             if(nid == 0) break; 
             dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) {
+                pr_err("[snapfs setmulref]: get dn_ipage failed[%d < level3_blks]\n", lblk);
+                f2fs_put_page(indirect_page, 1);
+                f2fs_put_page(indirect_page2, 1);
+                goto out;
+            }
             dn = (struct direct_node *)page_address(dn_ipage);
             blkaddr = le32_to_cpu(dn->addr[off_in_dn2]);
             if (__is_valid_data_blkaddr(blkaddr)) {
@@ -1414,13 +1462,20 @@ int f2fs_set_mulref_blocks(struct inode *inode)
                 ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
                 if(ret){
                     pr_info("set mulref flag failed![level5_blks]\n");
-                    return ret;
+                    f2fs_put_page(dn_ipage, 1);
+                    f2fs_put_page(indirect_page, 1);
+                    f2fs_put_page(indirect_page2, 1);
+                    goto out;
+                    // return ret;
                 }
             }
             f2fs_put_page(dn_ipage, 1);
             f2fs_put_page(indirect_page, 1);
+            f2fs_put_page(indirect_page2, 1);
         }
     }
+out:
+    f2fs_put_page(ipage, 1);
     return 0;
 }
 
@@ -1435,8 +1490,7 @@ int f2fs_cow(struct inode *pra_inode,
              struct inode *son_inode,
              struct inode **new_inode){
     // 判断name of son_inode是否已经存在snap_inode下
-    struct dentry *snap_dentry, *son_dentry;
-    struct dentry *new_dentry;
+    struct dentry *snap_dentry, *son_dentry, *new_dentry;
 	struct f2fs_dir_entry *de;
     struct page *page;
     struct super_block *sb = pra_inode->i_sb;
@@ -1446,19 +1500,15 @@ int f2fs_cow(struct inode *pra_inode,
     struct qstr *d_name;
     struct f2fs_sb_info *sbi = F2FS_I_SB(pra_inode);
     nid_t ino;
-    struct page *son_ipage, *new_ipage;
-    struct page *new_dpage;
+    struct page *son_ipage = NULL, *new_ipage = NULL, *new_dpage = NULL;
     void *page_addr;
-	void *inline_dentry; // inline数据
-	void *inline_dentry2;
+	void *inline_dentry, *inline_dentry2; // inline数据
     char *filename;
-    struct f2fs_inode *son_fi;
-    struct f2fs_inode *new_fi;
+    struct f2fs_inode *son_fi, *new_fi;
     struct fscrypt_str dot = FSTR_INIT(".", 1);
 	struct fscrypt_str dotdot = FSTR_INIT("..", 2);
 	struct f2fs_dentry_ptr d;
     size_t idx = 0;
-    pr_info("start cow!\n");
     // 安全检查
     if (unlikely(f2fs_cp_error(sbi))) {
         ret = -EIO;
@@ -1483,8 +1533,8 @@ int f2fs_cow(struct inode *pra_inode,
     if (!snap_dentry)
 		goto next_free;
 
-    dget(son_dentry);
-    dget(snap_dentry);
+    // dget(son_dentry);
+    // dget(snap_dentry);
     d_name = &son_dentry->d_name;
     de = f2fs_find_entry(snap_inode, d_name, &page);
     if(de){
@@ -1499,20 +1549,18 @@ int f2fs_cow(struct inode *pra_inode,
             pr_info("[snapfs f2fs_cow]: file[%s] of snap[%lu] had cowed!!!\n",
                     son_dentry->d_name.name, snap_inode->i_ino);
             *new_inode = tmp_inode;
-            tmp_inode = NULL;
+            if (tmp_inode) {
+                iput(tmp_inode);
+                tmp_inode = NULL;
+            } 
             goto out_success;
         }
         // 快照目录下对应的数据没有COW过, 那两个目录下的inode就相等
         f2fs_delete_entry(de, page, snap_inode, NULL);
-        // de = f2fs_find_entry(snap_inode, d_name, &page);
-        // if(!de){
-        //     pr_info("删除成功!!!\n");
-        // }
         page = NULL;
         // 准备创建dentry
         // 创建新的inode（使用son_inode的mode）
         mode = son_inode->i_mode;
-        // iput(tmp_inode);
         tmp_inode = snapfs_new_inode(snap_inode, mode);
         if (IS_ERR(tmp_inode)) {
             ret = PTR_ERR(tmp_inode);
@@ -1651,62 +1699,7 @@ int f2fs_cow(struct inode *pra_inode,
                 son_inode->i_size = le64_to_cpu(son_fi->i_size);
                 tmp_inode->i_blocks = le64_to_cpu(son_fi->i_blocks);
                 f2fs_cow_update_inode(son_inode, tmp_inode);
-                // new_fi->i_mode = son_fi->i_mode;
-                // new_fi->i_advise = son_fi->i_advise;
-                // new_fi->i_inline = son_fi->i_inline;
-                // new_fi->i_uid = son_fi->i_uid;
-                // new_fi->i_gid = son_fi->i_gid;
-                // new_fi->i_size = son_fi->i_size;
-                // new_fi->i_blocks = son_fi->i_blocks;  // 这个很重要！
-                // new_fi->i_atime = son_fi->i_atime;
-                // new_fi->i_ctime = son_fi->i_ctime;
-                // new_fi->i_mtime = son_fi->i_mtime;
-                // new_fi->i_atime_nsec = son_fi->i_atime_nsec;
-                // new_fi->i_ctime_nsec = son_fi->i_ctime_nsec;
-                // new_fi->i_mtime_nsec = son_fi->i_mtime_nsec;
-                // new_fi->i_generation = son_fi->i_generation;
-                // new_fi->i_current_depth = son_fi->i_current_depth;
-                // new_fi->i_flags = son_fi->i_flags;
-                // new_fi->i_namelen = son_fi->i_namelen;
-                // tmp_inode->i_size = le64_to_cpu(son_fi->i_size);
-                // tmp_inode->i_blocks = le64_to_cpu(son_fi->i_blocks);
-                // // 复制文件名（如果存在）
-                // if (son_fi->i_namelen > 0 && son_fi->i_namelen <= F2FS_NAME_LEN) {
-                //     memcpy(new_fi->i_name, son_fi->i_name, son_fi->i_namelen);
-                //     new_fi->i_namelen = son_fi->i_namelen;
-                // }
-                // new_fi->i_dir_level = son_fi->i_dir_level;
-                // // 复制extent信息
-                // memcpy(&new_fi->i_ext, &son_fi->i_ext, sizeof(struct f2fs_extent));
-                
-                // if (tmp_inode->i_blocks > 0) {
-                //     unsigned int valid_blocks = tmp_inode->i_blocks / (F2FS_BLKSIZE >> 9);
-                //     f2fs_i_blocks_write(tmp_inode, valid_blocks, true, true);
-                // }
-                
-                // memcpy(new_fi->i_addr, son_fi->i_addr, sizeof(son_fi->i_addr));
-                // for (idx = 0; idx < 5; idx++) {
-                //     new_fi->i_nid[idx] = son_fi->i_nid[idx];
-                // }
-                // tmp_inode->i_mode = son_inode->i_mode;
-                // tmp_inode->i_opflags = son_inode->i_opflags;
-                // tmp_inode->i_uid = son_inode->i_uid;
-                // tmp_inode->i_gid = son_inode->i_gid;
-                // tmp_inode->i_flags = son_inode->i_flags;
-                // if (S_ISCHR(son_inode->i_mode) || S_ISBLK(son_inode->i_mode)) {
-                //     tmp_inode->i_rdev = son_inode->i_rdev;
-                // }
-                // tmp_inode->i_atime = son_inode->i_atime;
-                // tmp_inode->i_mtime = son_inode->i_mtime;
-                // tmp_inode->i_ctime = son_inode->i_ctime;
-                // tmp_inode->i_blkbits = son_inode->i_blkbits;
-                // tmp_inode->i_write_hint = son_inode->i_write_hint;
-                // tmp_inode->i_bytes = son_inode->i_bytes;
-                // tmp_inode->i_version = son_inode->i_version;
-                // tmp_inode->i_sequence = son_inode->i_sequence;
-                // tmp_inode->i_generation = son_inode->i_generation;
-                // tmp_inode->dirtied_when = son_inode->dirtied_when;
-                // tmp_inode->dirtied_time_when = son_inode->dirtied_time_when;
+
                 set_page_dirty(new_ipage);
                 f2fs_put_page(son_ipage, 1);
                 f2fs_put_page(new_ipage, 1);
@@ -1748,61 +1741,6 @@ int f2fs_cow(struct inode *pra_inode,
                 tmp_inode->i_blocks = le64_to_cpu(son_inode->i_blocks);
                 f2fs_cow_update_inode(son_inode, tmp_inode);
                 
-                // new_fi->i_mode = son_fi->i_mode;
-                // new_fi->i_advise = son_fi->i_advise;
-                // new_fi->i_inline = son_fi->i_inline;
-                // new_fi->i_uid = son_fi->i_uid;
-                // new_fi->i_gid = son_fi->i_gid;
-                // new_fi->i_size = son_fi->i_size;
-                // new_fi->i_blocks = son_fi->i_blocks;  // 这个很重要！
-                // new_fi->i_atime = son_fi->i_atime;
-                // new_fi->i_ctime = son_fi->i_ctime;
-                // new_fi->i_mtime = son_fi->i_mtime;
-                // new_fi->i_atime_nsec = son_fi->i_atime_nsec;
-                // new_fi->i_ctime_nsec = son_fi->i_ctime_nsec;
-                // new_fi->i_mtime_nsec = son_fi->i_mtime_nsec;
-                // new_fi->i_generation = son_fi->i_generation;
-                // new_fi->i_current_depth = son_fi->i_current_depth;
-                // new_fi->i_flags = son_fi->i_flags;
-                // new_fi->i_namelen = son_fi->i_namelen;
-                // tmp_inode->i_size = le64_to_cpu(son_fi->i_size);
-                // tmp_inode->i_blocks = le64_to_cpu(son_fi->i_blocks);
-                // // 复制文件名（如果存在）
-                // if (son_fi->i_namelen > 0 && son_fi->i_namelen <= F2FS_NAME_LEN) {
-                //     memcpy(new_fi->i_name, son_fi->i_name, son_fi->i_namelen);
-                //     new_fi->i_namelen = son_fi->i_namelen;
-                // }
-                // new_fi->i_dir_level = son_fi->i_dir_level;
-                // // 复制extent信息
-                // memcpy(&new_fi->i_ext, &son_fi->i_ext, sizeof(struct f2fs_extent));
-                
-                // for (idx = 0; idx < 5; idx++) {
-                //     new_fi->i_nid[idx] = son_fi->i_nid[idx];
-                // }
-                // if (tmp_inode->i_blocks > 0) {
-                //     unsigned int valid_blocks = tmp_inode->i_blocks / (F2FS_BLKSIZE >> 9);
-                //     f2fs_i_blocks_write(tmp_inode, valid_blocks, true, true);
-                // }
-                // memcpy(new_fi->i_addr, son_fi->i_addr, sizeof(son_fi->i_addr));
-                // tmp_inode->i_mode = son_inode->i_mode;
-                // tmp_inode->i_opflags = son_inode->i_opflags;
-                // tmp_inode->i_uid = son_inode->i_uid;
-                // tmp_inode->i_gid = son_inode->i_gid;
-                // tmp_inode->i_flags = son_inode->i_flags;
-                // if (S_ISCHR(son_inode->i_mode) || S_ISBLK(son_inode->i_mode)) {
-                //     tmp_inode->i_rdev = son_inode->i_rdev;
-                // }
-                // tmp_inode->i_atime = son_inode->i_atime;
-                // tmp_inode->i_mtime = son_inode->i_mtime;
-                // tmp_inode->i_ctime = son_inode->i_ctime;
-                // tmp_inode->i_blkbits = son_inode->i_blkbits;
-                // tmp_inode->i_write_hint = son_inode->i_write_hint;
-                // tmp_inode->i_bytes = son_inode->i_bytes;
-                // tmp_inode->i_version = son_inode->i_version;
-                // tmp_inode->i_sequence = son_inode->i_sequence;
-                // tmp_inode->i_generation = son_inode->i_generation;
-                // tmp_inode->dirtied_when = son_inode->dirtied_when;
-                // tmp_inode->dirtied_time_when = son_inode->dirtied_time_when;
                 set_page_dirty(new_ipage);
                 f2fs_put_page(son_ipage, 1);
                 f2fs_put_page(new_ipage, 1);
@@ -1812,30 +1750,31 @@ int f2fs_cow(struct inode *pra_inode,
         f2fs_mark_inode_dirty_sync(tmp_inode, true);
         *new_inode = tmp_inode;
 
-        pr_info("test point\n");
         if(!tmp_inode){
             pr_info("tmp_inode is null\n");
             goto next_free;
         }
-        pr_info("inode[%s, %u]\n",d_find_any_alias(tmp_inode)->d_name.name, tmp_inode->i_ino);
-        pr_info("*new_inode[%s, %u]\n",d_find_any_alias(*new_inode)->d_name.name, (*new_inode)->i_ino);
-        tmp_inode = NULL;
+        // pr_info("inode[%s, %u]\n",d_find_any_alias(tmp_inode)->d_name.name, tmp_inode->i_ino);
+        // pr_info("*new_inode[%s, %u]\n",d_find_any_alias(*new_inode)->d_name.name, (*new_inode)->i_ino);
+        if (tmp_inode) {
+            iput(tmp_inode);
+            tmp_inode = NULL;
+        }
         goto out_success; 
+    }else{
+        goto next_free;
     }
 
 out_success:    
     ret = f2fs_set_mulref_blocks(*new_inode);
-    pr_info("f2fs_set_mulref_blocks over[%d]\n",ret);
-    // ret = 0;
+    // pr_info("f2fs_set_mulref_blocks over[%d]\n",ret);
 
 next_free:
     if (son_dentry)
         dput(son_dentry);
     if (snap_dentry)
         dput(snap_dentry);
-    if (tmp_inode) {
-        iput(tmp_inode);
-    }
+    
     if (new_dentry) {
         dput(new_dentry);
     }
@@ -1864,7 +1803,7 @@ int f2fs_snapshot_cow(struct inode *inode)
     struct dentry *parent_dentry = NULL, *dentry = NULL;
     Stack_snap stack;
     nid_t  pra_ino, son_ino;//, snap_ino;
-    pr_info("f2fs_snapshot_cow!\n");
+    // pr_info("f2fs_snapshot_cow!\n");
     memset(&tmp_me, 0, sizeof(tmp_me));
     // 先判断这个inode是不是快照inode, 
     // 不用执行cow，后续更新引用关系即可
@@ -1901,7 +1840,7 @@ int f2fs_snapshot_cow(struct inode *inode)
                                    
                     ret = snap_pop2(&stack, &pra_ino, &son_ino);
                     if(ret) {
-                        pr_info("cow stack is done\n");
+                        // pr_info("cow stack is done\n");
                         break;
                     }
                     pra_ino = snap_pop(&stack);

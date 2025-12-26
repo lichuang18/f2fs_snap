@@ -4693,18 +4693,13 @@ static ssize_t f2fs_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file_inode(file);
 	int ret;
-	pr_info(" come on baby see you? \n");
 	if (!f2fs_is_compress_backend_ready(inode))
 		return -EOPNOTSUPP;
-	pr_info("TP 1\n");
 
 	ret = generic_file_read_iter(iocb, iter);
-	pr_info("TP 2\n");
 	if (ret > 0)
 		f2fs_update_iostat(F2FS_I_SB(inode), APP_READ_IO, ret);
 	
-	// ssleep(5);
-	pr_info("are you still here?\n");
 	return ret;
 }
 
@@ -4720,8 +4715,7 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	// 我需要判断文件inode 是否是一个快照目录下的文件
 	// 目前的方法是循环往上找父节点信息,要遍历到挂载根节点
 
-	pr_info("start write: [%s]\n",d_find_any_alias(inode)->d_name.name);
-
+	// pr_info("start write: [%s]\n",d_find_any_alias(inode)->d_name.name);
 
 	if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
 		pr_info("normal write with cow\n");
