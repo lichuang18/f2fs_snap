@@ -4,17 +4,20 @@ set -e
 DIR="/mnt/test3"
 SNAP_DIR="/mnt"
 
-STR=$(head -c 16 /dev/urandom | base64 | tr -d '\n' | cut -c1-4096)
+STR=$(head -c 8000 /dev/urandom | base64 | tr -d '\n' | cut -c1-6096)
 
 
 mkdir -p $DIR
+
+echo "create dir success..."
+
 cd $DIR
 
 for i in $(seq 0 2); do
     touch "f$i"
     echo $STR > f$i
 done
-
+echo "create file success..."
 cd -
 
 sync

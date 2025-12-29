@@ -955,3 +955,5 @@ wake_up:
 }
 int share_blk_update_meta(struct inode *src_inode, struct inode *dst_inode,
 												int *do_replace, pgoff_t len, struct page *ipage);
+
+int change_curmulref_blk(struct f2fs_sb_info *sbi);

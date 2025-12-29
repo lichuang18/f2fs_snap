@@ -1034,7 +1034,6 @@ struct f2fs_mulref_entry { // 12 Bytes
 struct f2fs_mulref_block { // 12 Byte * 338 + 40 Byte = 4096 K Byte
 	__u8 multi_bitmap[42]; // 42 Byte * 8 bit = 336 bit
 	struct f2fs_mulref_entry mrentries[MRENTRY_PER_BLOCK];
-	// 22Byte
 	__u16 v_mrentrys;
 	__u16 next_free_mrentry;
 	__u8 reserved[18];
@@ -1059,7 +1058,8 @@ struct f2fs_magic_block {
 
 
 struct f2fs_magic_info {
-	struct mutex mutex;   
+	// struct mutex mutex;   
+	struct rw_semaphore rwsem;
 	block_t magic_blkaddr;		/* start block address of magic area */
 	__le32 segment_count_magic; // 2MB * segment_count_magic
 	block_t mulref_flag_blkaddr;

@@ -2734,6 +2734,97 @@ bool f2fs_segment_has_free_slot(struct f2fs_sb_info *sbi, int segno)
 	return __next_free_blkoff(sbi, segno, 0) < sbi->blocks_per_seg;
 }
 
+// 切换当前的 mulref block
+int change_curmulref_blk(struct f2fs_sb_info *sbi)
+{
+    struct curmulref_info *curmulref = &SM_I(sbi)->curmulref_blk;
+    struct f2fs_mulref_block *new_blk = NULL;
+    struct page *new_page = NULL;
+    block_t old_blkaddr;
+	block_t new_blkaddr;
+    int err = 0;
+    int i = 0;
+    // mutex_lock(&curmulref->curmulref_mutex);
+    
+    // 1. 记录旧的 block 地址
+    old_blkaddr = curmulref->blkaddr;
+    
+    // 2. 如果当前 block 已初始化且有数据，先写回
+    if (curmulref->inited && curmulref->page && curmulref->blk) {
+        // 标记 page 为脏并写回
+        set_page_dirty(curmulref->page);
+        f2fs_wait_on_page_writeback(curmulref->page, META, true, true);
+        
+        f2fs_info(sbi, "Writing back old curmulref block %u", old_blkaddr);
+    }
+    
+    // 3. 获取新的 block 页面
+	if(old_blkaddr + 1 < sbi->sm_info->ssa_blkaddr){ // 分配下一个
+		new_blkaddr = old_blkaddr + 1;
+	}else { // 循环从0开始
+		new_blkaddr = sbi->magic_info->mulref_blkaddr;
+	}
+	
+    new_page = f2fs_get_meta_page(sbi, new_blkaddr);
+    if (IS_ERR(new_page)) {
+        err = PTR_ERR(new_page);
+        f2fs_err(sbi, "Failed to get meta page for new mulref block %u, err %d",
+                 new_blkaddr, err);
+        goto out;
+    }
+    new_blk = (struct f2fs_mulref_block *)page_address(new_page);
+    
+    // 遍历 bitmap 统计已使用的 entry
+    curmulref->used_entries = 0;
+    curmulref->next_free_entry = MRENTRY_PER_BLOCK;  // 默认设为最大值
+    
+    for (i = 0; i < MRENTRY_PER_BLOCK; i++) {
+        int byte_idx = i / 8;
+        int bit_idx = i % 8;
+        
+        if (new_blk->multi_bitmap[byte_idx] & (1 << bit_idx)) {
+            // entry 已被使用
+            curmulref->used_entries++;
+        } else if (curmulref->next_free_entry == MRENTRY_PER_BLOCK) {
+            // 找到第一个空闲的 entry
+            curmulref->next_free_entry = i;
+        }
+    }
+    
+    // 6. 更新 curmulref 信息
+    curmulref->blkaddr = new_blkaddr;
+    
+    // 7. 释放旧的缓存页面（如果有）
+    if (curmulref->page) {
+        f2fs_put_page(curmulref->page, 1);
+        curmulref->page = NULL;
+        curmulref->blk = NULL;
+    }
+    
+    // 8. 设置新的缓存
+    curmulref->page = new_page;
+    curmulref->blk = new_blk;
+    curmulref->inited = true;
+    
+    f2fs_info(sbi, "Switched curmulref: old %u -> new %u, used %u/%u, next_free %u",
+              old_blkaddr, new_blkaddr, curmulref->used_entries,
+              MRENTRY_PER_BLOCK, curmulref->next_free_entry);
+    
+    goto out_success;
+
+out:
+    // 错误处理
+    if (new_page && !IS_ERR(new_page))
+        f2fs_put_page(new_page, 1);
+    
+    // 恢复旧状态
+    curmulref->blkaddr = old_blkaddr;
+
+out_success:
+    // mutex_unlock(&curmulref->curmulref_mutex);
+    return err;
+}
+
 /*
  * This function always allocates a used segment(from dirty seglist) by SSR
  * manner, so it should recover the existing segment information of valid blocks
@@ -3445,9 +3536,14 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	if(!f2fs_is_mulref_blkaddr(sbi, fio->old_blkaddr)){
 		update_sit_entry(sbi, old_blkaddr, -1);	
 	} else{
-		// mulref process
+		// mulref process.   多引用转单引用
+		pr_info("allocate blk and is mulref blk[%u]\n",old_blkaddr);
 		ret = f2fs_mulref_overwrite(sbi,old_blkaddr,le32_to_cpu(sum->nid));
-		if(ret) pr_info("allocate mulref update failed\n");
+		if(ret){
+			pr_info("allocate mulref update failed\n");
+		}else{
+			pr_info("allocate mulref update success\n");
+		}
 	}
 
 	// fio.type     → 这是在写什么？（数据 / 节点 / 元数据）
@@ -3988,6 +4084,114 @@ static int read_normal_summaries(struct f2fs_sb_info *sbi, int type)
 out:
 	f2fs_put_page(new, 1);
 	return err;
+}
+
+// restore
+
+static int load_curmulref_block_now(struct f2fs_sb_info *sbi, block_t blkaddr)
+{
+    struct curmulref_info *cmr = &SM_I(sbi)->curmulref_blk;
+    struct page *page;
+    struct f2fs_mulref_block *blk;
+    int err = 0;
+    
+    // 清理现有缓存
+    if (cmr->page) {
+        f2fs_put_page(cmr->page, 1);
+        cmr->page = NULL;
+        cmr->blk = NULL;
+    }
+    
+    // 获取 meta page
+    page = f2fs_get_meta_page(sbi, blkaddr);
+    if (IS_ERR(page)) {
+        err = PTR_ERR(page);
+        f2fs_err(sbi, "Failed to get meta page for curmulref block %u, err %d",
+                 blkaddr, err);
+        return err;
+    }
+    
+    // 映射到内存
+    blk = (struct f2fs_mulref_block *)page_address(page);
+    
+    // 设置缓存
+    cmr->page = page;
+    cmr->blk = blk;
+    
+    return 0;
+}
+
+// curmulref 的恢复函数 - 简化版，只有 block 号恢复
+static int restore_curmulref_normal(struct f2fs_sb_info *sbi)
+{
+	struct curmulref_info *cmr = &SM_I(sbi)->curmulref_blk;
+    struct f2fs_checkpoint *ckpt = F2FS_CKPT(sbi);
+
+    block_t cur_mulref_blk;
+    int err = 0;
+    mutex_lock(&cmr->curmulref_mutex);
+    
+	block_t start_addr = sbi->magic_info->mulref_blkaddr;
+
+	/* 初始化块地址状态 */
+
+    // 1. 从 checkpoint 读取保存的 block 号
+    cur_mulref_blk = start_addr + ckpt->cur_mulref_blk;
+    f2fs_info(sbi, "Restoring curmulref: block %u", cur_mulref_blk);
+    
+	cmr->blkaddr = cur_mulref_blk;
+	cmr->inited = false;
+	cmr->next_free_entry = 0;
+
+	 // 初始化缓存指针为NULL
+    cmr->blk = NULL;
+    cmr->page = NULL;
+
+    if (cur_mulref_blk == NULL_ADDR || cur_mulref_blk == 0) {
+        f2fs_info(sbi, "No curmulref block in checkpoint, will initialize on demand");
+        // 保持 inited = false，等待第一次使用时初始化
+        goto out_unlock;
+    }
+    
+    f2fs_ra_meta_pages(sbi, cur_mulref_blk, 1, META_CP, true);
+    
+    // 5. 尝试加载 block 到缓存
+    err = load_curmulref_block_now(sbi, cur_mulref_blk);
+    if (err) {
+        f2fs_err(sbi, "Failed to load curmulref block %u during restore, err %d",
+                 cur_mulref_blk, err);
+        
+        if (err == -EIO) {
+            // Block 损坏，记录日志但继续（等待重新初始化）
+            f2fs_warn(sbi, "Curmulref block %u corrupted, will reinitialize on demand",
+                      cur_mulref_blk);
+            cmr->blkaddr = NULL_ADDR;  // 重置为无效
+            err = 0;  // 不视为致命错误
+        }
+        // 其他错误保持，但不设置 inited
+        goto out_unlock;
+    }
+    
+    // 6. 验证加载的数据
+    if (!cmr->blk) {
+        f2fs_err(sbi, "No cached block after load for curmulref %u", cur_mulref_blk);
+        err = -EINVAL;
+        goto out_unlock;
+    }
+    // 10. 标记为已初始化
+    cmr->inited = true;
+	// if(cmr->inited){
+	// 	pr_info("I find you cmr->blkaddr [%u]\n",cmr->blkaddr);
+	// 	pr_info("yes\n");
+	// }else{
+	// 	pr_info("no\n");
+	// }
+    goto out_unlock;
+
+
+out_unlock:
+    mutex_unlock(&cmr->curmulref_mutex);
+    return err;
 }
 
 static int restore_curseg_summaries(struct f2fs_sb_info *sbi)
@@ -4598,6 +4802,34 @@ static int build_free_segmap(struct f2fs_sb_info *sbi)
 	spin_lock_init(&free_i->segmap_lock);
 	return 0;
 }
+
+/**
+ * build_curmulref_info - 初始化当前活跃的多引用块管理结构
+ * @sbi: F2FS超级块信息
+ * 
+ * 返回: 成功返回0，失败返回错误码
+ */
+static int build_curmulref_info(struct f2fs_sb_info *sbi)
+{
+	struct curmulref_info *curmulref = &SM_I(sbi)->curmulref_blk;
+	
+	/* 初始化互斥锁 */
+	mutex_init(&curmulref->curmulref_mutex);
+	block_t start_addr = sbi->magic_info->mulref_blkaddr;
+
+	/* 初始化块地址状态 */
+	curmulref->blkaddr = start_addr + sbi->ckpt->cur_mulref_blk;  /* 初始化为无效地址 */
+	curmulref->next_free_entry = 0;      /* 从第一个entry开始 */
+	curmulref->used_entries = 0;         /* 初始时没有已用entry */
+	curmulref->inited = false;           /* 标记为未初始化 */
+	
+	/* 初始时没有缓存的块和页面 */
+	curmulref->blk = NULL;
+	curmulref->page = NULL;
+	
+	return restore_curmulref_normal(sbi);
+}
+
 
 static int build_curseg(struct f2fs_sb_info *sbi)
 {
@@ -5372,7 +5604,8 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 		pr_err("Failed to allocate memory for magic_info\n");
 		return -ENOMEM;
 	}
-	mutex_init(&magic_info->mutex);
+	// mutex_init(&magic_info->mutex);
+	init_rwsem(&magic_info->rwsem);
 	sbi->magic_info = magic_info;
 	// spin_lock_init(&sbi->magic_info->lock);
 	
@@ -5429,14 +5662,17 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	err = build_free_segmap(sbi);
 	if (err)
 		return err;
+	err = build_curmulref_info(sbi);
+	if (err)
+		return err;	
 	err = build_curseg(sbi);
 	if (err)
 		return err;
 	/* reinit free segmap based on SIT */
-	err = build_sit_entries(sbi);
+	err = build_sit_entries(sbi); // sit_info
 	if (err)
 		return err;
-	err = build_sit_mulref_entries(sbi);
+	err = build_sit_mulref_entries(sbi); // sit_mulref_info
 	if (err)
 		return err;
 	init_free_segmap(sbi);

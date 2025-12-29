@@ -69,7 +69,6 @@ static struct page *__get_meta_page(struct f2fs_sb_info *sbi, pgoff_t index,
 		.is_por = !is_meta ? 1 : 0,
 	};
 	int err;
-
 	if (unlikely(!is_meta))
 		fio.op_flags &= ~REQ_META;
 repeat:
@@ -82,7 +81,6 @@ repeat:
 		goto out;
 
 	fio.page = page;
-
 	err = f2fs_submit_page_bio(&fio);
 	if (err) {
 		f2fs_put_page(page, 1);
@@ -90,13 +88,11 @@ repeat:
 	}
 
 	f2fs_update_iostat(sbi, FS_META_READ_IO, F2FS_BLKSIZE);
-
 	lock_page(page);
 	if (unlikely(page->mapping != mapping)) {
 		f2fs_put_page(page, 1);
 		goto repeat;
 	}
-
 	if (unlikely(!PageUptodate(page))) {
 		f2fs_put_page(page, 1);
 		return ERR_PTR(-EIO);

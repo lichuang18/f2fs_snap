@@ -3746,6 +3746,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		f2fs_put_page(src_ipage, 1);
 	} else{
 		pr_info("[snapfs mk_snap]: src(%lu) without inline dentry\n", src_inode->i_ino);
+		
 		src_ipage = f2fs_get_node_page(sbi, src_inode->i_ino);
 		if (IS_ERR(src_ipage)) {
 			pr_err("[snapfs mk_snap]: failed to get src page[%lu]\n", src_inode->i_ino);
@@ -3759,6 +3760,8 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 			goto out_dput;
 			return -EINVAL;
 		}
+		// err = f2fs_snap_inline_to_dirents(snap_inode, void *inline_dentry,struct page *ipage);
+
 		if (f2fs_has_inline_dentry(snap_inode)) {
 			inline_dentry = inline_data_addr(snap_inode, snap_ipage);
 			// 执行convert， 主要是删除inline数据区域和清除inline flag
@@ -4716,7 +4719,7 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	// 目前的方法是循环往上找父节点信息,要遍历到挂载根节点
 
 	// pr_info("start write: [%s]\n",d_find_any_alias(inode)->d_name.name);
-
+	
 	if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
 		pr_info("normal write with cow\n");
 	}
