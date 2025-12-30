@@ -1034,8 +1034,8 @@ struct f2fs_mulref_entry { // 12 Bytes
 struct f2fs_mulref_block { // 12 Byte * 338 + 40 Byte = 4096 K Byte
 	__u8 multi_bitmap[42]; // 42 Byte * 8 bit = 336 bit
 	struct f2fs_mulref_entry mrentries[MRENTRY_PER_BLOCK];
-	__u16 v_mrentrys;
-	__u16 next_free_mrentry;
+	__le16 v_mrentrys;
+	__le16 next_free_mrentry;
 	__u8 reserved[18];
 } __packed;
 
@@ -1075,7 +1075,7 @@ struct curmulref_info {
 	bool inited;                    /* 是否已经初始化 */
 	/* cache */
 	struct f2fs_mulref_block *blk;  /* 缓存的 mulref block */
-	struct page *page;
+	// struct page *page;
 };
 
 struct f2fs_sm_info {

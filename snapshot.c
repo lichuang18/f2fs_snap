@@ -601,66 +601,120 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
     if(!is_mulref){
         // maybe 加锁
         if (blkaddr1 == blkaddr2) {
-            mulref_page = cmr->page;
-            if (!mulref_page){
-                up_write(&sm->curmulref_lock);
-                return -EIO;
-            }
-            get_page(mulref_page);
+            // mulref_page = cmr->page;
+            // if (!mulref_page){
+            //     up_write(&sm->curmulref_lock);
+            //     return -EIO;
+            // }
+            // get_page(mulref_page);
+            blk = cmr->blk;
+            mgentry = &blk->mrentries[eidx1];
+            mgentry->m_nid = old_sum.nid;
+            mgentry->m_ofs = old_sum.ofs_in_node;
+            mgentry->m_ver = old_sum.version;
+            mgentry->m_count += 2;
+            mgentry->next = cpu_to_le32((blkaddr2 - start_addr) * MRENTRY_PER_BLOCK + eidx2);
+            sum.nid = blkaddr1;
+            sum.ofs_in_node = eidx1;
+            sum.version = old_sum.version;	
+            pr_info("cmr->blkaddr [%u]\n",cmr->blkaddr);
+        
+            pr_info("[snapfs debug]: old nid[%u],ofs[%u],ver[%u]\n",old_sum.nid
+                ,old_sum.ofs_in_node, old_sum.version);
+            pr_info("[snapfs debug]: new nid[%u],ofs[%u],ver[%u]\n",blkaddr1,eidx1,old_sum.version);
+            // pr_info("next: [%u]\n",(blkaddr2 - start_addr) * MRENTRY_PER_BLOCK + eidx2);
+            ret = f2fs_update_summary(sbi, old_blkaddr,&sum,old_segno,blk_off);
+            if(ret){
+                pr_info("[snapfs debug]: update summary failed\n");
+            }else{
+                pr_info("[snapfs debug]: update summary success!\n");
+            }  
+
+            // __add sum entry(sbi, DATA, &old_sum);
+            // mulref_page2 = cmr->page;//可能是同一个page
+
+            // if(mulref_page != mulref_page2){
+            //     get_page(mulref_page2);
+            // }
+            // if (!mulref_page2){
+            //     up_write(&sm->curmulref_lock);
+            //     set_page_dirty(mulref_page);
+            //     f2fs_put_page(mulref_page, 1);
+            //     return -EIO;
+            // }
+            // blk2 = (struct f2fs_mulref_block *)page_address(mulref_page2);
+            mgentry2 = &blk->mrentries[eidx2];
+            mgentry2->m_nid = ino;
+            mgentry2->m_ofs = cpu_to_le16(old_sum.ofs_in_node);
+            mgentry2->m_ver = old_sum.version;
+            mgentry2->m_count = mgentry->m_count;
+            mgentry2->next = 0;
+            // set_page_dirty(mulref_page);
+            
+            // if(mulref_page != mulref_page2){
+            //     f2fs_put_page(mulref_page, 1);
+            //     f2fs_put_page(mulref_page2, 1);
+            // }
+            // f2fs_put_page(mulref_page, 1);  
+
+            up_write(&sm->curmulref_lock);
         } else { // 跨块处理的情况
             mulref_page = f2fs_get_meta_page(sbi, blkaddr1);
-        }
-        blk = (struct f2fs_mulref_block *)page_address(mulref_page);
-        mgentry = &blk->mrentries[eidx1];
-        mgentry->m_nid = old_sum.nid;
-        mgentry->m_ofs = old_sum.ofs_in_node;
-        mgentry->m_ver = old_sum.version;
-        mgentry->m_count += 2;
-        mgentry->next = cpu_to_le32((blkaddr2 - start_addr) * MRENTRY_PER_BLOCK + eidx2);
-        sum.nid = blkaddr1;
-        sum.ofs_in_node = eidx1;
-        sum.version = old_sum.version;	
-        pr_info("cmr->blkaddr [%u]\n",cmr->blkaddr);
-       
-        pr_info("[snapfs debug]: old nid[%u],ofs[%u],ver[%u]\n",old_sum.nid
-            ,old_sum.ofs_in_node, old_sum.version);
-        pr_info("[snapfs debug]: new nid[%u],ofs[%u],ver[%u]\n",blkaddr1,eidx1,old_sum.version);
-        // pr_info("next: [%u]\n",(blkaddr2 - start_addr) * MRENTRY_PER_BLOCK + eidx2);
-        ret = f2fs_update_summary(sbi, old_blkaddr,&sum,old_segno,blk_off);
-        if(ret){
-            pr_info("[snapfs debug]: update summary failed\n");
-        }else{
-            pr_info("[snapfs debug]: update summary success!\n");
-        }  
+            blk = (struct f2fs_mulref_block *)page_address(mulref_page);
 
-        // __add sum entry(sbi, DATA, &old_sum);
-        mulref_page2 = cmr->page;//可能是同一个page
-
-        if(mulref_page != mulref_page2){
-            get_page(mulref_page2);
-        }
-        if (!mulref_page2){
-            up_write(&sm->curmulref_lock);
-            set_page_dirty(mulref_page);
-            f2fs_put_page(mulref_page, 1);
-            return -EIO;
-        }
-        blk2 = (struct f2fs_mulref_block *)page_address(mulref_page2);
-        mgentry2 = &blk2->mrentries[eidx2];
-        mgentry2->m_nid = ino;
-        mgentry2->m_ofs = cpu_to_le16(old_sum.ofs_in_node);
-        mgentry2->m_ver = old_sum.version;
-        mgentry2->m_count = mgentry->m_count;
-        mgentry2->next = 0;
-        set_page_dirty(mulref_page);
+            mgentry = &blk->mrentries[eidx1];
+            mgentry->m_nid = old_sum.nid;
+            mgentry->m_ofs = old_sum.ofs_in_node;
+            mgentry->m_ver = old_sum.version;
+            mgentry->m_count += 2;
+            mgentry->next = cpu_to_le32((blkaddr2 - start_addr) * MRENTRY_PER_BLOCK + eidx2);
+            sum.nid = blkaddr1;
+            sum.ofs_in_node = eidx1;
+            sum.version = old_sum.version;	
+            pr_info("cmr->blkaddr [%u]\n",cmr->blkaddr);
         
-        if(mulref_page != mulref_page2){
-            f2fs_put_page(mulref_page, 1);
-            f2fs_put_page(mulref_page2, 1);
-        }
-        f2fs_put_page(mulref_page, 1);  
+            pr_info("[snapfs debug]: old nid[%u],ofs[%u],ver[%u]\n",old_sum.nid
+                ,old_sum.ofs_in_node, old_sum.version);
+            pr_info("[snapfs debug]: new nid[%u],ofs[%u],ver[%u]\n",blkaddr1,eidx1,old_sum.version);
+            // pr_info("next: [%u]\n",(blkaddr2 - start_addr) * MRENTRY_PER_BLOCK + eidx2);
+            ret = f2fs_update_summary(sbi, old_blkaddr,&sum,old_segno,blk_off);
+            if(ret){
+                pr_info("[snapfs debug]: update summary failed\n");
+            }else{
+                pr_info("[snapfs debug]: update summary success!\n");
+            }  
 
-        up_write(&sm->curmulref_lock);
+            blk2 = cmr->blk;
+            mgentry2 = &blk2->mrentries[eidx1];
+            // __add sum entry(sbi, DATA, &old_sum);
+            // mulref_page2 = cmr->page;//可能是同一个page
+
+            // if(mulref_page != mulref_page2){
+            //     get_page(mulref_page2);
+            // }
+            // if (!mulref_page2){
+            //     up_write(&sm->curmulref_lock);
+            //     set_page_dirty(mulref_page);
+            //     f2fs_put_page(mulref_page, 1);
+            //     return -EIO;
+            // }
+            // blk2 = (struct f2fs_mulref_block *)page_address(mulref_page2);
+            // mgentry2 = &blk2->mrentries[eidx2];
+            mgentry2->m_nid = ino;
+            mgentry2->m_ofs = cpu_to_le16(old_sum.ofs_in_node);
+            mgentry2->m_ver = old_sum.version;
+            mgentry2->m_count = mgentry->m_count;
+            mgentry2->next = 0;
+            set_page_dirty(mulref_page);
+            
+            // if(mulref_page != mulref_page2){
+            //     f2fs_put_page(mulref_page, 1);
+            //     f2fs_put_page(mulref_page2, 1);
+            // }
+            f2fs_put_page(mulref_page, 1);  
+            up_write(&sm->curmulref_lock);
+        }
+        
     }else{ // 已经是多引用块，也就是多版本快照的处理
         // 分配一个就行，就是 eidx1和blkaddr1
         mulref_page = cmr->page; // 分配的数据块信息， 对应blkaddr1
@@ -2293,17 +2347,14 @@ static int f2fs_get_summary_by_addr(struct f2fs_sb_info *sbi,
 }
 
 int f2fs_get_mulref_block(struct f2fs_sb_info *sbi, block_t blkaddr,
-                 struct page **out_page, struct f2fs_mulref_block **out_blk)
+                 struct f2fs_mulref_block **out_blk)
 {
 	struct f2fs_sm_info *sm = SM_I(sbi);
 	struct curmulref_info *cmr = &sm->curmulref_blk;
 	struct page *page;
     block_t start_addr = sbi->magic_info->mulref_blkaddr;
-    if (out_blk)
-        *out_blk = NULL;
-    if (out_page) *out_page = NULL;
 
-    if (!out_page || !out_blk) {
+    if (!out_blk) {
         f2fs_err(sbi, "f2fs get mulref_block_full: output params are NULL");
         return -EINVAL;
     }
@@ -2317,14 +2368,12 @@ int f2fs_get_mulref_block(struct f2fs_sb_info *sbi, block_t blkaddr,
 	 * current active mulref block
 	 */
 	if (cmr->inited && blkaddr == cmr->blkaddr) {
-		if (unlikely(!cmr->page || !cmr->blk)){
-			f2fs_err(sbi, "f2fs get mulref_block: cmr inited but page/blk is NULL\n");
+		if (unlikely(!cmr->blk)){
+			f2fs_err(sbi, "f2fs get mulref_block: cmr inited but blk is NULL\n");
             return -EIO;
         }
-        get_page(cmr->page);
-        // *out_page = cmr->page;
-        *out_page = NULL;
         *out_blk = cmr->blk;
+        // memcpy(out_blk, cmr->blk, sizeof(*cmr->blk));
 		return 0;
 	}
 	/*
@@ -2336,8 +2385,12 @@ int f2fs_get_mulref_block(struct f2fs_sb_info *sbi, block_t blkaddr,
         f2fs_err(sbi, "f2fs get mulref_block: f2fs_get_meta_page failed\n");
 		return 1;
     }
-    *out_page = page;
+     /* 把内容 memcpy 到 cmr->blk 中，保持缓存 */
+
+    // memcpy(out_blk, page_address(page), sizeof(*out_blk));
     *out_blk = (struct f2fs_mulref_block *)page_address(page);
+    // f2fs_put_page(page, 1);
+
 	return 0;
 }
 
@@ -2405,7 +2458,7 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
 
     
      /* 获取第一个 block */
-    ret = f2fs_get_mulref_block(sbi, cur_mr_blkaddr, &head_page, &head_blk);
+    ret = f2fs_get_mulref_block(sbi, cur_mr_blkaddr, &head_blk);
     if (ret) {
         pr_info("f2fs get mulref block failed!\n");
         return -EIO;
@@ -2444,7 +2497,7 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
         /* 获取当前 entry 所在的 block */
         if (cur_mr_blkaddr != prev_mr_blkaddr) {// 跨块处理
             pr_info("cross blk\n");
-            ret = f2fs_get_mulref_block(sbi, cur_mr_blkaddr,&cur_page,&cur_blk);
+            ret = f2fs_get_mulref_block(sbi, cur_mr_blkaddr,&cur_blk);
             if (ret) {
                 pr_info("failed to get mulref block %u\n", cur_mr_blkaddr);
                 ret = -EIO;
@@ -2535,7 +2588,7 @@ found_entry:
                 prev_blk = cur_blk;
                 // prev_eidx = cur_eidx;
                 // prev_next = cur_next;
-                ret = f2fs_get_mulref_block(sbi, next_mr_blkaddr, &mulref_page, &cur_blk);
+                ret = f2fs_get_mulref_block(sbi, next_mr_blkaddr, &cur_blk);
                 if (ret) {
                     pr_info("f2fs get mulref block failed-next_mr_blkaddr!\n");
                     return -EIO;
@@ -2616,7 +2669,7 @@ found_entry:
                 prev_eidx = cur_eidx;
                 // prev_next = cur_next;
                 // prev_entry = cur_entry;
-                ret = f2fs_get_mulref_block(sbi, next_mr_blkaddr,&cur_page,&cur_blk);
+                ret = f2fs_get_mulref_block(sbi, next_mr_blkaddr,&cur_blk);
                 if (ret) {
                     pr_info("failed to get mulref block2 %u\n", next_mr_blkaddr);
                     ret = -EIO;
