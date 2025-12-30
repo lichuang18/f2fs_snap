@@ -2744,7 +2744,7 @@ int change_curmulref_blk(struct f2fs_sb_info *sbi)
     int err = 0, i = 0;
 	struct page *page, *new_page;
 
-    mutex_lock(&cmr->curmulref_mutex);
+    // mutex_lock(&cmr->curmulref_mutex);
     
     // 1. 记录旧的 block 地址
     old_blkaddr = cmr->blkaddr;
