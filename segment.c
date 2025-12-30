@@ -3536,16 +3536,17 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	 */
 	update_sit_entry(sbi, *new_blkaddr, 1);
 
+	pr_info("come on what happen\n");
 	if(!f2fs_is_mulref_blkaddr(sbi, fio->old_blkaddr)){
 		update_sit_entry(sbi, old_blkaddr, -1);	
 	} else{
 		// mulref process.   多引用转单引用
-		pr_info("allocate blk and is mulref blk[%u]\n",old_blkaddr);
+		pr_info("[snapfs IO]: allocate blk and is mulref blk[%u]\n",old_blkaddr);
 		ret = f2fs_mulref_overwrite(sbi,old_blkaddr,le32_to_cpu(sum->nid));
 		if(ret){
-			pr_info("allocate mulref update failed\n");
+			pr_info("[snapfs IO]: allocate mulref update failed\n");
 		}else{
-			pr_info("allocate mulref update success\n");
+			pr_info("[snapfs IO]: allocate mulref update success\n");
 		}
 	}
 

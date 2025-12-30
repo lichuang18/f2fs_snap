@@ -162,7 +162,7 @@ int f2fs_update_summary(struct f2fs_sb_info *sbi, block_t blkaddr,
     }
     // 和f2fs_allocate_data_block一样的锁顺序
     if(curseg){
-        pr_info("[snapfs debug]: summary with curseg\n");
+        pr_info("[snapfs update]: summary with curseg\n");
         down_read(&SM_I(sbi)->curseg_lock);
         mutex_lock(&curseg->curseg_mutex);
         // 更新
@@ -174,7 +174,7 @@ int f2fs_update_summary(struct f2fs_sb_info *sbi, block_t blkaddr,
         mutex_unlock(&curseg->curseg_mutex);
         up_read(&SM_I(sbi)->curseg_lock);
     } else{
-        pr_info("summary to update not in curseg\n");
+        pr_info("[snapfs update]: summary to update not in curseg\n");
         return 1;
     }
     
@@ -565,7 +565,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         blkaddr1 = cmr->blkaddr;
         ret = curmulref_alloc_entry(sbi, &eidx_tmp);
         if (ret) {
-            pr_info("alloc failed\n");
+            pr_info("[snapfs cow2222]: debug alloc failed\n");
             up_write(&sm->curmulref_lock);
             return ret;
         }
@@ -575,7 +575,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         /* 2. 分配第二个 entry，对应传入的 ino */
         ret = curmulref_alloc_entry(sbi, &eidx_tmp);
         if (ret) {
-            pr_info("alloc second entry failed\n");
+            pr_info("[snapfs cow2222]: debug alloc entry2 failed\n");
             up_write(&sm->curmulref_lock);
             return ret;
         }
@@ -585,7 +585,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         blkaddr1 = cmr->blkaddr;
         ret = curmulref_alloc_entry(sbi, &eidx_tmp);
         if (ret) {
-            pr_info("alloc failed2\n");
+            pr_info("[snapfs cow2222]: debug alloc failed /is_mulref\n");
             up_write(&sm->curmulref_lock);
             return ret;
         }
@@ -605,7 +605,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
     if (old_curseg) {
         sum_blk = old_curseg->sum_blk;
         if (!sum_blk) {
-            pr_err("sum_blk is NULL\n");
+            pr_err("[snapfs cow2222]: debug alloc sum_blk is NULL\n");
         }
         old_sum = sum_blk->entries[blk_off];
         // old_nid = le32_to_cpu(old_sum.nid);
@@ -634,16 +634,16 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
             sum.nid = blkaddr1;
             sum.ofs_in_node = eidx1;
             sum.version = old_sum.version;	
-            pr_info("cmr->blkaddr [%u]\n",cmr->blkaddr);
-            pr_info("[snapfs debug]: old nid[%u],ofs[%u],ver[%u]\n",old_sum.nid
+            pr_info("[snapfs cow2222]: debug alloc cmr->blkaddr [%u]\n",cmr->blkaddr);
+            pr_info("[snapfs cow2222]: debug alloc old nid[%u],ofs[%u],ver[%u]\n",old_sum.nid
                 ,old_sum.ofs_in_node, old_sum.version);
-            pr_info("[snapfs debug]: new nid[%u],ofs[%u],ver[%u]\n",blkaddr1,eidx1,old_sum.version);
+            pr_info("[snapfs cow2222]: debug alloc new nid[%u],ofs[%u],ver[%u]\n",blkaddr1,eidx1,old_sum.version);
             // pr_info("next: [%u]\n",(blkaddr2 - start_addr) * MRENTRY_PER_BLOCK + eidx2);
             ret = f2fs_update_summary(sbi, old_blkaddr,&sum,old_segno,blk_off);
             if(ret){
-                pr_info("[snapfs debug]: update summary failed\n");
+                pr_info("[snapfs cow2222]: debug alloc update summary failed\n");
             }else{
-                pr_info("[snapfs debug]: update summary success!\n");
+                pr_info("[snapfs cow2222]: debug alloc update summary success!\n");
             }  
 
             mgentry2 = &blk->mrentries[eidx2];
@@ -667,17 +667,17 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
             sum.nid = blkaddr1;
             sum.ofs_in_node = eidx1;
             sum.version = old_sum.version;	
-            pr_info("cmr->blkaddr [%u]\n",cmr->blkaddr);
+            pr_info("[snapfs cow2222]: debug alloc (diff blk) cmr->blkaddr [%u]\n",cmr->blkaddr);
         
-            pr_info("[snapfs debug]: old nid[%u],ofs[%u],ver[%u]\n",old_sum.nid
+            pr_info("[snapfs cow2222]: debug alloc (diff blk) old nid[%u],ofs[%u],ver[%u]\n",old_sum.nid
                 ,old_sum.ofs_in_node, old_sum.version);
-            pr_info("[snapfs debug]: new nid[%u],ofs[%u],ver[%u]\n",blkaddr1,eidx1,old_sum.version);
+            pr_info("[snapfs cow2222]: debug alloc (diff blk) new nid[%u],ofs[%u],ver[%u]\n",blkaddr1,eidx1,old_sum.version);
             // pr_info("next: [%u]\n",(blkaddr2 - start_addr) * MRENTRY_PER_BLOCK + eidx2);
             ret = f2fs_update_summary(sbi, old_blkaddr,&sum,old_segno,blk_off);
             if(ret){
-                pr_info("[snapfs debug]: update summary failed\n");
+                pr_info("[snapfs cow2222]: debug alloc (diff blk) update summary failed\n");
             }else{
-                pr_info("[snapfs debug]: update summary success!\n");
+                pr_info("[snapfs cow2222]: debug alloc (diff blk) update summary success!\n");
             }  
 
             blk2 = cmr->blk;
@@ -694,6 +694,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         
     }else{ // 已经是多引用块，也就是多版本快照的处理
         // 分配一个就行，就是 eidx1和blkaddr1
+        pr_info("[snapfs cow2222]: debug alloc (is_mulref)\n");
         blk = cmr->blk;
         mgentry = &blk->mrentries[eidx1];
 
@@ -738,7 +739,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
                 blk3 = (struct f2fs_mulref_block *)page_address(mulref_page3);
             }
             if(!blk3){
-                pr_info("blk3 failed\n");
+                pr_info("[snapfs cow2222]: debug alloc (is_mulref) blk3 failed\n");
                 break;
             }
             mgentry3 = &blk3->mrentries[eidx3];
@@ -1323,8 +1324,8 @@ int f2fs_magic_lookup(struct f2fs_sb_info *sbi, u32 src_ino,
             me = &mb->mgentries[off];
             if (le32_to_cpu(me->src_ino) == src_ino) {
                 /* 命中已有映射 */
-                pr_info("[snapfs f2fs_magic_lookup]: find mgentry, addr/off[%u,%u] with id[%u]\n"
-                        ,blkaddr, off, entry_id);       
+                pr_info("[snapfs cow]: debug find mgentry, addr/off[%u,%u] with id[%u],src_ino[%u]\n"
+                        ,blkaddr, off, entry_id, src_ino);       
                 *ret_entry_id = entry_id;
                 memcpy(ret_entry, me, sizeof(*me));
                 up_read(&sbi->magic_info->rwsem);
@@ -1532,7 +1533,7 @@ bool is_snapshot_inode(struct inode *inode,
     struct dentry *dentry = NULL;
     dentry = d_find_any_alias(inode);
     if(dentry) dput(dentry);
-    // pr_info("file[%s]\n",dentry->d_name.name);
+    pr_info("[snapfs cow1]: debug check file[%s]\n",dentry->d_name.name);
 	if (f2fs_magic_lookup(sbi, inode->i_ino, &tmp_entry_id, &tmp_me)) {// 未找到或者冲突未解决
 		// pr_info("[%u] is not snapshot\n", inode->i_ino);
         return false;
@@ -1549,7 +1550,7 @@ int set_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr, nid_t ino){ //, 
     block_t local_blk = blkaddr;
     ret = f2fs_alloc_mulref_entry(sbi, &local_blk, ino);
     if(!ret){
-        pr_info("[snapfs set mulref entry]: set success! blk[%u]\n",blkaddr);
+        pr_info("[snapfs cow222]: debug setmulref set success! blk[%u]\n",blkaddr);
         // bool is_mulref = check_sit_mulref_entry(sbi, blkaddr);
         // if(!is_mulref){
         //     pr_info("woaini you are false\n");
@@ -1564,13 +1565,35 @@ int set_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr, nid_t ino){ //, 
         //     pr_info("wofuck you are false\n");
         // }
     }else{
-        pr_info("set mulref flag failed! blk[%u]\n",blkaddr);
+        pr_info("[snapfs cow222]: debug setmulref failed! blk[%u]\n",blkaddr);
         return ret;
     }
     return 0;
 }
 
+bool f2fs_is_empty_file(struct f2fs_sb_info *sbi,
+                    struct inode *inode){
 
+    struct f2fs_inode *ri;
+    struct page *page;
+    loff_t isize;
+
+    page = f2fs_get_node_page(sbi, inode->i_ino);
+    if (IS_ERR(page)) {
+        pr_err("[snapfs cow22]: debug get page failed[%lu]\n", inode->i_ino); 
+        return true;
+    }
+    ri = F2FS_INODE(page);
+    isize  = le64_to_cpu(ri->i_size); 
+    if (isize == 0) {
+		pr_info("[snapfs cow22]: debug inode %lu empty file\n", inode->i_ino);
+		return true;
+	}else{
+        pr_info("[snapfs cow22]: debug inode %lu non empty file\n", inode->i_ino);
+    }
+    f2fs_put_page(page, 1);
+    return false; // 需要cow处理
+}
 
 int f2fs_set_mulref_blocks(struct inode *inode)
 {
@@ -1598,20 +1621,8 @@ int f2fs_set_mulref_blocks(struct inode *inode)
     
     int ret = 0;
 
-    if(S_ISDIR(inode->i_mode)){
-        if (f2fs_has_inline_dentry(inode)){
-            pr_info("cow inode is inline dir\n");
-            return 0;
-        }
-    }else if(S_ISREG(inode->i_mode)){
-        if (f2fs_has_inline_data(inode)){
-            pr_info("cow inode is inline data\n");
-            return 0;
-        }
-    }
-
     if(S_ISREG(inode->i_mode))
-        pr_info("[snapfs debug]: f2fs_set mulref blocks [noninline data]\n");
+        pr_info("[snapfs cow22]: debug setmulref [noninline data]\n");
 
     const long direct_index = ADDRS_PER_INODE(inode);
 	const long direct_blks = ADDRS_PER_BLOCK(inode);
@@ -1622,26 +1633,29 @@ int f2fs_set_mulref_blocks(struct inode *inode)
     const long level5_blks = level4_blks + direct_blks * direct_blks * direct_blks;
     const long double_dir_blk = direct_blks * direct_blks;
     
-	isize = i_size_read(inode);
-	blkbits = inode->i_blkbits;
-	if (isize == 0) {
-		pr_info("inode %lu: empty file\n", inode->i_ino);
+	// isize = i_size_read(inode);
+	
+	if (f2fs_is_empty_file(sbi, inode)) {
 		return 1;
 	}
-	max_lblk = (isize + (1ULL << blkbits) - 1) >> blkbits;
+
     ipage = f2fs_get_node_page(sbi, inode->i_ino);
     if (IS_ERR(ipage)) {
-        pr_err("[snapfs setmulref]: get src_page[%lu] failed\n", inode->i_ino);
+        pr_err("[snapfs cow22]: debug setmulref get src_page[%lu] failed\n", inode->i_ino);
         return 1;
     }
     fi = F2FS_INODE(ipage);
+    isize  = le64_to_cpu(fi->i_size); 
+    blkbits = inode->i_blkbits;
+	max_lblk = (isize + (1ULL << blkbits) - 1) >> blkbits;
+
 	for (lblk = 0; lblk < max_lblk; lblk++) {
         if(lblk <= direct_index){
             if (__is_valid_data_blkaddr(fi->i_addr[lblk])) {
                 // 开始set mulref flag
                 ret = set_mulref_entry(sbi, fi->i_addr[lblk], inode->i_ino);
                 if(ret){
-                    pr_info("set mulref flag failed![direct_index]\n");
+                    pr_info("[snapfs cow22]: debug setmulref failed![direct_index]\n");
                     goto out;
                     // return ret;
                 }
@@ -1652,7 +1666,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             if(nid == 0) continue; 
             dn_ipage = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(dn_ipage)) {
-                pr_err("[snapfs setmulref]: get dn_ipage failed[%d < direct_index]\n", lblk);
+                pr_err("[snapfs cow22]: debug setmulref get dn_ipage failed[%d < direct_index]\n", lblk);
                 goto out;
             }
             dn = (struct direct_node *)page_address(dn_ipage);
@@ -1661,7 +1675,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
                 // 开始set mulref flag
                 ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
                 if(ret){
-                    pr_info("set mulref flag failed![level1_blks]\n");
+                    pr_info("[snapfs cow22]: debug setmulref failed![level1_blks]\n");
                     f2fs_put_page(dn_ipage, 1);
                     goto out;
                     // return ret;
@@ -1673,7 +1687,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             if(nid == 0) continue; 
             dn_ipage = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(dn_ipage)) {
-                pr_err("[snapfs setmulref]: get dn_ipage failed[%d < level2_blks]\n", lblk);
+                pr_err("[snapfs cow22]: debug setmulref get dn_ipage failed[%d < level2_blks]\n", lblk);
                 goto out;
             }
             dn = (struct direct_node *)page_address(dn_ipage);
@@ -1682,7 +1696,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
                 // 开始set mulref flag
                 ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
                 if(ret){
-                    pr_info("set mulref flag failed![level2_blks]\n");
+                    pr_info("[snapfs cow22]: debug setmulref failed![level2_blks]\n");
                     f2fs_put_page(dn_ipage, 1);
                     goto out;
                     // return ret;
@@ -1705,7 +1719,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             if(nid == 0) break; 
             dn_ipage = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(dn_ipage)) {
-                pr_err("[snapfs setmulref]: get dn_ipage failed[%d < level3_blks]\n", lblk);
+                pr_err("[snapfs cow22]: debug setmulref get dn_ipage failed[%d < level3_blks]\n", lblk);
                 f2fs_put_page(indirect_page, 1);
                 goto out;
             }
@@ -1715,7 +1729,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
                 // 开始set mulref flag
                 ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
                 if(ret){
-                    pr_info("set mulref flag failed![level3_blks]\n");
+                    pr_info("[snapfs cow22]: debug setmulref failed![level3_blks]\n");
                     f2fs_put_page(dn_ipage, 1);
                     f2fs_put_page(indirect_page, 1);
                     goto out;
@@ -1729,7 +1743,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             if(nid == 0) break; 
             indirect_page = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(indirect_page)){
-                pr_err("[snapfs setmulref]: get indirect_page failed[%d < level4_blks]\n", lblk);
+                pr_err("[snapfs cow22]: debug setmulref get indirect_page failed[%d < level4_blks]\n", lblk);
                 goto out;
                 // return PTR_ERR(indirect_page);
             }
@@ -1740,7 +1754,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             if(nid == 0) break; 
             dn_ipage = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(dn_ipage)) {
-                pr_err("[snapfs setmulref]: get dn_ipage failed[%d < level3_blks]\n", lblk);
+                pr_err("[snapfs cow22]: debug setmulref get dn_ipage failed[%d < level3_blks]\n", lblk);
                 f2fs_put_page(indirect_page, 1);
                 goto out;
             }
@@ -1750,7 +1764,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
                 // 开始set mulref flag
                 ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
                 if(ret){
-                    pr_info("set mulref flag failed![level4_blks]\n");
+                    pr_info("[snapfs cow22]: debug setmulref failed![level4_blks]\n");
                     f2fs_put_page(dn_ipage, 1);
                     f2fs_put_page(indirect_page, 1);
                     goto out;
@@ -1764,7 +1778,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             if(nid == 0) break; 
             indirect_page = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(indirect_page)){
-                pr_err("[snapfs setmulref]: get indirect_page failed[%d < level5_blks]\n", lblk);
+                pr_err("[snapfs cow22]: debug setmulref get indirect_page failed[%d < level5_blks]\n", lblk);
                 goto out;
                 // return PTR_ERR(indirect_page);
             }
@@ -1775,7 +1789,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             if(nid == 0) break; 
             indirect_page2 = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(indirect_page2)){
-                pr_err("[snapfs setmulref]: get indirect_page2 failed[%d < level5_blks]\n", lblk);
+                pr_err("[snapfs cow22]: debug setmulref get indirect_page2 failed[%d < level5_blks]\n", lblk);
                 f2fs_put_page(indirect_page, 1);
                 goto out;
                 // return PTR_ERR(indirect_page);
@@ -1787,7 +1801,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             if(nid == 0) break; 
             dn_ipage = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(dn_ipage)) {
-                pr_err("[snapfs setmulref]: get dn_ipage failed[%d < level3_blks]\n", lblk);
+                pr_err("[snapfs cow22]: debug setmulref get dn_ipage failed[%d < level3_blks]\n", lblk);
                 f2fs_put_page(indirect_page, 1);
                 f2fs_put_page(indirect_page2, 1);
                 goto out;
@@ -1798,7 +1812,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
                 // 开始set mulref flag
                 ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
                 if(ret){
-                    pr_info("set mulref flag failed![level5_blks]\n");
+                    pr_info("[snapfs cow22]: debug setmulref failed![level5_blks]\n");
                     f2fs_put_page(dn_ipage, 1);
                     f2fs_put_page(indirect_page, 1);
                     f2fs_put_page(indirect_page2, 1);
@@ -1876,21 +1890,24 @@ int f2fs_cow(struct inode *pra_inode,
     de = f2fs_find_entry(snap_inode, d_name, &page);
     if(de){
         // 快照目录下对应的数据COW过, 那两个目录下的inode就不相等
+        // 若没有cow，iget获得的就是son_inode
         tmp_inode = f2fs_iget(sb, le32_to_cpu(de->ino));
         if (IS_ERR(tmp_inode)) {
             ret = PTR_ERR(tmp_inode);
             tmp_inode = NULL;
             goto next_free;
         }
-        if((le32_to_cpu(de->ino) != son_inode->i_ino) && (tmp_inode->i_size == son_inode->i_size)){
-            pr_info("[snapfs f2fs_cow]: file[%s] of snap[%lu] had cowed!!!\n",
+        // if((le32_to_cpu(de->ino) != son_inode->i_ino) && (tmp_inode->i_size == son_inode->i_size)){
+        if((le32_to_cpu(de->ino) != son_inode->i_ino)){
+            pr_info("[snapfs cow2]: file[%s] of snap[%lu] had cowed!!!\n",
                     son_dentry->d_name.name, snap_inode->i_ino);
             *new_inode = tmp_inode;
-            if (tmp_inode) {
-                iput(tmp_inode);
-                tmp_inode = NULL;
-            } 
-            goto out_success;
+            tmp_inode = NULL;
+            // if (tmp_inode) {
+            //     iput(tmp_inode);
+            //     tmp_inode = NULL;
+            // } 
+            goto next_free;
         }
         // 快照目录下对应的数据没有COW过, 那两个目录下的inode就相等
         f2fs_delete_entry(de, page, snap_inode, NULL);
@@ -1901,7 +1918,7 @@ int f2fs_cow(struct inode *pra_inode,
         tmp_inode = snapfs_new_inode(snap_inode, mode);
         if (IS_ERR(tmp_inode)) {
             ret = PTR_ERR(tmp_inode);
-            pr_err("[snapfs f2fs_cow]: failed to create new inode: %d\n", ret);
+            pr_err("[snapfs cow2]: failed to create new inode: %d\n", ret);
             goto next_free;
         }
         if (!test_opt(sbi, DISABLE_EXT_IDENTIFY))
@@ -1933,14 +1950,14 @@ int f2fs_cow(struct inode *pra_inode,
         if (ret) {
             f2fs_unlock_op(sbi);
               
-            pr_err("[snapfs f2fs_cow]: failed to add link: %d\n", ret);
+            pr_err("[snapfs cow2]: failed to add link: %d\n", ret);
             goto next_free;
         }
         f2fs_unlock_op(sbi);
         f2fs_alloc_nid_done(sbi, ino);
 	    d_instantiate_new(new_dentry, tmp_inode);
 
-        pr_info("[snapfs f2fs_cow]: dentry[%s/%u] found in [%s/%u], new[%s/%u]\n", 
+        pr_info("[snapfs cow2]: dentry[%s/%u] found in [%s/%u], new[%s/%u]\n", 
             d_name->name, le32_to_cpu(de->ino), 
             d_find_any_alias(snap_inode)->d_name.name, snap_inode->i_ino,
             new_dentry->d_name.name, tmp_inode->i_ino);
@@ -1962,16 +1979,16 @@ int f2fs_cow(struct inode *pra_inode,
 
         if(S_ISDIR(son_inode->i_mode)){
             if (f2fs_has_inline_dentry(son_inode)){
-                pr_info("[snapfs f2fs_cow]: subdir(%lu) with inline\n", son_inode->i_ino);
+                pr_info("[snapfs cow2]: subdir(%lu) with inline\n", son_inode->i_ino);
                 set_inode_flag(tmp_inode, FI_INLINE_DENTRY);
                 son_ipage = f2fs_get_node_page(sbi, son_inode->i_ino);
                 if (IS_ERR(son_ipage)) {
-                    pr_err("[snapfs f2fs_cow]: get src_page[%lu] failed\n", son_inode->i_ino);
+                    pr_err("[snapfs cow2]: get src_page[%lu] failed\n", son_inode->i_ino);
                     goto next_free;
                 }
                 new_ipage = f2fs_get_node_page(sbi, snap_inode->i_ino);
                 if (IS_ERR(new_ipage)) {
-                    pr_err("[snapfs f2fs_cow]: get snap page[%lu] failed\n", snap_inode->i_ino);
+                    pr_err("[snapfs cow2]: get snap page[%lu] failed\n", snap_inode->i_ino);
                     f2fs_put_page(new_ipage, 1);
                     goto next_free;
                 }
@@ -1990,16 +2007,16 @@ int f2fs_cow(struct inode *pra_inode,
                 f2fs_put_page(new_ipage, 1);
                 f2fs_put_page(son_ipage, 1);
             } else{
-                pr_info("[snapfs f2fs_cow]: subdir(%lu) without inline\n", son_inode->i_ino);
+                pr_info("[snapfs cow2]: subdir(%lu) without inline\n", son_inode->i_ino);
             
                 son_ipage = f2fs_get_node_page(sbi, son_inode->i_ino);
                 if (IS_ERR(son_ipage)) {
-                    pr_err("[snapfs mk_snap]: failed to get src page[%lu]\n", son_inode->i_ino);
+                    pr_err("[snapfs cow2]: failed to get src page[%lu]\n", son_inode->i_ino);
                     goto next_free;
                 }
                 new_ipage = f2fs_get_node_page(sbi, tmp_inode->i_ino);
                 if (IS_ERR(new_ipage)) {
-                    pr_err("[snapfs mk_snap]: failed to get snap page[%lu]\n", tmp_inode->i_ino);
+                    pr_err("[snapfs cow2]: failed to get snap page[%lu]\n", tmp_inode->i_ino);
                     f2fs_put_page(son_ipage, 1);
                     goto next_free;
                 }
@@ -2011,7 +2028,7 @@ int f2fs_cow(struct inode *pra_inode,
                     if(ret){
                         f2fs_put_page(son_ipage, 1);
                         f2fs_put_page(new_ipage, 1);
-                        pr_info("[snapfs mk_snap]: convert inline failed\n");
+                        pr_info("[snapfs cow2]: convert inline failed\n");
                         goto next_free;
                     }
                 }
@@ -2035,7 +2052,7 @@ int f2fs_cow(struct inode *pra_inode,
             }
         }else if(S_ISREG(son_inode->i_mode)){
             if(f2fs_has_inline_data(son_inode)){
-                pr_info("[snapfs f2fs_cow]: subfile(%lu) with inline\n", son_inode->i_ino);
+                pr_info("[snapfs cow2]: subfile(%lu) with inline\n", son_inode->i_ino);
                 set_inode_flag(tmp_inode, FI_INLINE_DATA);
                 son_ipage = f2fs_get_node_page(sbi, son_inode->i_ino);
                 new_ipage = f2fs_get_node_page(sbi, tmp_inode->i_ino);
@@ -2048,16 +2065,16 @@ int f2fs_cow(struct inode *pra_inode,
                 f2fs_put_page(new_ipage, 1);
                 f2fs_put_page(son_ipage, 1);
             } else{ // non inline process
-                pr_info("[snapfs f2fs_cow]: subfile(%lu) without inline\n", son_inode->i_ino);
+                pr_info("[snapfs cow2]: subfile(%lu) without inline\n", son_inode->i_ino);
                 // set_inode_flag(tmp_inode, FI_INLINE_DATA);
                 son_ipage = f2fs_get_node_page(sbi, son_inode->i_ino);
                 if (IS_ERR(son_ipage)) {
-                    pr_err("[snapfs f2fs_cow]: failed to get src page[%lu]\n", son_inode->i_ino);
+                    pr_err("[snapfs cow2]: failed to get src page[%lu]\n", son_inode->i_ino);
                     goto next_free;
                 }
                 new_ipage = f2fs_get_node_page(sbi, tmp_inode->i_ino);
                 if (IS_ERR(new_ipage)) {
-                    pr_err("[snapfs f2fs_cow]: failed to get snap page[%lu]\n", tmp_inode->i_ino);
+                    pr_err("[snapfs cow2]: failed to get snap page[%lu]\n", tmp_inode->i_ino);
                     f2fs_put_page(son_ipage, 1);
                     goto next_free;
                 }
@@ -2067,7 +2084,7 @@ int f2fs_cow(struct inode *pra_inode,
                     if(ret){
                         f2fs_put_page(son_ipage, 1);
                         f2fs_put_page(new_ipage, 1);
-                        pr_info("[snapfs f2fs_cow]: convert inline failed\n");
+                        pr_info("[snapfs cow2]: convert inline failed\n");
                         goto next_free;
                     }
                 }
@@ -2115,10 +2132,11 @@ int f2fs_cow(struct inode *pra_inode,
             }
         }
         // pr_info("*new_inode[%s, %u]\n",d_find_any_alias(*new_inode)->d_name.name, (*new_inode)->i_ino);
-        if (tmp_inode) {
-            iput(tmp_inode);
-            tmp_inode = NULL;
-        }
+        tmp_inode = NULL;
+        // if (tmp_inode) {
+        //     iput(tmp_inode);
+        //     tmp_inode = NULL;
+        // }
         goto out_success; 
     }else{
         goto next_free;
@@ -2141,6 +2159,32 @@ next_free:
     return ret;
 }
 
+bool f2fs_inode_is_new_or_cowed(struct f2fs_sb_info *sbi,
+                    struct inode *inode,
+                    const struct timespec64 *snap_time){
+    struct f2fs_inode *ri;
+    struct page *page;
+    struct timespec64 ts;
+    
+    page = f2fs_get_node_page(sbi, inode->i_ino);
+    if (IS_ERR(page)) {
+        pr_err("[snapfs cow1]: debug get page failed[%lu]\n", inode->i_ino); 
+        return true;
+    }
+    ri = F2FS_INODE(page);
+    ts.tv_sec  = le64_to_cpu(ri->i_mtime);      // 秒
+    ts.tv_nsec = le32_to_cpu(ri->i_mtime_nsec); // 纳秒
+    if(timespec64_compare(snap_time, &ts) < 0){
+        // 新文件或者创建快照后修改文件 都直接返回，不需要做cow
+        pr_info("[snapfs cow]: debug snap,but is newfile or had cow\n");
+        f2fs_put_page(page, 1);
+        return true; // 已经处理过了
+    }
+    f2fs_put_page(page, 1);
+    return false; // 需要cow处理
+}
+
+
 
 int f2fs_snapshot_cow(struct inode *inode)
 {
@@ -2161,7 +2205,7 @@ int f2fs_snapshot_cow(struct inode *inode)
     struct dentry *parent_dentry = NULL, *dentry = NULL;
     Stack_snap stack;
     nid_t  pra_ino, son_ino;//, snap_ino;
-    pr_info("f2fs snapshot cow start debug check must [%u]!\n",inode->i_ino);
+    pr_info("[snapfs cow]: debug start[%u]!\n",inode->i_ino);
     memset(&tmp_me, 0, sizeof(tmp_me));
     // 先判断这个inode是不是快照inode, 
     // 不用执行cow，后续更新引用关系即可
@@ -2170,6 +2214,7 @@ int f2fs_snapshot_cow(struct inode *inode)
         // 如果不是，就往上找父目录的快照情况
         // 找到后直接让其准备cow，在cow中判断是否已经触发过
         // 要遍历到根目录寻找所有的快照目录,找到一个就去处理一个
+        pr_info("[snapfs cow]: debug check parent\n");
         memset(&tmp_me, 0, sizeof(tmp_me));
         entry_id = 0;
         tmp_inode = inode;
@@ -2187,12 +2232,25 @@ int f2fs_snapshot_cow(struct inode *inode)
             pra_inode = parent_dentry->d_inode;
             snap_push(&stack, parent_dentry->d_inode->i_ino);
             if(is_snapshot_inode(pra_inode, &tmp_me, &entry_id)){
-                if(timespec64_compare(&(tmp_me.c_time), &(inode->i_ctime)) < 0){
-                    // 新文件或者创建快照后修改文件 都直接返回，不需要做cow
-                    pr_info("It is snap, but file is newfile\n");
+            
+                // pr_info("[snapfs cow]: debug ctime snap    (%llu)ns\n",
+                //     timespec64_to_ns(&(tmp_me.c_time)));
+                // pr_info("[snapfs cow]: debug ctime srcfile (%llu)ns\n",
+                //     timespec64_to_ns(&(inode->i_ctime)));
+
+                // if(timespec64_compare(&(tmp_me.c_time), &(inode->i_ctime)) < 0){
+                //     // 新文件或者创建快照后修改文件 都直接返回，不需要做cow
+                //     pr_info("[snapfs cow]: debug snap,but is newfile or had cow\n");
+                //     ret = 1;
+                //     goto out;
+                // }
+                // 这里必须要用f2fs_inode的时间戳
+                if(f2fs_inode_is_new_or_cowed(sbi, inode, &(tmp_me.c_time))){
+                    ret = 1;
                     goto out;
                 }
-                pr_info("[snapfs f2fs_snapshot_cow]: prafile(%u) is snap-(%u)\n",
+
+                pr_info("[snapfs cow]: debug parfile(%u) is snap-(%u)\n",
                     tmp_me.src_ino, tmp_me.snap_ino);
                 snap_inode = f2fs_iget(sb, le32_to_cpu(tmp_me.snap_ino));
                 tmp2_inode = snap_inode;
@@ -2242,7 +2300,7 @@ out:
         dput(parent_dentry);
     if (dentry)
         dput(dentry);
-    pr_info("f2fs snapshot cow check or cow over[%d]\n",ret);
+    pr_info("[snapfs cow]: debug end [%d](0: success)\n",ret);
     return ret;
 }
 
@@ -2418,14 +2476,14 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
     cur_mr_blkaddr = (block_t)le32_to_cpu(old_sum.nid);
     cur_eidx = le32_to_cpu(old_sum.ofs_in_node);
 
-    pr_info("ori_sum: (overwrite)nid[%u],ofs[%u],ver[%u]\n",le32_to_cpu(old_sum.nid)
+    pr_info("[snapfs IO]: ori_sum (overwrite) nid[%u],ofs[%u],ver[%u]\n",le32_to_cpu(old_sum.nid)
          ,old_sum.ofs_in_node, old_sum.version);
 
     
      /* 获取第一个 block */
     ret = f2fs_get_mulref_block(sbi, cur_mr_blkaddr, &head_blk);
     if (ret) {
-        pr_info("f2fs get mulref block failed!\n");
+        pr_info("[snapfs IO]: (overwrite) f2fs get mulref block failed!\n");
         return -EIO;
     }
 
@@ -2445,7 +2503,7 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
     }
 
     // /* 保存 prev 信息 */
-    pr_info("prepare enter while %u\n",new_nid);
+    pr_info("[snapfs IO]: (overwrite) prepare enter while %u\n",new_nid);
     cur_next = le32_to_cpu(cur_entry->next);
     /* ---------- 3. 查找匹配 new_nid 的 entry ---------- */
     while (1) {
@@ -2461,10 +2519,10 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
 
         /* 获取当前 entry 所在的 block */
         if (cur_mr_blkaddr != prev_mr_blkaddr) {// 跨块处理
-            pr_info("cross blk\n");
+            pr_info("[snapfs IO]: (overwrite) cross blk\n");
             ret = f2fs_get_mulref_block(sbi, cur_mr_blkaddr,&cur_blk);
             if (ret) {
-                pr_info("failed to get mulref block %u\n", cur_mr_blkaddr);
+                pr_info("[snapfs IO]: (overwrite) failed to get mulref block %u\n", cur_mr_blkaddr);
                 ret = -EIO;
                 goto out;
             }
@@ -2478,13 +2536,13 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
         cur_next = le32_to_cpu(cur_entry->next);
         /* 检查是否匹配 */
         if ((nid_t)le32_to_cpu(cur_entry->m_nid) == new_nid) {
-            pr_info("found mulref entry nid[%u]\n",le32_to_cpu(cur_entry->m_nid));
+            pr_info("[snapfs IO]: (overwrite) found mulref entry nid[%u]\n",le32_to_cpu(cur_entry->m_nid));
             /* 找到目标 entry，现在需要更新前驱节点的 next 指针 */
             break;
         }
         // pr_info("not found mulref entry nid[%u] with head\n",le32_to_cpu(cur_entry->m_nid));
         if (!cur_next){
-            pr_info("not found\n");
+            pr_info("[snapfs IO]: (overwrite) not found\n");
             ret = 1;
             goto out;
         }
@@ -2512,7 +2570,7 @@ found_entry:
     /* 标记当前 entry 无效并减少引用计数 */
     if (is_head) {
         /* 当前节点就是链表头 */
-        pr_info("found at head, entry_nid[%u], new_nid %u\n",le32_to_cpu(cur_entry->m_nid), new_nid);
+        pr_info("[snapfs IO]: (overwrite) found at head, entry_nid[%u], new_nid %u\n",le32_to_cpu(cur_entry->m_nid), new_nid);
         cur_next = le32_to_cpu(cur_entry->next);
         /* 更新 old_sum（链表头变化了） */
         if (cur_next) {
@@ -2527,7 +2585,7 @@ found_entry:
                 cur_entry = &cur_blk->mrentries[next_eidx];
                 if(!le32_to_cpu(cur_entry->next)){
                     // 刚好就2个多引用，这时要多变1
-                    pr_info("走这个分支!!\n");
+                    pr_info("[snapfs IO]: (overwrite) 走这个分支!!\n");
                     new_sum.nid = cur_entry->m_nid;
                     new_sum.ofs_in_node = cur_entry->m_ofs;
                     new_sum.version = cur_entry->m_ver;
@@ -2553,7 +2611,7 @@ found_entry:
                 // prev_next = cur_next;
                 ret = f2fs_get_mulref_block(sbi, next_mr_blkaddr, &cur_blk);
                 if (ret) {
-                    pr_info("f2fs get mulref block failed-next_mr_blkaddr!\n");
+                    pr_info("[snapfs IO]: (overwrite) f2fs get mulref block failed-next_mr_blkaddr!\n");
                     return -EIO;
                 }
                 cur_mr_blkaddr = next_mr_blkaddr;
@@ -2579,7 +2637,7 @@ found_entry:
                 
             }
         }else{
-            pr_info("orphan mulref entry, error\n");
+            pr_info("[snapfs IO]: (overwrite) orphan mulref entry, error\n");
         } 
         /* ---------- 5. 更新 summary ---------- */
         /* 注意：这里需要加锁，因为 summary 可能在 curseg 中 */
@@ -2590,13 +2648,13 @@ found_entry:
         // __update_sum_entry(sbi, DATA, blk_off, &new_sum);
 
         if(ret){
-            pr_info("[snapfs debug]: (overwrite)update summary failed\n");
+            pr_info("[snapfs IO]: (overwrite) update summary failed\n");
         }else{
-            pr_info("[snapfs debug]: (overwrite)update summary success!\n");    
+            pr_info("[snapfs IO]: (overwrite) update summary success!\n");    
         }
         mutex_lock(&cmr->curmulref_mutex);
         if(cur_blk){
-            pr_info("release cur_blk\n");
+            pr_info("[snapfs IO]: (overwrite) release cur_blk\n");
             if (cmr->inited && cur_mr_blkaddr != cmr->blkaddr) {
                 page = virt_to_page(cur_blk);
                 set_page_dirty(page);
@@ -2606,7 +2664,7 @@ found_entry:
         }
 
         if(prev_blk && prev_blk != cur_blk){
-            pr_info("release prev_blk\n");
+            pr_info("[snapfs IO]: (overwrite) release prev_blk\n");
             if (cmr->inited && prev_mr_blkaddr != cmr->blkaddr) {
                 page = virt_to_page(prev_blk);
                 set_page_dirty(page);
@@ -2646,7 +2704,7 @@ found_entry:
                 // prev_entry = cur_entry;
                 ret = f2fs_get_mulref_block(sbi, next_mr_blkaddr,&cur_blk);
                 if (ret) {
-                    pr_info("failed to get mulref block2 %u\n", next_mr_blkaddr);
+                    pr_info("[snapfs IO]: (overwrite) failed to get mulref block2 %u\n", next_mr_blkaddr);
                     ret = -EIO;
                     cur_page = NULL;
                     goto out;
@@ -2656,17 +2714,17 @@ found_entry:
             mulref_mark_invalid(prev_blk, prev_eidx);
 
             if(head_page){
-                pr_info("release head page\n");
+                pr_info("[snapfs IO]: (overwrite) release head page\n");
                 set_page_dirty(head_page);
                 f2fs_put_page(head_page, 1);
             }
             if(mulref_page && mulref_page != head_page){
-                pr_info("release mulref page\n");
+                pr_info("[snapfs IO]: (overwrite) release mulref page\n");
                 set_page_dirty(mulref_page);
                 f2fs_put_page(mulref_page, 1);
             }
             if(cur_page && cur_page != head_page && cur_page != mulref_page){
-                pr_info("release cur page\n");
+                pr_info("[snapfs IO]: (overwrite) release cur page\n");
                 set_page_dirty(cur_page);
                 f2fs_put_page(cur_page, 1);
             }
@@ -2685,9 +2743,9 @@ found_entry:
                 ret = f2fs_update_summary_without_lock(sbi, old_blkaddr,&new_sum,old_segno,blk_off);
                 // __update_sum_entry(sbi, DATA, blk_off, &new_sum);
                 if(ret){
-                    pr_info("[snapfs debug]: (overwrite)update summary failed(non head)\n");
+                    pr_info("[snapfs IO]: (overwrite) update summary failed(non head)\n");
                 }else{
-                    pr_info("[snapfs debug]: (overwrite)update summary success!(non head)\n");
+                    pr_info("[snapfs IO]: (overwrite) update summary success!(non head)\n");
                 }    
             }
             
@@ -2697,17 +2755,17 @@ found_entry:
             mulref_mark_invalid(cur_blk, cur_eidx);
 
             if(head_page){
-                pr_info("release head page\n");
+                pr_info("[snapfs IO]: (overwrite) release head page\n");
                 set_page_dirty(head_page);
                 f2fs_put_page(head_page, 1);
             }
             if(mulref_page && mulref_page != head_page){
-                pr_info("release mulref page\n");
+                pr_info("[snapfs IO]: (overwrite) release mulref page\n");
                 set_page_dirty(mulref_page);
                 f2fs_put_page(mulref_page, 1);
             }
             if(cur_page && cur_page != head_page && cur_page != mulref_page){
-                pr_info("release cur page\n");
+                pr_info("[snapfs IO]: (overwrite) release cur page\n");
                 set_page_dirty(cur_page);
                 f2fs_put_page(cur_page, 1);
             }
