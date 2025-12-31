@@ -1586,10 +1586,10 @@ bool f2fs_is_empty_file(struct f2fs_sb_info *sbi,
     ri = F2FS_INODE(page);
     isize  = le64_to_cpu(ri->i_size); 
     if (isize == 0) {
-		pr_info("[snapfs cow22]: debug inode %lu empty file\n", inode->i_ino);
+		pr_info("[snapfs cow22]: debug inode %lu is empty file\n", inode->i_ino);
 		return true;
 	}else{
-        pr_info("[snapfs cow22]: debug inode %lu non empty file\n", inode->i_ino);
+        pr_info("[snapfs cow22]: debug inode %lu is non empty file\n", inode->i_ino);
     }
     f2fs_put_page(page, 1);
     return false; // 需要cow处理
@@ -1644,11 +1644,11 @@ int f2fs_set_mulref_blocks(struct inode *inode)
         pr_err("[snapfs cow22]: debug setmulref get src_page[%lu] failed\n", inode->i_ino);
         return 1;
     }
+    
     fi = F2FS_INODE(ipage);
     isize  = le64_to_cpu(fi->i_size); 
     blkbits = inode->i_blkbits;
 	max_lblk = (isize + (1ULL << blkbits) - 1) >> blkbits;
-
 	for (lblk = 0; lblk < max_lblk; lblk++) {
         if(lblk <= direct_index){
             if (__is_valid_data_blkaddr(fi->i_addr[lblk])) {
@@ -1841,21 +1841,21 @@ int f2fs_cow(struct inode *pra_inode,
              struct inode *son_inode,
              struct inode **new_inode){
     // 判断name of son_inode是否已经存在snap_inode下
-    struct dentry *snap_dentry, *son_dentry, *new_dentry;
-	struct f2fs_dir_entry *de;
-    struct page *page;
+    struct dentry *snap_dentry = NULL, *son_dentry = NULL, *new_dentry = NULL;
+	struct f2fs_dir_entry *de = NULL;
+    struct page *page = NULL;
     struct super_block *sb = pra_inode->i_sb;
     struct inode *tmp_inode = NULL;
     umode_t mode;
     int ret = 0;
-    struct qstr *d_name;
+    struct qstr *d_name = NULL;
     struct f2fs_sb_info *sbi = F2FS_I_SB(pra_inode);
     nid_t ino;
     struct page *son_ipage = NULL, *new_ipage = NULL, *new_dpage = NULL;
     void *page_addr;
 	void *inline_dentry, *inline_dentry2; // inline数据
     char *filename;
-    struct f2fs_inode *son_fi, *new_fi;
+    struct f2fs_inode *son_fi = NULL, *new_fi = NULL;
     struct fscrypt_str dot = FSTR_INIT(".", 1);
 	struct fscrypt_str dotdot = FSTR_INIT("..", 2);
 	struct f2fs_dentry_ptr d;
@@ -1906,7 +1906,8 @@ int f2fs_cow(struct inode *pra_inode,
             // if (tmp_inode) {
             //     iput(tmp_inode);
             //     tmp_inode = NULL;
-            // } 
+            // }
+            page = NULL; 
             goto next_free;
         }
         // 快照目录下对应的数据没有COW过, 那两个目录下的inode就相等
@@ -2095,6 +2096,7 @@ int f2fs_cow(struct inode *pra_inode,
                 tmp_inode->i_size = le64_to_cpu(son_inode->i_size);
                 tmp_inode->i_blocks = le64_to_cpu(son_inode->i_blocks);
                 f2fs_cow_update_inode(son_inode, tmp_inode);
+
                 set_page_dirty(new_ipage);
                 f2fs_put_page(son_ipage, 1);
                 f2fs_put_page(new_ipage, 1);
@@ -2150,12 +2152,12 @@ next_free:
         dput(son_dentry);
     if (snap_dentry)
         dput(snap_dentry);
-    
     if (new_dentry) {
         dput(new_dentry);
     }
     if (page)
         f2fs_put_page(page, 1);
+    
     return ret;
 }
 

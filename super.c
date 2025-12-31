@@ -1424,7 +1424,6 @@ static int f2fs_drop_inode(struct inode *inode)
 {
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	int ret;
-
 	/*
 	 * during filesystem shutdown, if checkpoint is disabled,
 	 * drop useless meta/node dirty pages.

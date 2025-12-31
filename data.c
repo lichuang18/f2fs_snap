@@ -3327,7 +3327,6 @@ static int f2fs_write_data_pages(struct address_space *mapping,
 static void f2fs_write_failed(struct inode *inode, loff_t to)
 {
 	loff_t i_size = i_size_read(inode);
-
 	if (IS_NOQUOTA(inode))
 		return;
 

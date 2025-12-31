@@ -894,7 +894,6 @@ static int truncate_node(struct dnode_of_data *dn)
 	struct node_info ni;
 	int err;
 	pgoff_t index;
-
 	err = f2fs_get_node_info(sbi, dn->nid, &ni, false);
 	if (err)
 		return err;
@@ -1039,7 +1038,6 @@ static int truncate_partial_nodes(struct dnode_of_data *dn,
 	int err = 0;
 	int i;
 	int idx = depth - 2;
-
 	nid[0] = le32_to_cpu(ri->i_nid[offset[0] - NODE_DIR1_BLOCK]);
 	if (!nid[0])
 		return 0;

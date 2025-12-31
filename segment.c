@@ -3536,7 +3536,6 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	 */
 	update_sit_entry(sbi, *new_blkaddr, 1);
 
-	pr_info("come on what happen\n");
 	if(!f2fs_is_mulref_blkaddr(sbi, fio->old_blkaddr)){
 		update_sit_entry(sbi, old_blkaddr, -1);	
 	} else{

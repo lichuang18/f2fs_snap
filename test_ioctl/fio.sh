@@ -1,0 +1,9 @@
+fio --name=direct_write_12k \
+    --filename=/mnt/test3/f2 \
+    --rw=randwrite \
+    --bs=12k \
+    --size=12K \
+    --direct=1 \
+    --ioengine=libaio \
+    --numjobs=1 \
+    --iodepth=1

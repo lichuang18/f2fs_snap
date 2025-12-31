@@ -298,6 +298,7 @@ static int f2fs_do_sync_file(struct file *file, loff_t start, loff_t end,
 	};
 	unsigned int seq_id = 0;
 
+
 	if (unlikely(f2fs_readonly(inode->i_sb)))
 		return 0;
 
@@ -574,6 +575,17 @@ static int f2fs_file_open(struct inode *inode, struct file *filp)
 {
 	int err = fscrypt_file_open(inode, filp);
 
+	// pr_info("open file->f_flags = 0x%x\n", filp->f_flags);
+	// unsigned int f = filp->f_flags;
+	// if (f & O_WRONLY)  pr_info("  O_WRONLY\n");
+    // if (f & O_RDWR)    pr_info("  O_RDWR\n");
+    // if (f & O_APPEND)  pr_info("  O_APPEND\n");
+    // if (f & O_TRUNC)   pr_info("  O_TRUNC\n");
+    // if (f & O_DIRECT)  pr_info("  O_DIRECT\n");
+    // if (f & O_SYNC)    pr_info("  O_SYNC\n");
+    // if (f & O_DSYNC)   pr_info("  O_DSYNC\n");
+    // if (f & O_NOATIME) pr_info("  O_NOATIME\n");
+
 	if (err)
 		return err;
 
@@ -601,6 +613,15 @@ void f2fs_truncate_data_blocks_range(struct dnode_of_data *dn, int count)
 	int cluster_size = F2FS_I(dn->inode)->i_cluster_size;
 	bool released = !atomic_read(&F2FS_I(dn->inode)->i_compr_blocks);
 
+	// pr_info("lichuang truncate tp\n");
+
+    // struct f2fs_inode *src_fi;
+	// struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
+    // pr_info("[snapfs debug]: check inodes %lu\n", dn->inode->i_ino);
+    // src_fi  = F2FS_INODE(dn->inode_page);
+    // pr_info("[snapfs debug]: src_inode i_addr[0..2] = [%x, %x, %x]\n",
+    //         src_fi->i_addr[0], src_fi->i_addr[1], src_fi->i_addr[2]);
+	
 	if (IS_INODE(dn->node_page) && f2fs_has_extra_attr(dn->inode))
 		base = get_extra_isize(dn->inode);
 
@@ -639,10 +660,15 @@ void f2fs_truncate_data_blocks_range(struct dnode_of_data *dn, int count)
 
 		f2fs_invalidate_blocks(sbi, blkaddr, dn->nid);
 
+		// pr_info("[%u] [snapfs debug]: src_inode i_addr[0..2] = [%x, %x, %x]\n",
+        //     count,src_fi->i_addr[0], src_fi->i_addr[1], src_fi->i_addr[2]);
+	
 		if (!released || blkaddr != COMPRESS_ADDR)
 			nr_free++;
 	}
-
+	// pr_info("[snapfs debug]2: src_inode i_addr[0..2] = [%x, %x, %x]\n",
+    //         src_fi->i_addr[0], src_fi->i_addr[1], src_fi->i_addr[2]);
+	
 	if (compressed_cluster)
 		f2fs_i_compr_blocks_update(dn->inode, valid_blocks, false);
 
@@ -658,7 +684,7 @@ void f2fs_truncate_data_blocks_range(struct dnode_of_data *dn, int count)
 		dec_valid_block_count(sbi, dn->inode, nr_free);
 	}
 	dn->ofs_in_node = ofs;
-
+	
 	f2fs_update_time(sbi, REQ_TIME);
 	trace_f2fs_truncate_data_blocks_range(dn->inode, dn->nid,
 					 dn->ofs_in_node, nr_free);
@@ -711,6 +737,7 @@ int f2fs_do_truncate_blocks(struct inode *inode, u64 from, bool lock)
 	int count = 0, err = 0;
 	struct page *ipage;
 	bool truncate_page = false;
+	
 
 	trace_f2fs_truncate_blocks_enter(inode, from);
 
@@ -754,6 +781,7 @@ int f2fs_do_truncate_blocks(struct inode *inode, u64 from, bool lock)
 	}
 
 	f2fs_put_dnode(&dn);
+
 free_next:
 	err = f2fs_truncate_inode_blocks(inode, free_from);
 out:
@@ -772,7 +800,6 @@ int f2fs_truncate_blocks(struct inode *inode, u64 from, bool lock)
 {
 	u64 free_from = from;
 	int err;
-
 #ifdef CONFIG_F2FS_FS_COMPRESSION
 	/*
 	 * for compressed file, only support cluster size
@@ -809,7 +836,7 @@ int f2fs_truncate_blocks(struct inode *inode, u64 from, bool lock)
 int f2fs_truncate(struct inode *inode)
 {
 	int err;
-
+	
 	if (unlikely(f2fs_cp_error(F2FS_I_SB(inode))))
 		return -EIO;
 
@@ -834,11 +861,10 @@ int f2fs_truncate(struct inode *inode)
 		if (err)
 			return err;
 	}
-
+	
 	err = f2fs_truncate_blocks(inode, i_size_read(inode), true);
 	if (err)
 		return err;
-
 	inode->i_mtime = inode->i_ctime = current_time(inode);
 	f2fs_mark_inode_dirty_sync(inode, false);
 	return 0;
@@ -925,6 +951,23 @@ int f2fs_setattr(struct user_namespace *mnt_userns, struct dentry *dentry,
 {
 	struct inode *inode = d_inode(dentry);
 	int err;
+
+	// 判断标准
+	unsigned int flags = F2FS_I(inode)->i_flags;
+	if (flags & F2FS_COWED_FL){
+		pr_info("[snapfs truncate]: error, F2FS_COWED_FL is 1\n");
+	}else{
+		pr_info("[snapfs truncate]: normal, F2FS_COWED_FL is 0\n");
+		if(f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
+			pr_info("[snapfs truncate]: write with cow, set F2FS_COWED_FL = 1\n");
+			F2FS_I(inode)->i_flags |= F2FS_COWED_FL;
+			// flags |= F2FS_COWED_FL;  // 设置SYNC标志
+			// flags &= ~F2FS_COWED_FL;  // 清除SYNC标志
+		}
+	}
+
+
+	F2FS_I(inode)->i_flags &= ~F2FS_COWED_FL;
 
 	if (unlikely(f2fs_cp_error(F2FS_I_SB(inode))))
 		return -EIO;
@@ -4719,10 +4762,32 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	// 目前的方法是循环往上找父节点信息,要遍历到挂载根节点
 
 	// pr_info("start write: [%s]\n",d_find_any_alias(inode)->d_name.name);
-	
-	if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
-		pr_info("normal write with cow\n");
+	// pr_info("write file->f_flags = 0x%x\n", file->f_flags);
+
+	unsigned int flags = F2FS_I(inode)->i_flags;
+	if (flags & F2FS_COWED_FL){
+		pr_info("[snapfs write]: write with O_TRUNC, F2FS_COWED_FL is 1\n");
+	}else{
+		pr_info("[snapfs write]: write without O_TRUNC, F2FS_COWED_FL is 0, to do cow\n");
+		if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
+			pr_info("[snapfs write]: write with cow\n");
+		}
 	}
+	
+	// unsigned int f = file->f_flags;
+	// if (f & O_WRONLY)  pr_info("  O_WRONLY\n");
+    // if (f & O_RDWR)    pr_info("  O_RDWR\n");
+    // if (f & O_APPEND)  pr_info("  O_APPEND\n");
+    // if (f & O_TRUNC)   pr_info("  O_TRUNC\n");
+    // if (f & O_DIRECT)  pr_info("  O_DIRECT\n");
+    // if (f & O_SYNC)    pr_info("  O_SYNC\n");
+    // if (f & O_DSYNC)   pr_info("  O_DSYNC\n");
+    // if (f & O_NOATIME) pr_info("  O_NOATIME\n");
+	
+
+	// if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
+	// 	pr_info("normal write with cow\n");
+	// }
 	// pr_info("normal write without cow\n");
 
 	if (unlikely(f2fs_cp_error(F2FS_I_SB(inode)))) {
