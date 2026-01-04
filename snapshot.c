@@ -1188,20 +1188,20 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                 me2->count = me->count;
                 me2->next = 0;
                 me2->c_time = current_time(snap_inode);
-                pr_info("2snap addr[%u], off2[%u], next[%u]\n", blkaddr2, off2, me2->next);
+                // pr_info("2snap addr[%u], off2[%u], next[%u]\n", blkaddr2, off2, me2->next);
             }else if(me->count > 1){
                 me->count += 1;
                 tmp_next = le32_to_cpu(me->next);
                 while(tmp_next){
                     tmp_blkaddr = sbi->magic_info->magic_blkaddr + magic_entry_to_blkaddr(tmp_next);
                     tmp_off     = magic_entry_to_offset(tmp_next);
-                    pr_info("tmp_next[%u], tmp_blkaddr[%u]\n", tmp_next, tmp_blkaddr);
+                    // pr_info("tmp_next[%u], tmp_blkaddr[%u]\n", tmp_next, tmp_blkaddr);
                     if(tmp_blkaddr == blkaddr){
-                        pr_info("2+ same tmp_off[%u]\n", tmp_off);
+                        // pr_info("2+ same tmp_off[%u]\n", tmp_off);
                         tmp_me = &mb->mgentries[tmp_off];
                         if(!tmp_me->next){
                             //wanmei 找到tail了
-                            pr_info("2+snap tail\n");
+                            // pr_info("2+snap tail\n");
                             blkaddr3 = tmp_blkaddr;
                             for(j = 1; j < MAGIC_ENTRY_NR; j++){
                                 mb3 = mb;
@@ -1233,13 +1233,12 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                             me3->count = me->count;
                             me3->next = 0;
                             me3->c_time = current_time(snap_inode);
-                            pr_info("2+ snap addr[%u], off3[%u], next3[%u]\n", blkaddr3, off3, me3->next);
+                            // pr_info("2+ snap addr[%u], off3[%u], next3[%u]\n", blkaddr3, off3, me3->next);
                             break; 
                         }else{
                             tmp_next = tmp_me->next;
                         }
                     }else{// 跨块处理
-                        pr_info("2+ cross\n");
                         tmp_page = f2fs_get_meta_page(sbi, tmp_blkaddr);
                         if (IS_ERR(tmp_page)){
                             pr_info("f2fs_get_meta_page failed 2: %ld\n", PTR_ERR(tmp_page));
@@ -2266,6 +2265,13 @@ int f2fs_snapshot_cow(struct inode *inode)
             pra_inode = parent_dentry->d_inode;
             snap_push(&stack, parent_dentry->d_inode->i_ino);
             if(is_snapshot_inode(pra_inode, &tmp_me, &entry_id)){
+                // entry_id 这个有了以后就读取看看有多少个快照版本
+                u32 tmp_next = tmp_me.next;
+                if(!tmp_next){
+                    pr_info("inode is single snapshot\n");
+                }else{
+                    pr_info("inode is multi snapshot,count[%u]\n",tmp_me.count);
+                }
                 // 这里必须要用f2fs_inode的时间戳
                 if(f2fs_inode_is_new_or_cowed(sbi, inode, &(tmp_me.c_time))){
                     ret = 1;

@@ -3729,12 +3729,12 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 
 	f2fs_alloc_nid_done(sbi, snap_inode->i_ino);
 	d_instantiate_new(snap_dentry, snap_inode);
-	pr_info("[snapfs mk_snap]: magic alloc\n");
+	// pr_info("[snapfs mk_snap]: magic alloc\n");
 	err = f2fs_magic_lookup_or_alloc(sbi, src_inode->i_ino, snap_inode->i_ino);
 	if(err){
 		pr_info("magic alloc failed\n");
 	}
-	pr_info("[snapfs mk_snap]: magic alloc over\n");
+	// pr_info("[snapfs mk_snap]: magic alloc over\n");
 
 	// 复制inode的属性
 	snap_inode->i_size = src_inode->i_size;
@@ -4770,6 +4770,7 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		if(SNAPFS_DEBUG) pr_info("[snapfs write]: write with O_TRUNC, F2FS_COWED_FL is 1\n");
 	}else{
 		if(SNAPFS_DEBUG) pr_info("[snapfs write]: write without O_TRUNC, F2FS_COWED_FL is 0, to do cow\n");
+		// pr_info("[snapfs write]: write without O_TRUNC, F2FS_COWED_FL is 0, to do cow\n");
 		if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
 			if(SNAPFS_DEBUG) pr_info("[snapfs write]: write with cow\n");
 		}
