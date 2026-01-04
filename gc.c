@@ -1645,7 +1645,7 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 	}
 
 	blk_start_plug(&plug);
-
+	
 	for (segno = start_segno; segno < end_segno; segno++) {
 
 		/* find segment summary of victim */
@@ -1680,13 +1680,16 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 		 *   - down_read(sentry_lock)     - change_curseg()
 		 *                                  - lock_page(sum_page)
 		 */
-		if (type == SUM_TYPE_NODE)
+		
+		if (type == SUM_TYPE_NODE){
 			submitted += gc_node_segment(sbi, sum->entries, segno,
 								gc_type);
-		else
+		}
+		else{
 			submitted += gc_data_segment(sbi, sum->entries, gc_list,
 							segno, gc_type,
 							force_migrate);
+		}
 
 		stat_inc_seg_count(sbi, type, gc_type);
 		sbi->gc_reclaimed_segs[sbi->gc_mode]++;

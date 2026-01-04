@@ -2268,7 +2268,6 @@ static void update_sit_entry(struct f2fs_sb_info *sbi, block_t blkaddr, int del)
 #ifdef CONFIG_F2FS_CHECK_FS
 	bool mir_exist;
 #endif
-
 	segno = GET_SEGNO(sbi, blkaddr);
 	if (segno == NULL_SEGNO)
 		return;
@@ -2281,9 +2280,14 @@ static void update_sit_entry(struct f2fs_sb_info *sbi, block_t blkaddr, int del)
 			(new_vblocks > f2fs_usable_blks_in_seg(sbi, segno))));
 
 	se->valid_blocks = new_vblocks;
-
 	/* Update valid block bitmap */
 	if (del > 0) {
+		if(!se->cur_valid_map){
+			pr_info("segno=%u, valid_blocks=%d\n",
+			segno,
+			se->valid_blocks);
+			pr_info("I found the NULL update\n");
+		}
 		exist = f2fs_test_and_set_bit(offset, se->cur_valid_map);
 #ifdef CONFIG_F2FS_CHECK_FS
 		mir_exist = f2fs_test_and_set_bit(offset,
@@ -2301,7 +2305,6 @@ static void update_sit_entry(struct f2fs_sb_info *sbi, block_t blkaddr, int del)
 			se->valid_blocks--;
 			del = 0;
 		}
-
 		if (f2fs_block_unit_discard(sbi) &&
 				!f2fs_test_and_set_bit(offset, se->discard_map))
 			sbi->discard_blks--;
@@ -2344,21 +2347,18 @@ static void update_sit_entry(struct f2fs_sb_info *sbi, block_t blkaddr, int del)
 				spin_unlock(&sbi->stat_lock);
 			}
 		}
-
 		if (f2fs_block_unit_discard(sbi) &&
 			f2fs_test_and_clear_bit(offset, se->discard_map))
 			sbi->discard_blks++;
 	}
 	if (!f2fs_test_bit(offset, se->ckpt_valid_map))
 		se->ckpt_valid_blocks += del;
-
 	__mark_sit_entry_dirty(sbi, segno);
-
 	/* update total number of valid blocks to be written in ckpt area */
 	SIT_I(sbi)->written_valid_blocks += del;
-
 	if (__is_large_section(sbi))
 		get_sec_entry(sbi, segno)->valid_blocks += del;
+	
 }
 
 void f2fs_invalidate_blocks(struct f2fs_sb_info *sbi, block_t addr, nid_t nid)
@@ -2680,13 +2680,11 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 	unsigned short seg_type = curseg->seg_type;
 	unsigned int segno = curseg->segno;
 	int dir = ALLOC_LEFT;
-
 	if (curseg->inited)
 		write_sum_page(sbi, curseg->sum_blk,
 				GET_SUM_BLOCK(sbi, segno));
 	if (seg_type == CURSEG_WARM_DATA || seg_type == CURSEG_COLD_DATA)
-		dir = ALLOC_RIGHT;
-
+		dir = ALLOC_RIGHT;	
 	if (test_opt(sbi, NOHEAP))
 		dir = ALLOC_RIGHT;
 
@@ -3495,7 +3493,6 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	down_read(&SM_I(sbi)->curseg_lock);
 	mutex_lock(&curseg->curseg_mutex);
 	down_write(&sit_i->sentry_lock);
-
 	// 这是 “搬迁已有有效块”
 	// 与普通写入不同：
 	// old_blkaddr 一定合法
@@ -3529,14 +3526,14 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 		old_mtime = 0;
 	}
 	update_segment_mtime(sbi, *new_blkaddr, old_mtime);
-
 	/*
 	 * SIT information should be updated before segment allocation,
 	 * since SSR needs latest valid block information.
 	 */
 	update_sit_entry(sbi, *new_blkaddr, 1);
 
-	if(!f2fs_is_mulref_blkaddr(sbi, fio->old_blkaddr)){
+	// if(!f2fs_is_mulref_blkaddr(sbi, fio->old_blkaddr)){
+	if(!f2fs_is_mulref_blkaddr(sbi, old_blkaddr)){
 		update_sit_entry(sbi, old_blkaddr, -1);	
 	} else{
 		// mulref process.   多引用转单引用
@@ -3548,7 +3545,6 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 			pr_info("[snapfs IO]: allocate mulref update success\n");
 		}
 	}
-
 	// fio.type     → 这是在写什么？（数据 / 节点 / 元数据）
 	// fio.io_type  → 这次 IO 算在谁头上？（FS / GC / checkpoint / flush）
 	// 新写数据块，肯定不会涉及共享数据块
@@ -3564,10 +3560,12 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 			get_atssr_segment(sbi, type, se->type,
 						AT_SSR, se->mtime);
 		} else {
-			if (need_new_seg(sbi, type))
+			if (need_new_seg(sbi, type)){
+				
 				new_curseg(sbi, type, false);
-			else
+			}else{
 				change_curseg(sbi, type);
+			}
 			stat_inc_seg_type(sbi, curseg);
 		}
 	}
@@ -3601,7 +3599,6 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 		list_add_tail(&fio->list, &io->io_list);
 		spin_unlock(&io->io_lock);
 	}
-
 	mutex_unlock(&curseg->curseg_mutex);
 
 	up_read(&SM_I(sbi)->curseg_lock);

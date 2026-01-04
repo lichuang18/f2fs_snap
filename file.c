@@ -955,11 +955,11 @@ int f2fs_setattr(struct user_namespace *mnt_userns, struct dentry *dentry,
 	// 判断标准
 	unsigned int flags = F2FS_I(inode)->i_flags;
 	if (flags & F2FS_COWED_FL){
-		pr_info("[snapfs truncate]: error, F2FS_COWED_FL is 1\n");
+		if(SNAPFS_DEBUG) pr_info("[snapfs truncate]: error, F2FS_COWED_FL is 1\n");
 	}else{
-		pr_info("[snapfs truncate]: normal, F2FS_COWED_FL is 0\n");
+		if(SNAPFS_DEBUG) pr_info("[snapfs truncate]: normal, F2FS_COWED_FL is 0\n");
 		if(f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
-			pr_info("[snapfs truncate]: write with cow, set F2FS_COWED_FL = 1\n");
+			if(SNAPFS_DEBUG) pr_info("[snapfs truncate]: write with cow, set F2FS_COWED_FL = 1\n");
 			F2FS_I(inode)->i_flags |= F2FS_COWED_FL;
 			// flags |= F2FS_COWED_FL;  // 设置SYNC标志
 			// flags &= ~F2FS_COWED_FL;  // 清除SYNC标志
@@ -3688,7 +3688,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		return 1;
 	}
 	
-	// pr_info("snap_filename[%s]\n",snap_filename);
+	pr_info("[snapfs mk_snap]: snap_filename[%s]\n",snap_filename);
 	/* ---------- 创建 snapshot 目录 ---------- */
 	snap_dentry = lookup_one_len(snap_filename, snap_par_path.dentry, strlen(snap_filename));
 	if (IS_ERR(snap_dentry)) {
@@ -3729,11 +3729,12 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 
 	f2fs_alloc_nid_done(sbi, snap_inode->i_ino);
 	d_instantiate_new(snap_dentry, snap_inode);
-
+	pr_info("[snapfs mk_snap]: magic alloc\n");
 	err = f2fs_magic_lookup_or_alloc(sbi, src_inode->i_ino, snap_inode->i_ino);
 	if(err){
 		pr_info("magic alloc failed\n");
 	}
+	pr_info("[snapfs mk_snap]: magic alloc over\n");
 
 	// 复制inode的属性
 	snap_inode->i_size = src_inode->i_size;
@@ -3823,7 +3824,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		snap_inode->i_size = le64_to_cpu(src_fi->i_size);
 		snap_inode->i_blocks = le64_to_cpu(src_fi->i_blocks);
 		f2fs_cow_update_inode(src_inode, snap_inode);
-	
+		
 		set_page_dirty(snap_ipage);
 		f2fs_put_page(src_ipage, 1);
 		f2fs_put_page(snap_ipage, 1);
@@ -4766,11 +4767,11 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 
 	unsigned int flags = F2FS_I(inode)->i_flags;
 	if (flags & F2FS_COWED_FL){
-		pr_info("[snapfs write]: write with O_TRUNC, F2FS_COWED_FL is 1\n");
+		if(SNAPFS_DEBUG) pr_info("[snapfs write]: write with O_TRUNC, F2FS_COWED_FL is 1\n");
 	}else{
-		pr_info("[snapfs write]: write without O_TRUNC, F2FS_COWED_FL is 0, to do cow\n");
+		if(SNAPFS_DEBUG) pr_info("[snapfs write]: write without O_TRUNC, F2FS_COWED_FL is 0, to do cow\n");
 		if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
-			pr_info("[snapfs write]: write with cow\n");
+			if(SNAPFS_DEBUG) pr_info("[snapfs write]: write with cow\n");
 		}
 	}
 	
