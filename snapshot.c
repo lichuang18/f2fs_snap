@@ -1065,11 +1065,13 @@ static inline u32 magic_hash2(u32 ino)
     return (ino * 0x9e3779b1) | 1;
 }
 
-static inline block_t magic_entry_to_blkaddr(
-        struct f2fs_sb_info *sbi, u32 entry_id)
+// static inline block_t magic_entry_to_blkaddr(
+//         struct f2fs_sb_info *sbi, u32 entry_id)
+static inline block_t magic_entry_to_blkaddr(u32 entry_id)
 {
-    return sbi->magic_info->magic_blkaddr +
-           (entry_id / MGENTRY_PER_BLOCK);
+    // return sbi->magic_info->magic_blkaddr +
+    //        (entry_id / MGENTRY_PER_BLOCK);
+    return (entry_id / MGENTRY_PER_BLOCK);
 }
 
 static inline u32 magic_entry_to_offset(u32 entry_id)
@@ -1119,7 +1121,7 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
     down_write(&sbi->magic_info->rwsem);
     for (i = 0; i < MAGIC_ENTRY_NR; i++) {
         entry_id = (h1 + i * h2) % MAGIC_ENTRY_NR;
-        blkaddr = magic_entry_to_blkaddr(sbi, entry_id);
+        blkaddr = sbi->magic_info->magic_blkaddr + magic_entry_to_blkaddr(entry_id);
         off     = magic_entry_to_offset(entry_id);
         page = f2fs_get_meta_page(sbi, blkaddr);
         if (IS_ERR(page)){
@@ -1159,7 +1161,7 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                         blkaddr2 += 1;
                         page2 = f2fs_get_meta_page(sbi, blkaddr2);
                         if (IS_ERR(page2)){
-                            pr_info("  f2fs_get_meta_page failed: %ld\n", PTR_ERR(page2));
+                            pr_info("2snap f2fs_get_meta_page failed: %ld\n", PTR_ERR(page2));
                             f2fs_put_page(page, 1);
                             // mutex_unlock(&sbi->magic_info->mutex);
                             up_write(&sbi->magic_info->rwsem);
@@ -1177,7 +1179,9 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                 }
                 set_bit(off2, (unsigned long *)(mb->multi_bitmap));
                 me->count += 1;
-                me->next = cpu_to_le32(off2 + blkaddr2 * MGENTRY_PER_BLOCK);
+                me->next = cpu_to_le32(off2 + (blkaddr2 - sbi->magic_info->magic_blkaddr) * MGENTRY_PER_BLOCK);
+                // pr_info("me->next[%u] = (le32 to cpu) off2[%u] * blkaddr2[%u] * 139\n",
+                //         me->next, off2, blkaddr2);
                 me2 = &mb2->mgentries[off2];
                 me2->src_ino = cpu_to_le32(src_ino);
                 me2->snap_ino = cpu_to_le32(snap_ino);
@@ -1188,8 +1192,11 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                 me->count += 1;
                 tmp_next = le32_to_cpu(me->next);
                 while(tmp_next){
-                    tmp_blkaddr = magic_entry_to_blkaddr(sbi, tmp_next);
+                    tmp_blkaddr = sbi->magic_info->magic_blkaddr + magic_entry_to_blkaddr(tmp_next);
                     tmp_off     = magic_entry_to_offset(tmp_next);
+                    // pr_info("tmp_next[%u] = (le32 to cpu) tmp_off[%u] * tmp_blkaddr[%u] * 139\n",
+                    //     tmp_next, tmp_off, tmp_blkaddr);
+                    // pr_info("sbi->magic_info->magic_blkaddr[%u]", sbi->magic_info->magic_blkaddr);
                     if(tmp_blkaddr == blkaddr){
                         tmp_me = &mb->mgentries[tmp_off];
                         if(!tmp_me->next){
@@ -1201,7 +1208,7 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                                     blkaddr3 += 1;
                                     page3 = f2fs_get_meta_page(sbi, blkaddr3);
                                     if (IS_ERR(page3)){
-                                        pr_info("  f2fs_get_meta_page failed: %ld\n", PTR_ERR(page3));
+                                        pr_info("f2fs_get_meta_page failed 1: %ld\n", PTR_ERR(page3));
                                         f2fs_put_page(page, 1);
                                         up_write(&sbi->magic_info->rwsem);
                                         // mutex_unlock(&sbi->magic_info->mutex);
@@ -1219,7 +1226,7 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                             }
                             set_bit(off3, (unsigned long *)(mb->multi_bitmap));
                             tmp_me->count = me->count;
-                            tmp_me->next = tmp_off + blkaddr3 * MGENTRY_PER_BLOCK;
+                            tmp_me->next = tmp_off + (blkaddr3 - sbi->magic_info->magic_blkaddr) * MGENTRY_PER_BLOCK;
                             me3->src_ino = cpu_to_le32(src_ino);
                             me3->snap_ino = cpu_to_le32(snap_ino);
                             me3->count = me->count;
@@ -1232,7 +1239,7 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                     }else{// 跨块处理
                         tmp_page = f2fs_get_meta_page(sbi, tmp_blkaddr);
                         if (IS_ERR(tmp_page)){
-                            pr_info("  f2fs_get_meta_page failed: %ld\n", PTR_ERR(tmp_page));
+                            pr_info("f2fs_get_meta_page failed 2: %ld\n", PTR_ERR(tmp_page));
                             f2fs_put_page(page, 1);
                             // mutex_unlock(&sbi->magic_info->mutex);
                             up_write(&sbi->magic_info->rwsem);
@@ -1251,7 +1258,7 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                                     blkaddr3 += 1;
                                     page3 = f2fs_get_meta_page(sbi, blkaddr3);
                                     if (IS_ERR(page3)){
-                                        pr_info("  f2fs_get_meta_page failed: %ld\n", PTR_ERR(page3));
+                                        pr_info("f2fs_get_meta_page failed 3: %ld\n", PTR_ERR(page3));
                                         f2fs_put_page(page, 1);
                                         f2fs_put_page(tmp_page, 1);
                                         // mutex_unlock(&sbi->magic_info->mutex);
@@ -1269,7 +1276,7 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                                 break;    
                             }
                             set_bit(off3, (unsigned long *)(mb->multi_bitmap));
-                            tmp_me->next = tmp_off + blkaddr3 * MGENTRY_PER_BLOCK;
+                            tmp_me->next = tmp_off + (blkaddr3 - sbi->magic_info->magic_blkaddr) * MGENTRY_PER_BLOCK;
                             off2 = (off + 1) % MGENTRY_PER_BLOCK;
                             me3->src_ino = cpu_to_le32(src_ino);
                             me3->snap_ino = cpu_to_le32(snap_ino);
@@ -1326,7 +1333,7 @@ int f2fs_magic_lookup(struct f2fs_sb_info *sbi, u32 src_ino,
     down_read(&sbi->magic_info->rwsem);
     for (i = 0; i < MAGIC_ENTRY_NR; i++) {
         entry_id = (h1 + i * h2) % MAGIC_ENTRY_NR;
-        blkaddr = magic_entry_to_blkaddr(sbi, entry_id);
+        blkaddr = sbi->magic_info->magic_blkaddr + magic_entry_to_blkaddr(entry_id);
         off     = magic_entry_to_offset(entry_id);
 
         // pr_info("f2fs_magic_lookup Test point 2  magic_blk[%u, %u]\n",
@@ -1407,7 +1414,7 @@ int f2fs_magic_lookup_or_alloc_hopscotch(
     /* ---------- 1. 查询阶段：只扫 HOP_RANGE ---------- */
     for (i = 0; i < HOP_RANGE; i++) {
         eid = (home + i) % MAGIC_ENTRY_NR;
-        blk = magic_entry_to_blkaddr(sbi, eid);
+        blk = sbi->magic_info->magic_blkaddr + magic_entry_to_blkaddr(eid);
         off = magic_entry_to_offset(eid);
         page = f2fs_get_meta_page(sbi, blk);
         if (IS_ERR(page))
@@ -1434,7 +1441,7 @@ int f2fs_magic_lookup_or_alloc_hopscotch(
 
     for (i = 0; i < MAGIC_ENTRY_NR; i++) {
         eid = (home + i) % MAGIC_ENTRY_NR;
-        blk = magic_entry_to_blkaddr(sbi, eid);
+        blk = sbi->magic_info->magic_blkaddr + magic_entry_to_blkaddr(eid);
         off = magic_entry_to_offset(eid);
  
 
@@ -1463,7 +1470,7 @@ int f2fs_magic_lookup_or_alloc_hopscotch(
 
         for (j = HOP_RANGE - 1; j > 0; j--) {
             u32 cand = (free + MAGIC_ENTRY_NR - j) % MAGIC_ENTRY_NR;
-            block_t blk = magic_entry_to_blkaddr(sbi, cand);
+            block_t blk = sbi->magic_info->magic_blkaddr + magic_entry_to_blkaddr(cand);
             u32 off = magic_entry_to_offset(cand);
             struct page *page;
             struct f2fs_magic_block *mb;
