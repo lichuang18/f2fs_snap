@@ -86,7 +86,6 @@ repeat:
 		f2fs_put_page(page, 1);
 		return ERR_PTR(err);
 	}
-
 	f2fs_update_iostat(sbi, FS_META_READ_IO, F2FS_BLKSIZE);
 	lock_page(page);
 	if (unlikely(page->mapping != mapping)) {

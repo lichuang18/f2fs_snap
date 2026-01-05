@@ -2766,7 +2766,7 @@ int change_curmulref_blk(struct f2fs_sb_info *sbi)
 		
 		/* 释放 page */
 		f2fs_put_page(page, 1);
-        f2fs_info(sbi, "Writing back old curmulref block %u", old_blkaddr);
+        // f2fs_info(sbi, "Writing back old curmulref block %u", old_blkaddr);
     }
     
     // 3. 获取新的 block 页面
