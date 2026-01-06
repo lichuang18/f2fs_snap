@@ -3537,12 +3537,12 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 		update_sit_entry(sbi, old_blkaddr, -1);	
 	} else{
 		// mulref process.   多引用转单引用
-		pr_info("[snapfs IO]: allocate blk and is mulref blk[%u]\n",old_blkaddr);
+		// pr_info("[snapfs IO]: allocate blk and is mulref blk[%u]\n",old_blkaddr);
 		ret = f2fs_mulref_overwrite(sbi,old_blkaddr,le32_to_cpu(sum->nid));
 		if(ret){
 			pr_info("[snapfs IO]: allocate mulref update failed\n");
 		}else{
-			pr_info("[snapfs IO]: allocate mulref update success\n");
+			// pr_info("[snapfs IO]: allocate mulref update success\n");
 		}
 	}
 	// fio.type     → 这是在写什么？（数据 / 节点 / 元数据）

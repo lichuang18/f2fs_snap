@@ -199,7 +199,7 @@ int f2fs_update_summary_without_lock(struct f2fs_sb_info *sbi, block_t blkaddr,
     }
     // 和f2fs_allocate_data_block一样的锁顺序
     if(curseg){
-        pr_info("[snapfs debug]: summary with curseg\n");
+        // pr_info("[snapfs debug]: summary with curseg\n");
         // 更新
         // pr_info("update sum: nid[%u],ofs[%u],ver[%u]\n",
             // le32_to_cpu(new_sum->nid),new_sum->ofs_in_node,new_sum->version);
@@ -1370,7 +1370,7 @@ int f2fs_magic_lookup(struct f2fs_sb_info *sbi, u32 src_ino,
         /* bitmap 判断 */
         if (test_bit(off,(unsigned long *)(mb->multi_bitmap))) {
             me = &mb->mgentries[off];
-            pr_info("lookup me snap[%u] next[%u]\n",le32_to_cpu(me->snap_ino),le32_to_cpu(me->next));
+            // pr_info("lookup me snap[%u] next[%u]\n",le32_to_cpu(me->snap_ino),le32_to_cpu(me->next));
             if (le32_to_cpu(me->src_ino) == src_ino) {
                 /* 命中已有映射 */
                 if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug find mgentry, addr/off[%u,%u] with id[%u],src_ino[%u]\n"
@@ -2185,7 +2185,7 @@ int f2fs_cow(struct inode *pra_inode,
             pr_info("tmp_inode is null\n");
             goto next_free;
         }
-        pr_info("inode[%s, %u]\n",d_find_any_alias(tmp_inode)->d_name.name, tmp_inode->i_ino);
+        // pr_info("inode[%s, %u]\n",d_find_any_alias(tmp_inode)->d_name.name, tmp_inode->i_ino);
 
         if(S_ISDIR(son_inode->i_mode)){
             if (f2fs_has_inline_dentry(son_inode)){
@@ -2251,8 +2251,8 @@ bool f2fs_inode_is_new_or_cowed(struct f2fs_sb_info *sbi,
     ri = F2FS_INODE(page);
     ts.tv_sec  = le64_to_cpu(ri->i_mtime);      // 秒
     ts.tv_nsec = le32_to_cpu(ri->i_mtime_nsec); // 纳秒
-    pr_info("inode ctime: %us, %uns\n",ts.tv_sec, ts.tv_nsec);
-    pr_info("snap  ctime: %us, %uns\n",snap_time->tv_sec, snap_time->tv_nsec);
+    // pr_info("inode ctime: %us, %uns\n",ts.tv_sec, ts.tv_nsec);
+    // pr_info("snap  ctime: %us, %uns\n",snap_time->tv_sec, snap_time->tv_nsec);
     if(timespec64_compare(snap_time, &ts) < 0){
         // 新文件或者创建快照后修改文件 都直接返回，不需要做cow
         // pr_info("inode is new\n");
@@ -2321,7 +2321,7 @@ int f2fs_snapshot_cow(struct inode *inode)
                 // entry_id 这个有了以后就读取看看有多少个快照版本
                 u32 tmp_next = le32_to_cpu(tmp_me.next);
                 if(!tmp_next){
-                    pr_info("inode is single snapshot\n");
+                    // pr_info("inode is single snapshot\n");
                     // 处理单个快照版本
                     if(f2fs_inode_is_new_or_cowed(sbi, inode, &(tmp_me.c_time))){
                         ret = 1;
@@ -2334,14 +2334,15 @@ int f2fs_snapshot_cow(struct inode *inode)
                     tmp2_inode = snap_inode;
                     // 获取push压栈的目录路径
                     tmp_stack = stack;
-                    while (!snap_isEmpty(&tmp_stack)) {    
-                        ret = snap_pop2(&tmp_stack, &pra_ino, &son_ino);
-                        if(ret) {
-                            // pr_info("cow stack is done\n");
-                            break;
-                        }
-                        pra_ino = snap_pop(&tmp_stack);
-                        pra_inode = f2fs_iget(sb, pra_ino);//tmp_pra_inode
+                    snap_iter_init(&it, &tmp_stack);
+                    while (it.cur && it.cur->next) {   
+                        // pr_info("tp it.cur[%u],next[%u]\n",it.cur->i_ino, it.cur->next->i_ino);
+                        pra_ino = it.cur->i_ino; 
+                        son_ino = it.cur->next->i_ino;
+                        // pr_info("parent=%lu, son=%lu\n", pra_ino, son_ino);
+                        it.cur = it.cur->next; // 移动 iterator
+
+                        pra_inode = f2fs_iget(sb, pra_ino);
                         son_inode = f2fs_iget(sb, son_ino);
                         parent_dentry = d_find_any_alias(pra_inode);
                         dentry = d_find_any_alias(son_inode);
@@ -2353,10 +2354,10 @@ int f2fs_snapshot_cow(struct inode *inode)
                         tmp2_inode = new_inode;
                     }
                 }else{
-                    pr_info("inode is multi snapshot,count[%u]\n",tmp_me.count);
+                    // pr_info("inode is multi snapshot,count[%u]\n",tmp_me.count);
                     // 第一个
                     if(!f2fs_inode_is_new_or_cowed(sbi, inode, &(tmp_me.c_time))){
-                        pr_info("[0] snap_ino:%u,next:%u\n",le32_to_cpu(tmp_me.snap_ino),tmp_next);
+                        // pr_info("[0] snap_ino:%u,next:%u\n",le32_to_cpu(tmp_me.snap_ino),tmp_next);
                     }
                     if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug parfile 1(%u) is snap-(%u)\n",
                         tmp_me.src_ino, tmp_me.snap_ino);
@@ -2402,10 +2403,8 @@ int f2fs_snapshot_cow(struct inode *inode)
                         struct f2fs_magic_entry *me3 = &mb3->mgentries[tmp_off];
                         tmp_next = le32_to_cpu(me3->next);
                         if(!f2fs_inode_is_new_or_cowed(sbi, inode, &(me3->c_time))){
-                            pr_info("[%d] tmp_blkaddr:%u, off:%u, snap_ino:%u,next:%u\n",i+1,tmp_blkaddr,tmp_off,le32_to_cpu(me3->snap_ino),tmp_next);
-                            // continue;
+                            // pr_info("[%d] tmp_blkaddr:%u, off:%u, snap_ino:%u,next:%u\n",i+1,tmp_blkaddr,tmp_off,le32_to_cpu(me3->snap_ino),tmp_next);
                         }else{
-                            pr_info("mul cow\n");
                             goto snap_next;
                         }
                         // cow
@@ -2413,25 +2412,15 @@ int f2fs_snapshot_cow(struct inode *inode)
                             iput(snap_inode);
                             snap_inode = NULL;
                         }
-                        pr_info("tp 1 \n");
                         tmp_stack = stack;
-                        
                         snap_iter_init(&it, &tmp_stack);
-                        pr_info("tp 2 \n");
                         snap_inode = f2fs_iget(sb, le32_to_cpu(me3->snap_ino));
                         tmp2_inode = snap_inode;
-                        pr_info("tp 3 %u\n",it.cur->i_ino);
-                        // pr_info("tp 4 %u\n",it.cur->next->i_ino);
-                        if(!(it.cur->next)){
-                            pr_info("tp 3.1    next is null\n");
-                        }
-                        while (it.cur && it.cur->next) {  
-                            pr_info("while start\n");  
+                        while (it.cur && it.cur->next) {   
                             // pr_info("tp it.cur[%u],next[%u]\n",it.cur->i_ino, it.cur->next->i_ino);
                             pra_ino = it.cur->i_ino; 
                             son_ino = it.cur->next->i_ino;
-                            pr_info("parent=%lu, son=%lu\n", pra_ino, son_ino);
-
+                            // pr_info("parent=%lu, son=%lu\n", pra_ino, son_ino);
                             it.cur = it.cur->next; // 移动 iterator
                             
                             pra_inode = f2fs_iget(sb, pra_ino);
@@ -2447,7 +2436,6 @@ int f2fs_snapshot_cow(struct inode *inode)
                         }
                         // next
                     snap_next:
-                        pr_info("sdfdsfsfsd\n");
                         prev_blkaddr = tmp_blkaddr;
                         tmp_blkaddr = sbi->magic_info->magic_blkaddr + magic_entry_to_blkaddr(tmp_next);
                         tmp_off     = magic_entry_to_offset(tmp_next);
@@ -2692,8 +2680,8 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
     cur_mr_blkaddr = (block_t)le32_to_cpu(old_sum.nid);
     cur_eidx = le32_to_cpu(old_sum.ofs_in_node);
 
-    pr_info("[snapfs IO]: ori_sum (overwrite) nid[%u],ofs[%u],ver[%u]\n",le32_to_cpu(old_sum.nid)
-         ,old_sum.ofs_in_node, old_sum.version);
+    // pr_info("[snapfs IO]: ori_sum (overwrite) nid[%u],ofs[%u],ver[%u]\n",le32_to_cpu(old_sum.nid)
+    //      ,old_sum.ofs_in_node, old_sum.version);
 
     
      /* 获取第一个 block */
@@ -2801,7 +2789,7 @@ found_entry:
     /* 标记当前 entry 无效并减少引用计数 */
     if (is_head) {
         /* 当前节点就是链表头 */
-        pr_info("[snapfs IO]: (overwrite) found at head, entry_nid[%u], new_nid %u\n",le32_to_cpu(cur_entry->m_nid), new_nid);
+        // pr_info("[snapfs IO]: (overwrite) found at head, entry_nid[%u], new_nid %u\n",le32_to_cpu(cur_entry->m_nid), new_nid);
         cur_next = le32_to_cpu(cur_entry->next);
         /* 更新 old_sum（链表头变化了） */
         if (cur_next) {
@@ -2816,7 +2804,7 @@ found_entry:
                 cur_entry = &cur_blk->mrentries[next_eidx];
                 if(!le32_to_cpu(cur_entry->next)){
                     // 刚好就2个多引用，这时要多变1
-                    pr_info("[snapfs IO]: (overwrite) 走这个分支!!\n");
+                    // pr_info("[snapfs IO]: (overwrite) 走这个分支!!\n");
                     new_sum.nid = cur_entry->m_nid;
                     new_sum.ofs_in_node = cur_entry->m_ofs;
                     new_sum.version = cur_entry->m_ver;
@@ -2881,11 +2869,11 @@ found_entry:
         if(ret){
             pr_info("[snapfs IO]: (overwrite) update summary failed\n");
         }else{
-            pr_info("[snapfs IO]: (overwrite) update summary success!\n");    
+            // pr_info("[snapfs IO]: (overwrite) update summary success!\n");    
         }
         mutex_lock(&cmr->curmulref_mutex);
         if(prev_blk && prev_blk != cur_blk){
-            pr_info("[snapfs IO]: (overwrite) release prev_blk\n");
+            // pr_info("[snapfs IO]: (overwrite) release prev_blk\n");
             if (cmr->inited && prev_mr_blkaddr != cmr->blkaddr) {
                 page = virt_to_page(prev_blk);
                 set_page_dirty(page);
@@ -2896,7 +2884,7 @@ found_entry:
         }
 
         if(cur_blk){
-            pr_info("[snapfs IO]: (overwrite) release cur_blk\n");
+            // pr_info("[snapfs IO]: (overwrite) release cur_blk\n");
             if (cmr->inited && cur_mr_blkaddr != cmr->blkaddr) {
                 page = virt_to_page(cur_blk);
                 set_page_dirty(page);
@@ -2950,7 +2938,7 @@ found_entry:
             mutex_lock(&cmr->curmulref_mutex);
             
             if(head_blk && prev_blk != head_blk){
-                pr_info("[snapfs IO]: (overwrite) release head_blk\n");
+                // pr_info("[snapfs IO]: (overwrite) release head_blk\n");
                 if (cmr->inited && head_blk != cmr->blkaddr) {
                     page = virt_to_page(head_blk);
                     set_page_dirty(page);
@@ -2961,7 +2949,7 @@ found_entry:
             }
 
             if(prev_blk && prev_blk != cur_blk){
-                pr_info("[snapfs IO]: (overwrite) release prev_blk\n");
+                // pr_info("[snapfs IO]: (overwrite) release prev_blk\n");
                 if (cmr->inited && prev_mr_blkaddr != cmr->blkaddr) {
                     page = virt_to_page(prev_blk);
                     set_page_dirty(page);
@@ -3040,7 +3028,7 @@ found_entry:
             }
             mutex_lock(&cmr->curmulref_mutex);
             if(head_blk && prev_blk != head_blk){
-                pr_info("[snapfs IO]: (overwrite) release head_blk\n");
+                // pr_info("[snapfs IO]: (overwrite) release head_blk\n");
                 if (cmr->inited && head_blk != cmr->blkaddr) {
                     page = virt_to_page(head_blk);
                     set_page_dirty(page);
@@ -3050,7 +3038,7 @@ found_entry:
                 }
             }
             if(prev_blk && prev_blk != cur_blk){
-                pr_info("[snapfs IO]: (overwrite) release prev_blk\n");
+                // pr_info("[snapfs IO]: (overwrite) release prev_blk\n");
                 if (cmr->inited && prev_mr_blkaddr != cmr->blkaddr) {
                     page = virt_to_page(prev_blk);
                     set_page_dirty(page);
@@ -3061,7 +3049,7 @@ found_entry:
             }
 
             if(cur_blk){
-                pr_info("[snapfs IO]: (overwrite) release cur_blk\n");
+                // pr_info("[snapfs IO]: (overwrite) release cur_blk\n");
                 if (cmr->inited && cur_mr_blkaddr != cmr->blkaddr) {
                     page = virt_to_page(cur_blk);
                     set_page_dirty(page);
