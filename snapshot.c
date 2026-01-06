@@ -214,6 +214,7 @@ int f2fs_update_summary_without_lock(struct f2fs_sb_info *sbi, block_t blkaddr,
 }
 
 
+
 typedef struct StacksnapNode {
     nid_t	i_ino;  // 存储字符
     struct StacksnapNode* next;  // 指向下一个节点
@@ -223,6 +224,16 @@ typedef struct StacksnapNode {
 typedef struct Stack_snap {
     StacksnapNode* top;  // 栈顶指针
 } Stack_snap;
+
+typedef struct {
+    StacksnapNode *cur;
+} snap_iter_t;
+
+static inline void snap_iter_init(snap_iter_t *it,
+                                  const Stack_snap *stack)
+{
+    it->cur = stack->top;
+}
 
 // 初始化栈
 void snap_initStack(Stack_snap* stack) {
@@ -1191,6 +1202,8 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                 me2->count = me->count;
                 me2->next = 0;
                 me2->c_time = current_time(snap_inode);
+                pr_info("[snapfs set_flag]: write magic page addr2/off2[%u,%u]\n"
+                    ,blkaddr2, off2);
                 // pr_info("2snap addr[%u], off2[%u], next[%u]\n", blkaddr2, off2, me2->next);
             }else if(me->count > 1){
                 me->count += 1;
@@ -1295,6 +1308,8 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                         }
                     }
                 }
+                pr_info("[snapfs set_flag]: write magic page addr3/off3[%u,%u]\n"
+                    ,blkaddr3, off3);
             }
             if(page2){
                 set_page_dirty(page2);
@@ -1355,6 +1370,7 @@ int f2fs_magic_lookup(struct f2fs_sb_info *sbi, u32 src_ino,
         /* bitmap 判断 */
         if (test_bit(off,(unsigned long *)(mb->multi_bitmap))) {
             me = &mb->mgentries[off];
+            pr_info("lookup me snap[%u] next[%u]\n",le32_to_cpu(me->snap_ino),le32_to_cpu(me->next));
             if (le32_to_cpu(me->src_ino) == src_ino) {
                 /* 命中已有映射 */
                 if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug find mgentry, addr/off[%u,%u] with id[%u],src_ino[%u]\n"
@@ -2169,7 +2185,7 @@ int f2fs_cow(struct inode *pra_inode,
             pr_info("tmp_inode is null\n");
             goto next_free;
         }
-        // pr_info("inode[%s, %u]\n",d_find_any_alias(tmp_inode)->d_name.name, tmp_inode->i_ino);
+        pr_info("inode[%s, %u]\n",d_find_any_alias(tmp_inode)->d_name.name, tmp_inode->i_ino);
 
         if(S_ISDIR(son_inode->i_mode)){
             if (f2fs_has_inline_dentry(son_inode)){
@@ -2235,12 +2251,16 @@ bool f2fs_inode_is_new_or_cowed(struct f2fs_sb_info *sbi,
     ri = F2FS_INODE(page);
     ts.tv_sec  = le64_to_cpu(ri->i_mtime);      // 秒
     ts.tv_nsec = le32_to_cpu(ri->i_mtime_nsec); // 纳秒
+    pr_info("inode ctime: %us, %uns\n",ts.tv_sec, ts.tv_nsec);
+    pr_info("snap  ctime: %us, %uns\n",snap_time->tv_sec, snap_time->tv_nsec);
     if(timespec64_compare(snap_time, &ts) < 0){
         // 新文件或者创建快照后修改文件 都直接返回，不需要做cow
+        // pr_info("inode is new\n");
         if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug snap,but is newfile or had cow\n");
         f2fs_put_page(page, 1);
         return true; // 已经处理过了
     }
+    // pr_info("snap is new\n");
     f2fs_put_page(page, 1);
     return false; // 需要cow处理
 }
@@ -2265,7 +2285,11 @@ int f2fs_snapshot_cow(struct inode *inode)
     int ret;
     struct dentry *parent_dentry = NULL, *dentry = NULL;
     Stack_snap stack;
+    Stack_snap tmp_stack;
+    Stack_snap tmp_stack2;
     nid_t  pra_ino, son_ino;//, snap_ino;
+    int i = 0;
+    snap_iter_t it;
     if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug start[%u]!\n",inode->i_ino);
     memset(&tmp_me, 0, sizeof(tmp_me));
     // 先判断这个inode是不是快照inode, 
@@ -2292,44 +2316,182 @@ int f2fs_snapshot_cow(struct inode *inode)
             parent_dentry = dget_parent(dentry);
             pra_inode = parent_dentry->d_inode;
             snap_push(&stack, parent_dentry->d_inode->i_ino);
+            
             if(is_snapshot_inode(pra_inode, &tmp_me, &entry_id)){
                 // entry_id 这个有了以后就读取看看有多少个快照版本
-                u32 tmp_next = tmp_me.next;
+                u32 tmp_next = le32_to_cpu(tmp_me.next);
                 if(!tmp_next){
                     pr_info("inode is single snapshot\n");
+                    // 处理单个快照版本
+                    if(f2fs_inode_is_new_or_cowed(sbi, inode, &(tmp_me.c_time))){
+                        ret = 1;
+                        goto out;
+                    }
+
+                    if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug parfile 1(%u) is snap-(%u)\n",
+                        tmp_me.src_ino, tmp_me.snap_ino);
+                    snap_inode = f2fs_iget(sb, le32_to_cpu(tmp_me.snap_ino));
+                    tmp2_inode = snap_inode;
+                    // 获取push压栈的目录路径
+                    tmp_stack = stack;
+                    while (!snap_isEmpty(&tmp_stack)) {    
+                        ret = snap_pop2(&tmp_stack, &pra_ino, &son_ino);
+                        if(ret) {
+                            // pr_info("cow stack is done\n");
+                            break;
+                        }
+                        pra_ino = snap_pop(&tmp_stack);
+                        pra_inode = f2fs_iget(sb, pra_ino);//tmp_pra_inode
+                        son_inode = f2fs_iget(sb, son_ino);
+                        parent_dentry = d_find_any_alias(pra_inode);
+                        dentry = d_find_any_alias(son_inode);
+                        ret = f2fs_cow(pra_inode, tmp2_inode, son_inode, &new_inode);
+                        if(ret){
+                            pr_info("parent cow failed\n");
+                            goto success;
+                        }
+                        tmp2_inode = new_inode;
+                    }
                 }else{
                     pr_info("inode is multi snapshot,count[%u]\n",tmp_me.count);
-                }
-                // 这里必须要用f2fs_inode的时间戳
-                if(f2fs_inode_is_new_or_cowed(sbi, inode, &(tmp_me.c_time))){
-                    ret = 1;
-                    goto out;
-                }
+                    // 第一个
+                    if(!f2fs_inode_is_new_or_cowed(sbi, inode, &(tmp_me.c_time))){
+                        pr_info("[0] snap_ino:%u,next:%u\n",le32_to_cpu(tmp_me.snap_ino),tmp_next);
+                    }
+                    if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug parfile 1(%u) is snap-(%u)\n",
+                        tmp_me.src_ino, tmp_me.snap_ino);
+                    snap_inode = f2fs_iget(sb, le32_to_cpu(tmp_me.snap_ino));
+                    tmp2_inode = snap_inode;
+                    // 获取push压栈的目录路径
+                    tmp_stack = stack;
+                    snap_iter_init(&it, &tmp_stack);
+                    while (it.cur && it.cur->next) {   
+                        // pr_info("tp it.cur[%u],next[%u]\n",it.cur->i_ino, it.cur->next->i_ino);
+                        pra_ino = it.cur->i_ino;
+                        son_ino = it.cur->next->i_ino; 
+                        it.cur = it.cur->next; // 移动 iterator
 
-                if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug parfile(%u) is snap-(%u)\n",
-                    tmp_me.src_ino, tmp_me.snap_ino);
-                snap_inode = f2fs_iget(sb, le32_to_cpu(tmp_me.snap_ino));
-                tmp2_inode = snap_inode;
-                // 获取push压栈的目录路径
-                while (!snap_isEmpty(&stack)) {    
-                                   
-                    ret = snap_pop2(&stack, &pra_ino, &son_ino);
-                    if(ret) {
-                        // pr_info("cow stack is done\n");
-                        break;
+                        pra_inode = f2fs_iget(sb, pra_ino);
+                        son_inode = f2fs_iget(sb, son_ino);
+                        parent_dentry = d_find_any_alias(pra_inode);
+                        dentry = d_find_any_alias(son_inode);
+                        ret = f2fs_cow(pra_inode, tmp2_inode, son_inode, &new_inode);
+                        if(ret){
+                            pr_info("parent cow failed\n");
+                            goto success;
+                        }
+                        tmp2_inode = new_inode;
                     }
-                    pra_ino = snap_pop(&stack);
-                    pra_inode = f2fs_iget(sb, pra_ino);//tmp_pra_inode
-                    son_inode = f2fs_iget(sb, son_ino);
-                    parent_dentry = d_find_any_alias(pra_inode);
-                    dentry = d_find_any_alias(son_inode);
-                    ret = f2fs_cow(pra_inode, tmp2_inode, son_inode, &new_inode);
-                    if(ret){
-                        pr_info("parent cow failed\n");
-                        goto success;
+
+                    block_t prev_blkaddr = 0;
+                    down_read(&sbi->magic_info->rwsem);
+                    block_t tmp_blkaddr = sbi->magic_info->magic_blkaddr + magic_entry_to_blkaddr(tmp_next);
+                    u32 tmp_off     = magic_entry_to_offset(tmp_next);
+                    struct page *page3 = NULL;
+                    for(i = 0; i < tmp_me.count - 1; i++){
+                        // pr_info("start tmp addr: %u, tmp_off: %u\n",tmp_blkaddr,tmp_off);
+                        if(prev_blkaddr != tmp_blkaddr){
+                            page3 = f2fs_get_meta_page(sbi, tmp_blkaddr);
+                            if (IS_ERR(page3)){
+                                pr_info("f2fs_get_meta_page failed 1: %ld\n", PTR_ERR(page3));
+                                up_read(&sbi->magic_info->rwsem);
+                                return PTR_ERR(page3);
+                            }
+                        }
+                        struct f2fs_magic_block *mb3 = (struct f2fs_magic_block *)page_address(page3);
+                        struct f2fs_magic_entry *me3 = &mb3->mgentries[tmp_off];
+                        tmp_next = le32_to_cpu(me3->next);
+                        if(!f2fs_inode_is_new_or_cowed(sbi, inode, &(me3->c_time))){
+                            pr_info("[%d] tmp_blkaddr:%u, off:%u, snap_ino:%u,next:%u\n",i+1,tmp_blkaddr,tmp_off,le32_to_cpu(me3->snap_ino),tmp_next);
+                            // continue;
+                        }else{
+                            pr_info("mul cow\n");
+                            goto snap_next;
+                        }
+                        // cow
+                        if (snap_inode){
+                            iput(snap_inode);
+                            snap_inode = NULL;
+                        }
+                        pr_info("tp 1 \n");
+                        tmp_stack = stack;
+                        
+                        snap_iter_init(&it, &tmp_stack);
+                        pr_info("tp 2 \n");
+                        snap_inode = f2fs_iget(sb, le32_to_cpu(me3->snap_ino));
+                        tmp2_inode = snap_inode;
+                        pr_info("tp 3 %u\n",it.cur->i_ino);
+                        // pr_info("tp 4 %u\n",it.cur->next->i_ino);
+                        if(!(it.cur->next)){
+                            pr_info("tp 3.1    next is null\n");
+                        }
+                        while (it.cur && it.cur->next) {  
+                            pr_info("while start\n");  
+                            // pr_info("tp it.cur[%u],next[%u]\n",it.cur->i_ino, it.cur->next->i_ino);
+                            pra_ino = it.cur->i_ino; 
+                            son_ino = it.cur->next->i_ino;
+                            pr_info("parent=%lu, son=%lu\n", pra_ino, son_ino);
+
+                            it.cur = it.cur->next; // 移动 iterator
+                            
+                            pra_inode = f2fs_iget(sb, pra_ino);
+                            son_inode = f2fs_iget(sb, son_ino);
+                            parent_dentry = d_find_any_alias(pra_inode);
+                            dentry = d_find_any_alias(son_inode);
+                            ret = f2fs_cow(pra_inode, tmp2_inode, son_inode, &new_inode);
+                            if(ret){
+                                pr_info("parent cow failed\n");
+                                goto success;
+                            }
+                            tmp2_inode = new_inode;
+                        }
+                        // next
+                    snap_next:
+                        pr_info("sdfdsfsfsd\n");
+                        prev_blkaddr = tmp_blkaddr;
+                        tmp_blkaddr = sbi->magic_info->magic_blkaddr + magic_entry_to_blkaddr(tmp_next);
+                        tmp_off     = magic_entry_to_offset(tmp_next);
+                        if(prev_blkaddr != tmp_blkaddr){
+                            f2fs_put_page(page3, 1);
+                            page3 = NULL; 
+                        } 
                     }
-                    tmp2_inode = new_inode;
+                    if(page3){
+                        f2fs_put_page(page3, 1);
+                        page3 = NULL;
+                    }
+                    up_read(&sbi->magic_info->rwsem);
                 }
+                // // 这里必须要用f2fs_inode的时间戳
+                // if(f2fs_inode_is_new_or_cowed(sbi, inode, &(tmp_me.c_time))){
+                //     ret = 1;
+                //     goto out;
+                // }
+
+                // if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug parfile(%u) is snap-(%u)\n",
+                //     tmp_me.src_ino, tmp_me.snap_ino);
+                // snap_inode = f2fs_iget(sb, le32_to_cpu(tmp_me.snap_ino));
+                // tmp2_inode = snap_inode;
+                // // 获取push压栈的目录路径
+                // while (!snap_isEmpty(&stack)) {    
+                                   
+                //     ret = snap_pop2(&stack, &pra_ino, &son_ino);
+                //     if(ret) {
+                //         // pr_info("cow stack is done\n");
+                //         break;
+                //     }
+                //     pra_ino = snap_pop(&stack);
+                //     pra_inode = f2fs_iget(sb, pra_ino);//tmp_pra_inode
+                //     son_inode = f2fs_iget(sb, son_ino);
+                //     parent_dentry = d_find_any_alias(pra_inode);
+                //     dentry = d_find_any_alias(son_inode);
+                //     ret = f2fs_cow(pra_inode, tmp2_inode, son_inode, &new_inode);
+                //     if(ret){
+                //         pr_info("parent cow failed\n");
+                //         goto success;
+                //     }
+                //     tmp2_inode = new_inode;
+                // }
             } 
             if(parent_dentry == sb->s_root){// 找到根了
                 ret = 1;
