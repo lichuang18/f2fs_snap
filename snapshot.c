@@ -1625,7 +1625,6 @@ bool f2fs_is_empty_file(struct f2fs_sb_info *sbi,
         if(SNAPFS_DEBUG) pr_info("[snapfs cow22]: debug inode %lu is non empty file\n", inode->i_ino);
     }
     f2fs_put_page(page, 1);
-    pr_info("? ? ?\n");
     return false; // 需要cow处理
 }
 
@@ -1675,7 +1674,6 @@ int f2fs_set_mulref_blocks(struct inode *inode)
     
     
 	// isize = i_size_read(inode);
-	
 	if (f2fs_is_empty_file(sbi, inode)) {
 		return 1;
 	}
@@ -1690,7 +1688,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
 	max_lblk = (isize + (1ULL << blkbits) - 1) >> blkbits;
 	for (lblk = 0; lblk < max_lblk; lblk++) {
         if(lblk <= direct_index){
-            if(SNAPFS_DEBUG) pr_info("------------------direct_index------------------\n");
+            // if(SNAPFS_DEBUG) pr_info("------------------direct_index------------------\n");
             if (__is_valid_data_blkaddr(le32_to_cpu(fi->i_addr[lblk]))) {
                 // 开始set mulref flag
                 ret = set_mulref_entry(sbi, le32_to_cpu(fi->i_addr[lblk]), inode->i_ino);
@@ -1704,7 +1702,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
         }else if(lblk < level1_blks){
             nid = le32_to_cpu(fi->i_nid[0]);
             if(nid == 0) continue; 
-            if(SNAPFS_DEBUG) pr_info("------------------level1_blks------------------\n");
+            // if(SNAPFS_DEBUG) pr_info("------------------level1_blks------------------\n");
             dn_ipage = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(dn_ipage)) {
                 pr_err("[snapfs cow22]: debug setmulref get dn_ipage failed[%d < direct_index]\n", lblk);
@@ -1727,7 +1725,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
         }else if(lblk < level2_blks){
             nid = le32_to_cpu(fi->i_nid[1]);
             if(nid == 0) continue; 
-            if(SNAPFS_DEBUG) pr_info("------------------level2_blks------------------\n");
+            // if(SNAPFS_DEBUG) pr_info("------------------level2_blks------------------\n");
             dn_ipage = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(dn_ipage)) {
                 pr_err("[snapfs cow22]: debug setmulref get dn_ipage failed[%d < level2_blks]\n", lblk);
@@ -1751,7 +1749,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
         }else if(lblk < level3_blks){
             nid = le32_to_cpu(fi->i_nid[2]);
             if(nid == 0) break; 
-            if(SNAPFS_DEBUG) pr_info("------------------level3_blks------------------\n");
+            // if(SNAPFS_DEBUG) pr_info("------------------level3_blks------------------\n");
             indirect_page = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(indirect_page)){
                 pr_err("[snapfs setmulref]: get indirect_page failed[%d < level3_blks]\n", lblk);
@@ -1774,11 +1772,11 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             // pr_info("level3_blks tp2?\n");
             dn = (struct direct_node *)page_address(dn_ipage);
             blkaddr = le32_to_cpu(dn->addr[off_in_dn]);
-            if(SNAPFS_DEBUG) {
-                pr_info("blkaddr %u, lblk - level2_blks (%u - %u = %u)\n",blkaddr,lblk,level2_blks,lblk - level2_blks);
-                pr_info("direct_index [%u]\n",direct_index);
-                pr_info("level1_blks [%u]\n",level1_blks);
-            }
+            // if(SNAPFS_DEBUG) {
+            //     pr_info("blkaddr %u, lblk - level2_blks (%u - %u = %u)\n",blkaddr,lblk,level2_blks,lblk - level2_blks);
+            //     pr_info("direct_index [%u]\n",direct_index);
+            //     pr_info("level1_blks [%u]\n",level1_blks);
+            // }
             if (__is_valid_data_blkaddr(blkaddr)) {
                 // 开始set mulref flag
                 ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
@@ -1795,7 +1793,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
         }else if(lblk < level4_blks){
             nid = fi->i_nid[3];
             if(nid == 0) break; 
-            if(SNAPFS_DEBUG) pr_info("------------------level4_blks------------------\n");
+            // if(SNAPFS_DEBUG) pr_info("------------------level4_blks------------------\n");
             indirect_page = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(indirect_page)){
                 pr_err("[snapfs cow22]: debug setmulref get indirect_page failed[%d < level4_blks]\n", lblk);
@@ -1835,7 +1833,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
         }else if(lblk < level5_blks){
             nid = fi->i_nid[4];
             if(nid == 0) break; 
-            if(SNAPFS_DEBUG) pr_info("------------------level5_blks------------------\n");
+            if(SNAPFS_DEBUG) pr_info("----level5_blks--nid %u-lblk %u-\n",nid,lblk);
             indirect_page = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(indirect_page)){
                 pr_err("[snapfs cow22]: debug setmulref get indirect_page failed[%d < level5_blks]\n", lblk);
@@ -1846,11 +1844,13 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             off_in_dn = (lblk - level3_blks) % double_dir_blk;
             indirect = (struct indirect_node *)page_address(indirect_page);
             nid = le32_to_cpu(indirect->nid[in_dn]);
+            f2fs_put_page(indirect_page, 1);
+            indirect_page = NULL;
             if(nid == 0) break; 
             indirect_page2 = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(indirect_page2)){
                 pr_err("[snapfs cow22]: debug setmulref get indirect_page2 failed[%d < level5_blks]\n", lblk);
-                f2fs_put_page(indirect_page, 1);
+                // f2fs_put_page(indirect_page, 1);
                 goto out;
                 // return PTR_ERR(indirect_page);
             }
@@ -1858,31 +1858,28 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             off_in_dn2 = off_in_dn % direct_blks;
             indirect2 = (struct indirect_node *)page_address(indirect_page2);
             nid = le32_to_cpu(indirect2->nid[in_dn2]);
+            f2fs_put_page(indirect_page2, 1);
+            indirect_page2 = NULL;
             if(nid == 0) break; 
+            // pr_info("Tp 3 indirect2 [%u]\n",indirect2);
             dn_ipage = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(dn_ipage)) {
                 pr_err("[snapfs cow22]: debug setmulref get dn_ipage failed[%d < level3_blks]\n", lblk);
-                f2fs_put_page(indirect_page, 1);
-                f2fs_put_page(indirect_page2, 1);
                 goto out;
             }
             dn = (struct direct_node *)page_address(dn_ipage);
             blkaddr = le32_to_cpu(dn->addr[off_in_dn2]);
+            f2fs_put_page(dn_ipage, 1);
+            dn_ipage = NULL;
             if (__is_valid_data_blkaddr(blkaddr)) {
                 // 开始set mulref flag
                 ret = set_mulref_entry(sbi, blkaddr, inode->i_ino);
                 if(ret){
                     pr_err("[snapfs cow22]: debug setmulref failed![level5_blks]\n");
-                    f2fs_put_page(dn_ipage, 1);
-                    f2fs_put_page(indirect_page, 1);
-                    f2fs_put_page(indirect_page2, 1);
                     goto out;
                     // return ret;
                 }
             }
-            f2fs_put_page(dn_ipage, 1);
-            f2fs_put_page(indirect_page, 1);
-            f2fs_put_page(indirect_page2, 1);
         }
     }
 out:
