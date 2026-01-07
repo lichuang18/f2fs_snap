@@ -1958,7 +1958,6 @@ int f2fs_cow(struct inode *pra_inode,
     snap_dentry = d_find_any_alias(snap_inode);
     if (!snap_dentry)
 		goto next_free;
-
     // dget(son_dentry);
     // dget(snap_dentry);
     d_name = &son_dentry->d_name;
@@ -1970,6 +1969,7 @@ int f2fs_cow(struct inode *pra_inode,
         if (IS_ERR(tmp_inode)) {
             ret = PTR_ERR(tmp_inode);
             tmp_inode = NULL;
+            pr_info("fuck you baby!!!! ret %u\n",ret);
             goto next_free;
         }
         // if((le32_to_cpu(de->ino) != son_inode->i_ino) && (tmp_inode->i_size == son_inode->i_size)){
@@ -2180,7 +2180,6 @@ int f2fs_cow(struct inode *pra_inode,
         f2fs_mark_inode_dirty_sync(snap_inode, true);
         f2fs_mark_inode_dirty_sync(tmp_inode, true);
         *new_inode = tmp_inode;
-
         if(!tmp_inode){
             pr_info("tmp_inode is null\n");
             goto next_free;
@@ -2348,7 +2347,7 @@ int f2fs_snapshot_cow(struct inode *inode)
                         dentry = d_find_any_alias(son_inode);
                         ret = f2fs_cow(pra_inode, tmp2_inode, son_inode, &new_inode);
                         if(ret){
-                            pr_info("parent cow failed\n");
+                            pr_info("parent cow failed 1\n");
                             goto success;
                         }
                         tmp2_inode = new_inode;
@@ -2378,7 +2377,7 @@ int f2fs_snapshot_cow(struct inode *inode)
                         dentry = d_find_any_alias(son_inode);
                         ret = f2fs_cow(pra_inode, tmp2_inode, son_inode, &new_inode);
                         if(ret){
-                            pr_info("parent cow failed\n");
+                            pr_info("parent cow failed 2\n");
                             goto success;
                         }
                         tmp2_inode = new_inode;
@@ -2429,7 +2428,7 @@ int f2fs_snapshot_cow(struct inode *inode)
                             dentry = d_find_any_alias(son_inode);
                             ret = f2fs_cow(pra_inode, tmp2_inode, son_inode, &new_inode);
                             if(ret){
-                                pr_info("parent cow failed\n");
+                                pr_info("parent cow failed 3\n");
                                 goto success;
                             }
                             tmp2_inode = new_inode;
@@ -2482,7 +2481,7 @@ int f2fs_snapshot_cow(struct inode *inode)
                 // }
             } 
             if(parent_dentry == sb->s_root){// 找到根了
-                ret = 1;
+                // ret = 1;
                 goto success;
             }
             tmp_inode = parent_dentry->d_inode;

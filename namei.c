@@ -21,6 +21,7 @@
 #include "xattr.h"
 #include "acl.h"
 #include <trace/events/f2fs.h>
+#include "snapshot.h"
 
 static struct inode *f2fs_new_inode(struct inode *dir, umode_t mode)
 {
@@ -541,6 +542,16 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
     //         atomic_read(&inode->i_count), inode->i_nlink);
 	// pr_info("f2fs_unlink START: i_state=0x%x\n",
     //     	inode->i_state);
+	unsigned int flags = F2FS_I(inode)->i_flags;
+	if (flags & F2FS_COWED_FL){
+		if(SNAPFS_DEBUG) pr_info("[snapfs unlink]: write with O_TRUNC, F2FS_COWED_FL is 1\n");
+	}else{
+		if(SNAPFS_DEBUG) pr_info("[snapfs unlink]: write without O_TRUNC, F2FS_COWED_FL is 0, to do cow\n");
+		// pr_info("[snapfs write]: write without O_TRUNC, F2FS_COWED_FL is 0, to do cow\n");
+		if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
+			if(SNAPFS_DEBUG) pr_info("[snapfs unlink]: unlink with cow\n");
+		}
+	}
 
 	trace_f2fs_unlink_enter(dir, dentry);
 	if (unlikely(f2fs_cp_error(sbi))) {
