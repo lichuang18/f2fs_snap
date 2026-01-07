@@ -540,8 +540,8 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 
 	// pr_info("f2fs_unlink START:i_count=%d, i_nlink=%d\n",
     //         atomic_read(&inode->i_count), inode->i_nlink);
-	// pr_info("f2fs_unlink START: i_state=0x%x\n",
-    //     	inode->i_state);
+	pr_info("f2fs_unlink START: i_state=0x%x\n",inode->i_state);
+
 	unsigned int flags = F2FS_I(inode)->i_flags;
 	if (flags & F2FS_COWED_FL){
 		if(SNAPFS_DEBUG) pr_info("[snapfs unlink]: write with O_TRUNC, F2FS_COWED_FL is 1\n");
