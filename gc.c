@@ -18,6 +18,7 @@
 #include "f2fs.h"
 #include "node.h"
 #include "segment.h"
+#include "snapshot.h"
 #include "gc.h"
 #include "iostat.h"
 #include <trace/events/f2fs.h>
@@ -46,7 +47,8 @@ static int gc_thread_func(void *data)
 				waitqueue_active(fggc_wq) ||
 				gc_th->gc_wake,
 				msecs_to_jiffies(wait_ms));
-
+		
+		pr_info("[gc thread]: start tp1\n");
 		if (test_opt(sbi, GC_MERGE) && waitqueue_active(fggc_wq))
 			foreground = true;
 
@@ -90,14 +92,17 @@ static int gc_thread_func(void *data)
 		 * invalidated soon after by user update or deletion.
 		 * So, I'd like to wait some time to collect dirty segments.
 		 */
+		if(SNAPFS_DEBUG_GC) pr_info("gc thread,then f2fs gc foreground ? %u\n",foreground);
 		if (sbi->gc_mode == GC_URGENT_HIGH) {
 			wait_ms = gc_th->urgent_sleep_time;
 			down_write(&sbi->gc_lock);
+			if(SNAPFS_DEBUG_GC) pr_info("GC Triggered: GC_URGENT_HIGH\n");
 			goto do_gc;
 		}
 
 		if (foreground) {
 			down_write(&sbi->gc_lock);
+			if(SNAPFS_DEBUG_GC) pr_info("GC Triggered: foreground GC request\n");  // 打印日志
 			goto do_gc;
 		} else if (!down_write_trylock(&sbi->gc_lock)) {
 			stat_other_skip_bggc_count(sbi);
@@ -105,17 +110,21 @@ static int gc_thread_func(void *data)
 		}
 
 		if (!is_idle(sbi, GC_TIME)) {
+			if(SNAPFS_DEBUG_GC) pr_info("GC Triggered: IO subsystem is busy, skipping GC\n");
 			increase_sleep_time(gc_th, &wait_ms);
 			up_write(&sbi->gc_lock);
 			stat_io_skip_bggc_count(sbi);
 			goto next;
 		}
 
-		if (has_enough_invalid_blocks(sbi))
+		if (has_enough_invalid_blocks(sbi)){
+			if(SNAPFS_DEBUG_GC) pr_info("GC Triggered: enough invalid blocks\n");
 			decrease_sleep_time(gc_th, &wait_ms);
+		}
 		else
 			increase_sleep_time(gc_th, &wait_ms);
 do_gc:
+		pr_info("[gc thread]: start tp2, foreground %u\n",foreground);
 		if (!foreground)
 			stat_inc_bggc_count(sbi->stat_info);
 
@@ -124,7 +133,6 @@ do_gc:
 		/* foreground GC was been triggered via f2fs_balance_fs() */
 		if (foreground)
 			sync_mode = false;
-
 		/* if return value is not zero, no victim was selected */
 		if (f2fs_gc(sbi, sync_mode, !foreground, false, NULL_SEGNO))
 			wait_ms = gc_th->no_gc_sleep_time;
@@ -1005,6 +1013,7 @@ static bool is_alive(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 	block_t source_blkaddr;
 
 	nid = le32_to_cpu(sum->nid);
+	// pr_info("is_alive nid %u\n",nid);
 	ofs_in_node = le16_to_cpu(sum->ofs_in_node);
 
 	node_page = f2fs_get_node_page(sbi, nid);
@@ -1179,7 +1188,7 @@ static int move_data_block(struct inode *inode, block_t bidx,
 	int type = fio.sbi->am.atgc_enabled && (gc_type == BG_GC) &&
 				(fio.sbi->gc_mode != GC_URGENT_HIGH) ?
 				CURSEG_ALL_DATA_ATGC : CURSEG_COLD_DATA;
-
+	if(SNAPFS_DEBUG_GC) pr_info("GC TP move data tp 1\n");
 	/* do not read out */
 	page = f2fs_grab_cache_page(inode->i_mapping, bidx, false);
 	if (!page)
@@ -1332,6 +1341,9 @@ static int move_data_page(struct inode *inode, block_t bidx, int gc_type,
 	struct page *page;
 	int err = 0;
 	bool is_dirty;
+	if(SNAPFS_DEBUG_GC) pr_info("[move_data_page]: ino %u, off %u, gc_type %u, segno %u\n",
+			inode->i_ino,off,gc_type,segno);
+
 	page = f2fs_get_lock_data_page(inode, bidx, true);
 	if (IS_ERR(page))
 		return PTR_ERR(page);
@@ -1426,12 +1438,15 @@ static int gc_data_segment(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 	int phase = 0;
 	int submitted = 0;
 	unsigned int usable_blks_in_seg = f2fs_usable_blks_in_seg(sbi, segno);
-
 	start_addr = START_BLOCK(sbi, segno);
 
+	bool is_mulref = false;
+	struct f2fs_sm_info *sm = SM_I(sbi);
+	struct curmulref_info *cmr = &sm->curmulref_blk;
+	block_t mulref_addr = sbi->magic_info->mulref_blkaddr;
+	struct f2fs_summary tmp_sum;
 next_step:
 	entry = sum;
-
 	for (off = 0; off < usable_blks_in_seg; off++, entry++) {
 		struct page *data_page;
 		struct inode *inode;
@@ -1440,7 +1455,40 @@ next_step:
 		// unsigned int ofs_in_node;
 		block_t start_bidx;
 		nid_t nid = le32_to_cpu(entry->nid);
+		u16 eidx1 = le16_to_cpu(entry->ofs_in_node);
+		// para
+		int i = 0;
+		struct f2fs_mulref_block *blk = NULL;
+		struct page *mulref_page = NULL;
+		struct f2fs_mulref_entry *mgentry = NULL;
 
+		is_mulref = check_sit_mulref_entry(sbi, start_addr + off);
+		// down_read(&sm->curmulref_lock);
+		// up_read(&sm->curmulref_lock);
+		if(is_mulref){ // 多引用块
+			// blk的来源有2种可能
+			if(cmr->blkaddr == nid){//多引用块的sum中保存的nid是指向mulref的地址
+				blk = cmr->blk;
+			}else{
+				mulref_page = f2fs_get_meta_page(sbi, nid);
+				blk = (struct f2fs_mulref_block *)page_address(mulref_page);
+			}
+			if(!blk){
+				pr_info("get blk failed\n");
+			}
+			mgentry = &blk->mrentries[eidx1];
+			nid = le32_to_cpu(mgentry->m_nid);
+			ofs_in_node = le16_to_cpu(mgentry->m_ofs);
+			// version = mgentry->m_ver;
+
+			tmp_sum.nid = mgentry->m_nid;
+			tmp_sum.ofs_in_node = mgentry->m_ofs;
+			tmp_sum.version = mgentry->m_ver;
+
+			if(mulref_page){
+				f2fs_put_page(mulref_page, 1);
+			}
+		}
 		/*
 		 * stop BG_GC if there is not enough free sections.
 		 * Or, stop GC if the segment becomes fully valid caused by
@@ -1451,10 +1499,13 @@ next_step:
 							BLKS_PER_SEC(sbi)))
 			return submitted;
 
+		// 对于多引用块，有效与无效和单引用一致
 		if (check_valid_map(sbi, segno, off) == 0)
 			continue;
 
+		// 多引用块，需要特殊处理
 		if (phase == 0) {
+			// 单引用块的处理
 			f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), 1,
 							META_NAT, true);
 			continue;
@@ -1466,15 +1517,23 @@ next_step:
 		}
 
 		/* Get an inode by ino with checking validity */
-		if (!is_alive(sbi, entry, &dni, start_addr + off, &nofs))
-			continue;
+		if(is_mulref){ // 多引用块，传递一个head的inode进去
+			if (!is_alive(sbi, &tmp_sum, &dni, start_addr + off, &nofs))
+				continue;
+		}else{
+			if (!is_alive(sbi, entry, &dni, start_addr + off, &nofs))
+				continue;
+		}
 
 		if (phase == 2) {
 			f2fs_ra_node_page(sbi, dni.ino);
 			continue;
 		}
-
+		
 		ofs_in_node = le16_to_cpu(entry->ofs_in_node);
+		if(is_mulref){
+			ofs_in_node = le16_to_cpu(mgentry->m_ofs);
+		}
 
 		if (phase == 3) {
 			inode = f2fs_iget(sb, dni.ino);
@@ -1493,7 +1552,7 @@ next_step:
 				continue;
 			}
 
-			if (!down_write_trylock(//inode加锁，disk op前
+			if (!down_write_trylock(
 				&F2FS_I(inode)->i_gc_rwsem[WRITE])) {
 				iput(inode);
 				sbi->skipped_gc_rwsem++;
@@ -1576,6 +1635,9 @@ next_step:
 
 	if (++phase < 5)
 		goto next_step;
+	// if(SNAPFS_DEBUG_GC) 
+	pr_info("[gc_data_segment]: submitted %u, gc_type %u, segno %u\n",
+			submitted,gc_type,segno);
 
 	return submitted;
 }
@@ -1607,7 +1669,8 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 	unsigned char type = IS_DATASEG(get_seg_entry(sbi, segno)->type) ?
 						SUM_TYPE_DATA : SUM_TYPE_NODE;
 	int submitted = 0;
-	
+	// if(SNAPFS_DEBUG_GC) pr_info("[do_garbage_collect]: tp1 gc_type %u(0 is bg),start_segno %u, end_segno %u\n",
+		// gc_type, start_segno, end_segno);
 	if (__is_large_section(sbi))
 		end_segno = rounddown(end_segno, sbi->segs_per_sec);
 	/*
@@ -1626,8 +1689,12 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 		f2fs_ra_meta_pages(sbi, GET_SUM_BLOCK(sbi, segno),
 					end_segno - segno, META_SSA, true);
 
+	// if(SNAPFS_DEBUG_GC) pr_info("[do_garbage_collect]: tp2, segno %u, end_segno %u\n",
+	// 	segno, end_segno);
+
 	/* reference all summary page */
 	while (segno < end_segno) { //处理一个zone内的seg，目前考虑1个seg的处理
+
 		sum_page = f2fs_get_sum_page(sbi, segno++);
 		if (IS_ERR(sum_page)) {
 			int err = PTR_ERR(sum_page);
@@ -1653,15 +1720,21 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 					GET_SUM_BLOCK(sbi, segno));
 		f2fs_put_page(sum_page, 0);
 
-		if (get_valid_blocks(sbi, segno, false) == 0)
+		if (get_valid_blocks(sbi, segno, false) == 0){
+			if(SNAPFS_DEBUG_GC) pr_info("[do_garbage_collect]: tp3\n");
 			goto freed;
+		}
 		// 后台GC，并且大段，并且已经迁移的块数大于 迁移粒度，就跳过
 		if (gc_type == BG_GC && __is_large_section(sbi) &&
-				migrated >= sbi->migration_granularity)
+				migrated >= sbi->migration_granularity){
+			if(SNAPFS_DEBUG_GC) pr_info("[do_garbage_collect]: tp4\n");
 			goto skip;
+		}
 		//当前页面数据不一致，或者cp error，跳过这个段
-		if (!PageUptodate(sum_page) || unlikely(f2fs_cp_error(sbi)))
+		if (!PageUptodate(sum_page) || unlikely(f2fs_cp_error(sbi))){
+			if(SNAPFS_DEBUG_GC) pr_info("[do_garbage_collect]: tp5\n");
 			goto skip;
+		}
 
 		sum = page_address(sum_page);
 		// 检查当前段的类型是否和预期的一致， 不一致要跳过
@@ -1670,6 +1743,7 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 				 segno, type, GET_SUM_TYPE((&sum->footer)));
 			set_sbi_flag(sbi, SBI_NEED_FSCK);
 			f2fs_stop_checkpoint(sbi, false);
+			if(SNAPFS_DEBUG_GC) pr_info("[do_garbage_collect]: tp6 \n");
 			goto skip;
 		}
 
@@ -1682,10 +1756,15 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 		 */
 		
 		if (type == SUM_TYPE_NODE){
+			// if(SNAPFS_DEBUG_GC) pr_info("[do_garbage_collect]: tp7 node\n");
 			submitted += gc_node_segment(sbi, sum->entries, segno,
 								gc_type);
 		}
 		else{
+			// if(SNAPFS_DEBUG_GC) pr_info("[do_garbage_collect]: tp7 data\n");
+			// if(gc_type == FG_GC){
+			// 	pr_info("do_garbage_collect tp1. FG_GC\n");
+			// }
 			submitted += gc_data_segment(sbi, sum->entries, gc_list,
 							segno, gc_type,
 							force_migrate);
@@ -1714,7 +1793,7 @@ skip:
 	blk_finish_plug(&plug);
 
 	stat_inc_call_count(sbi->stat_info);
-
+	// pr_info("[do_garbage_collect]: tp8 over seg_freed %u\n",seg_freed);		
 	return seg_freed;
 }
 
@@ -1743,6 +1822,7 @@ int f2fs_gc(struct f2fs_sb_info *sbi, bool sync,
 				reserved_segments(sbi),
 				prefree_segments(sbi));
 
+	// if(SNAPFS_DEBUG_GC) pr_info("[f2fs_gc]: start tp, gc_type %u(0 = bg) force %u\n", gc_type, force);
 	cpc.reason = __get_cp_reason(sbi);
 	sbi->skipped_gc_rwsem = 0;
 	first_skipped = last_skipped;
@@ -1755,7 +1835,6 @@ gc_more:
 		ret = -EIO;
 		goto stop;
 	}
-
 	if (gc_type == BG_GC && has_not_enough_free_secs(sbi, 0, 0)) {
 		/*
 		 * For example, if there are many prefree_segments below given
@@ -1768,8 +1847,10 @@ gc_more:
 			if (ret)
 				goto stop;
 		}
-		if (has_not_enough_free_secs(sbi, 0, 0))
+		if (has_not_enough_free_secs(sbi, 0, 0)){
+			// pr_info("fuck baby ? are you here\n");
 			gc_type = FG_GC;
+		}
 	}
 
 	/* f2fs_balance_fs doesn't need to do BG_GC in critical path. */
@@ -1780,7 +1861,10 @@ gc_more:
 	ret = __get_victim(sbi, &segno, gc_type);
 	if (ret)
 		goto stop;
-
+	// if(SNAPFS_DEBUG_GC) pr_info("[f2fs_gc]: prepare garbage collect\n");
+	// if(gc_type == FG_GC){
+	// 	pr_info("f2fs_gc tp1. FG_GC gc_type %u\n",gc_type);
+	// }
 	seg_freed = do_garbage_collect(sbi, segno, &gc_list, gc_type, force);
 	if (gc_type == FG_GC &&
 		seg_freed == f2fs_usable_segs_in_sec(sbi, segno))
@@ -1845,6 +1929,7 @@ stop:
 
 	if (sync && !ret)
 		ret = sec_freed ? 0 : -EAGAIN;
+	// if(SNAPFS_DEBUG_GC) pr_info("[f2fs_gc]: over tp gc_type %u\n",gc_type);
 	return ret;
 }
 

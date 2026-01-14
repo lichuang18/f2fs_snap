@@ -363,7 +363,7 @@ retry_find:
 	idx = find_next_zero_bit((unsigned long *)blk->multi_bitmap,
 				 MRENTRY_PER_BLOCK,
 				 cmr->next_free_entry);
-    if(SNAPFS_DEBUG) pr_info("start debug: curmulref tp1 [%u],next %u addr %u\n",idx,cmr->next_free_entry,cmr->blkaddr);
+    if(SNAPFS_DEBUG) pr_info("[snapfs mulref alloc]: cmr idx[%u],next %u mulref addr %u\n",idx,cmr->next_free_entry,cmr->blkaddr);
 	if (idx >= MRENTRY_PER_BLOCK) {
         // pr_info("change mulref block\n");
         if(SNAPFS_DEBUG) pr_info("some error? idx: %u\n",idx);
@@ -395,7 +395,7 @@ out_unlock:
 }
 
 /**
- * check_sit_mulref_entry - 检查指定块地址是否被标记为多引用
+ * check sit_mulref entry - 检查指定块地址是否被标记为多引用
  * @sbi: F2FS超级块信息
  * @blkaddr: 要检查的块地址
  * 
@@ -421,12 +421,9 @@ bool check_sit_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr)
 	blkoff = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
 
 	/* 3. 验证段号是否有效 */
-	if (segno >= le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count_ssa)) {
-		// pr_info("check sit mulref entry: invalid segno %u for blkaddr %u",
-		// 	segno, blkaddr);
-        // pr_info("310 non mulref\n");
-		return false;
-	}
+	// if (segno >= le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count_ssa)) {
+	// 	return false;
+	// }
 
 	/* 4. 加读锁保护并发访问 */
 	down_read(&smi->smentry_lock);
@@ -434,9 +431,35 @@ bool check_sit_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr)
 	/* 5. 获取对应的段多引用条目 */
 	me = &smi->smentries[segno];
 
+    struct sit_mulref_entry *me2;
+    int segg = 0;
+    for(segg=0;segg<1000;segg++){
+        me2 = &smi->smentries[segno+segg];
+        int has_one = 0;
+        int i=0;
+        int byte_idx = 0;
+        int bit = 0;
+        for (i = 0; i < SIT_VBLOCK_MAP_SIZE; i++) {
+            if (me2->mvalid_map[i] != 0) {
+                has_one = 1;
+                break;
+            }
+        }
+        if (has_one) {
+            /* 统计1的个数 */
+            int bit_count = 0;
+            for ( i = 0; i < SIT_VBLOCK_MAP_SIZE; i++) {
+                bit_count += hweight8(me2->mvalid_map[i]);
+            }
+            pr_info("[snapfs check]: curseg %u, Seg %u has 1s in map, total 1s: %d, mblocks: %u\n",segno , segno+segg, bit_count, me2->mblocks);
+            break;
+        }else{
+            // pr_info("curseg %u, Seg %u 全为0, mblocks: %u\n",segno, segno+segg, me2->mblocks);
+        }
+    }
+
 	/* 6. 检查bitmap中对应的位是否被设置 */
 	result = test_bit(blkoff, (unsigned long *)me->mvalid_map);
-
 	/* 7. 调试信息（可选） */
 #ifdef CONFIG_F2FS_DEBUG
 	if (result) {
@@ -447,7 +470,7 @@ bool check_sit_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr)
 
 	/* 8. 释放读锁 */
 	up_read(&smi->smentry_lock);
-    pr_info("310 mulref? %u\n",result);
+    // pr_info("310 mulref? %u\n",result);
 	return result;
 }
 
@@ -463,30 +486,37 @@ void update_sit_mulref_entry(struct f2fs_sb_info *sbi,
 	unsigned int segno;
 	unsigned int blkoff;
 	bool old;
-
-	if (!smi)
+	if (!smi){
+        pr_info("smi is null, update mulref flag failed\n");
 		return;
+    }
 
 	segno  = GET_SEGNO(sbi, blkaddr);
 	blkoff = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
 
-	if (segno >= le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count_ssa))
-		return;
-
+	// if (segno >= le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count_ssa)){
+	// 	pr_info("update tp 0 seg %u >=? ssa_count %u\n",segno,le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count_ssa));
+    //     return;
+    // }
 	down_write(&smi->smentry_lock);
-
 	me = &smi->smentries[segno];
 
 	/* 原状态 */
 	old = test_bit(blkoff, (unsigned long *)me->mvalid_map);
-
+    if(old){
+        pr_info("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!segno %u, blkoff %u  原来是1\n",segno,blkoff);
+    }else{
+        pr_info("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!segno %u, blkoff %u  原来是0\n",segno,blkoff);
+    }
 	if (set) {//设置多引用
 		if (!old) { //如果原来是0，就设置为1，然后blk数量+1，dirty
 			__set_bit(blkoff,
 				(unsigned long *)me->mvalid_map);
-			me->mblocks++;
-			me->dirty = true;
+            pr_info("-- blkaddr[%u] is not mulref, need set, blkoff[%u]\n",blkaddr,blkoff);
 		}
+        // 如果原来是1，那就不用设置了     blk数量也需要修改，同样也需要dirty
+        me->mblocks++;
+        me->dirty = true;
 	} else {// 取消多引用设置
 		if (old) {// 如果原来是1，就设置为0，然后blk数量-1，同样dirty
 			__clear_bit(blkoff,
@@ -534,6 +564,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
     struct f2fs_mulref_block *blk, *blk2, *blk3;
     block_t old_blkaddr = *blkaddr;
     bool is_mulref = check_sit_mulref_entry(sbi, old_blkaddr);
+    pr_info("[snapfs alloc]: tp1 is_mulref[%u], blkoff [%u],old data blkaddr[%u]\n",is_mulref, GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr),old_blkaddr);
     u16 eidx_tmp = 0;
     u16 eidx1 = 0, eidx2 = 0, eidx3 = 0;
     block_t blkaddr1 = 0;
@@ -549,10 +580,13 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
     block_t start_addr = sbi->magic_info->mulref_blkaddr;
     bool sum_from_ssa = false;
     struct curmulref_info *cmr = &sm->curmulref_blk;
+    pr_info("[PID%d CPU%d] ----\n", current->pid, smp_processor_id());
+    pr_info("[PID%d CPU%d] +++++\n", current->pid, smp_processor_id());
     if(!is_mulref){
+        // pr_info("[snapfs alloc]: tp2 (!is_mulref)\n");
         down_write(&sm->curmulref_lock);
         mutex_lock(&cmr->curmulref_mutex);
-        // pr_info("alloc mulref entry (!is_mulref)\n");
+        
         ret = curmulref_alloc_entry(sbi, &eidx_tmp);
         if (ret) {
             pr_info("[snapfs cow2222]: debug alloc failed\n");
@@ -573,6 +607,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         blkaddr2 = cmr->blkaddr; //上面分配函数可能触发块的切换，如果没切换那更好
         eidx2 = eidx_tmp;
     }else{
+        // pr_info("[snapfs alloc]: tp3 (is_mulref)\n");
         down_write(&sm->curmulref_lock);
         mutex_lock(&cmr->curmulref_mutex);
         ret = curmulref_alloc_entry(sbi, &eidx_tmp);
@@ -618,8 +653,10 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
             // f2fs_put_page(sum_page, 1);
         }
     }
+
     if(!is_mulref){
         // maybe 加锁
+        // pr_info("[snapfs alloc]: tp4 !is_mulref\n");
         if (blkaddr1 == blkaddr2) {
             blk = cmr->blk;
             mgentry = &blk->mrentries[eidx1];
@@ -663,6 +700,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
             mutex_unlock(&cmr->curmulref_mutex);  
             up_write(&sm->curmulref_lock);
         } else { // 跨块处理的情况
+            // pr_info("[snapfs alloc]: tp42 !is_mulref\n");
             mulref_page = f2fs_get_meta_page(sbi, blkaddr1);
             blk = (struct f2fs_mulref_block *)page_address(mulref_page);
 
@@ -715,7 +753,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         
     }else{ // 已经是多引用块，也就是多版本快照的处理
         // 分配一个就行，就是 eidx1和blkaddr1
-        // pr_info("[snapfs cow2222]: debug alloc (is_mulref)\n");
+        // pr_info("[snapfs alloc]: tp5 is_mulref\n");
         blk = cmr->blk;
         mgentry = &blk->mrentries[eidx1];
 
@@ -794,6 +832,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         mutex_unlock(&cmr->curmulref_mutex);
         up_write(&sm->curmulref_lock);
     }
+    pr_info("[snapfs alloc]: over\n");
 	return ret;
 }
 
@@ -1357,7 +1396,7 @@ int f2fs_magic_lookup(struct f2fs_sb_info *sbi, u32 src_ino,
             // pr_info("lookup me snap[%u] next[%u]\n",le32_to_cpu(me->snap_ino),le32_to_cpu(me->next));
             if (le32_to_cpu(me->src_ino) == src_ino) {
                 /* 命中已有映射 */
-                if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug find mgentry, addr/off[%u,%u] with id[%u],src_ino[%u]\n"
+                if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug find mgentry, addr/off[%u,%u] with entry id[%u],src_ino[%u]\n"
                         ,blkaddr, off, entry_id, src_ino);       
                 *ret_entry_id = entry_id;
                 memcpy(ret_entry, me, sizeof(*me));
@@ -2197,6 +2236,7 @@ int f2fs_cow(struct inode *pra_inode,
         // }
         goto out_success; 
     }else{
+        pr_info("not found dentry, error? %u\n",ret);
         goto next_free;
     }
 
@@ -2237,12 +2277,13 @@ bool f2fs_inode_is_new_or_cowed(struct f2fs_sb_info *sbi,
     if(timespec64_compare(snap_time, &ts) < 0){
         // 新文件或者创建快照后修改文件 都直接返回，不需要做cow
         // pr_info("inode is new\n");
+        // pr_info("[snapfs cow]: debug snap,but is newfile or had cow\n");
         if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug snap,but is newfile or had cow\n");
         f2fs_put_page(page, 1);
         return true; // 已经处理过了
     }
-    // pr_info("snap is new\n");
     f2fs_put_page(page, 1);
+    // pr_info("[snapfs cow]: old file, needw cown");
     return false; // 需要cow处理
 }
 
@@ -2259,7 +2300,8 @@ int f2fs_snapshot_cow(struct inode *inode)
     struct inode *son_inode = NULL;
     struct inode *new_inode = NULL;
     struct inode *tmp2_inode = NULL;
-
+    // struct page *ipage = NULL;
+    // struct f2fs_inode *ri = NULL;
     struct f2fs_sb_info *sbi = sbi = F2FS_I_SB(inode);
     struct super_block *sb = inode->i_sb;
     // u8 snap_count = 0;
@@ -2271,6 +2313,7 @@ int f2fs_snapshot_cow(struct inode *inode)
     nid_t  pra_ino, son_ino;//, snap_ino;
     int i = 0;
     snap_iter_t it;
+    
     if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug start[%u]!\n",inode->i_ino);
     memset(&tmp_me, 0, sizeof(tmp_me));
     // 先判断这个inode是不是快照inode, 
@@ -2431,39 +2474,10 @@ int f2fs_snapshot_cow(struct inode *inode)
                     }
                     up_read(&sbi->magic_info->rwsem);
                 }
-                // // 这里必须要用f2fs_inode的时间戳
-                // if(f2fs_inode_is_new_or_cowed(sbi, inode, &(tmp_me.c_time))){
-                //     ret = 1;
-                //     goto out;
-                // }
-
-                // if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug parfile(%u) is snap-(%u)\n",
-                //     tmp_me.src_ino, tmp_me.snap_ino);
-                // snap_inode = f2fs_iget(sb, le32_to_cpu(tmp_me.snap_ino));
-                // tmp2_inode = snap_inode;
-                // // 获取push压栈的目录路径
-                // while (!snap_isEmpty(&stack)) {    
-                                   
-                //     ret = snap_pop2(&stack, &pra_ino, &son_ino);
-                //     if(ret) {
-                //         // pr_info("cow stack is done\n");
-                //         break;
-                //     }
-                //     pra_ino = snap_pop(&stack);
-                //     pra_inode = f2fs_iget(sb, pra_ino);//tmp_pra_inode
-                //     son_inode = f2fs_iget(sb, son_ino);
-                //     parent_dentry = d_find_any_alias(pra_inode);
-                //     dentry = d_find_any_alias(son_inode);
-                //     ret = f2fs_cow(pra_inode, tmp2_inode, son_inode, &new_inode);
-                //     if(ret){
-                //         pr_info("parent cow failed\n");
-                //         goto success;
-                //     }
-                //     tmp2_inode = new_inode;
-                // }
             } 
             if(parent_dentry == sb->s_root){// 找到根了
                 // ret = 1;
+                // pr_info("have find root\n");
                 goto success;
             }
             tmp_inode = parent_dentry->d_inode;
@@ -2471,6 +2485,20 @@ int f2fs_snapshot_cow(struct inode *inode)
     }
     
 success:
+//     ipage = f2fs_get_node_page(sbi, inode->i_ino);
+//     if (IS_ERR(ipage)) {
+//         pr_err("[snapfs cow]: failed to get ipage[%lu]\n", inode->i_ino);
+//         goto next_free;
+//     }
+//     ri = F2FS_INODE(ipage);
+//     pr_info("f2fs inode old ctime: %us, %uns\n",le64_to_cpu(ri->i_mtime), le64_to_cpu(inode->i_mtime.tv_nsec));
+//     ri->i_mtime = cpu_to_le64(inode->i_mtime.tv_sec);
+//     ri->i_mtime_nsec = cpu_to_le32(inode->i_mtime.tv_nsec);
+//     pr_info("inode new ctime: %us, %uns\n",inode->i_mtime.tv_sec, inode->i_mtime.tv_nsec);
+//     pr_info("f2fs inode new ctime: %us, %uns\n",le64_to_cpu(ri->i_mtime), le64_to_cpu(inode->i_mtime.tv_nsec));
+//     set_page_dirty(ipage);
+//     f2fs_put_page(ipage, 1);
+// next_free:       
     if (pra_inode)
         iput(pra_inode);
     if (son_inode)
@@ -2529,7 +2557,7 @@ bool f2fs_is_mulref_blkaddr(struct f2fs_sb_info *sbi,
 	return false;
 }
 
-static int f2fs_get_summary_by_addr(struct f2fs_sb_info *sbi,
+int f2fs_get_summary_by_addr(struct f2fs_sb_info *sbi,
                                     block_t blkaddr,
                                     struct f2fs_summary *sum)
 {
@@ -3075,7 +3103,7 @@ void f2fs_mulref_replace_block(struct f2fs_sb_info *sbi, block_t old_addr, block
     // struct f2fs_summary old_sum;
     // block_t mulref_blk_addr;
     int ret = 0;
-
+    pr_info("replace ++++++++++\n");
     // 判断旧地址是否有效
     f2fs_bug_on(sbi, old_addr == NULL_ADDR);
     ret = f2fs_get_summary_by_addr(sbi, old_addr, old_sum);

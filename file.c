@@ -952,18 +952,23 @@ int f2fs_setattr(struct user_namespace *mnt_userns, struct dentry *dentry,
 	struct inode *inode = d_inode(dentry);
 	int err;
 
+
+	ktime_t start, end;
 	// 判断标准
 	unsigned int flags = F2FS_I(inode)->i_flags;
 	if (flags & F2FS_COWED_FL){
 		if(SNAPFS_DEBUG) pr_info("[snapfs truncate]: error, F2FS_COWED_FL is 1\n");
 	}else{
 		if(SNAPFS_DEBUG) pr_info("[snapfs truncate]: normal, F2FS_COWED_FL is 0\n");
-		if(f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
+		start = ktime_get_ns();
+		if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
 			if(SNAPFS_DEBUG) pr_info("[snapfs truncate]: write with cow, set F2FS_COWED_FL = 1\n");
 			F2FS_I(inode)->i_flags |= F2FS_COWED_FL;
 			// flags |= F2FS_COWED_FL;  // 设置SYNC标志
 			// flags &= ~F2FS_COWED_FL;  // 清除SYNC标志
 		}
+		end = ktime_get_ns();
+		pr_info("truncate cow cost = %lld ns\n", end - start);
 	}
 
 
@@ -4764,34 +4769,25 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 
 	// pr_info("start write: [%s]\n",d_find_any_alias(inode)->d_name.name);
 	// pr_info("write file->f_flags = 0x%x\n", file->f_flags);
+	struct page *ipage = NULL;
+    struct f2fs_inode *ri = NULL;
 
+	ktime_t start, end;
 	unsigned int flags = F2FS_I(inode)->i_flags;
 	if (flags & F2FS_COWED_FL){
 		if(SNAPFS_DEBUG) pr_info("[snapfs write]: write with O_TRUNC, F2FS_COWED_FL is 1\n");
 	}else{
 		if(SNAPFS_DEBUG) pr_info("[snapfs write]: write without O_TRUNC, F2FS_COWED_FL is 0, to do cow\n");
-		// pr_info("[snapfs write]: write without O_TRUNC, F2FS_COWED_FL is 0, to do cow\n");
+		start = ktime_get_ns();
 		if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
 			if(SNAPFS_DEBUG) pr_info("[snapfs write]: write with cow\n");
+			end = ktime_get_ns();
+			pr_info("write cow cost = %lld ns\n", end - start);
+			size_t i_count = iov_iter_count(from);
+			pr_info("ki_pos: %u, iov_count: %u\n",iocb->ki_pos, i_count);
 		}
 	}
 	
-	// unsigned int f = file->f_flags;
-	// if (f & O_WRONLY)  pr_info("  O_WRONLY\n");
-    // if (f & O_RDWR)    pr_info("  O_RDWR\n");
-    // if (f & O_APPEND)  pr_info("  O_APPEND\n");
-    // if (f & O_TRUNC)   pr_info("  O_TRUNC\n");
-    // if (f & O_DIRECT)  pr_info("  O_DIRECT\n");
-    // if (f & O_SYNC)    pr_info("  O_SYNC\n");
-    // if (f & O_DSYNC)   pr_info("  O_DSYNC\n");
-    // if (f & O_NOATIME) pr_info("  O_NOATIME\n");
-	
-
-	// if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
-	// 	pr_info("normal write with cow\n");
-	// }
-	// pr_info("normal write without cow\n");
-
 	if (unlikely(f2fs_cp_error(F2FS_I_SB(inode)))) {
 		ret = -EIO;
 		goto out;
@@ -4899,6 +4895,25 @@ out:
 	trace_f2fs_file_write_iter(inode, orig_pos, orig_count, ret);
 	if (ret > 0)
 		ret = generic_write_sync(iocb, ret);
+
+	// pr_info("success cow, prepare update inode mtime\n");
+	ipage = f2fs_get_node_page(F2FS_I_SB(inode), inode->i_ino);
+	if (IS_ERR(ipage)) {
+		pr_err("[snapfs cow]: failed to get ipage[%lu]\n", inode->i_ino);
+		goto next_free;
+	}
+	ri = F2FS_INODE(ipage);
+	if((ri->i_mtime != cpu_to_le64(inode->i_mtime.tv_sec)) || 
+		ri->i_mtime_nsec != cpu_to_le32(inode->i_mtime.tv_nsec)){
+		// pr_info("f2fs inode old ctime: %us, %uns\n",le64_to_cpu(ri->i_mtime), le64_to_cpu(inode->i_mtime.tv_nsec));
+		ri->i_mtime = cpu_to_le64(inode->i_mtime.tv_sec);
+		ri->i_mtime_nsec = cpu_to_le32(inode->i_mtime.tv_nsec);
+		// pr_info("inode new ctime: %us, %uns\n",inode->i_mtime.tv_sec, inode->i_mtime.tv_nsec);
+		// pr_info("f2fs inode new ctime: %us, %uns\n",le64_to_cpu(ri->i_mtime), le64_to_cpu(inode->i_mtime.tv_nsec));
+		set_page_dirty(ipage);	
+	}
+	f2fs_put_page(ipage, 1);
+next_free:
 	return ret;
 }
 

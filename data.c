@@ -2671,6 +2671,40 @@ static inline bool need_inplace_update(struct f2fs_io_info *fio)
 	return f2fs_should_update_inplace(inode, fio);
 }
 
+static int get_seg_type(struct f2fs_io_info *fio)
+{
+	if (fio->type == DATA) {
+		struct inode *inode = fio->page->mapping->host;
+
+		if (is_inode_flag_set(inode, FI_ALIGNED_WRITE))
+			return CURSEG_COLD_DATA_PINNED;
+
+		if (page_private_gcing(fio->page)) {
+			if (fio->sbi->am.atgc_enabled &&
+				(fio->io_type == FS_DATA_IO) &&
+				(fio->sbi->gc_mode != GC_URGENT_HIGH))
+				return CURSEG_ALL_DATA_ATGC;
+			else
+				return CURSEG_COLD_DATA;
+		}
+		if (file_is_cold(inode) || f2fs_need_compress_data(inode))
+			return CURSEG_COLD_DATA;
+		if (file_is_hot(inode) ||
+				is_inode_flag_set(inode, FI_HOT_DATA) ||
+				f2fs_is_atomic_file(inode) ||
+				f2fs_is_volatile_file(inode))
+			return CURSEG_HOT_DATA;
+		return f2fs_rw_hint_to_seg_type(inode->i_write_hint);
+	} else {
+		if (IS_DNODE(fio->page))
+			return is_cold_node(fio->page) ? CURSEG_WARM_NODE :
+						CURSEG_HOT_NODE;
+		return CURSEG_COLD_NODE;
+	}
+}
+
+
+
 int f2fs_do_write_data_page(struct f2fs_io_info *fio)
 {
 	struct page *page = fio->page;
@@ -2695,8 +2729,7 @@ int f2fs_do_write_data_page(struct f2fs_io_info *fio)
 	}
 
 	/* Deadlock due to between page->lock and f2fs_lock_op */
-	if (fio->need_lock == LOCK_REQ && !f2fs_trylock_op(fio->sbi))
-		return -EAGAIN;
+	if (fio->need_lock == LOCK_REQ && !f2fs_trylock_op(fio->sbi))		return -EAGAIN;
 
 	err = f2fs_get_dnode_of_data(&dn, page->index, LOOKUP_NODE);
 	if (err)
@@ -2771,6 +2804,118 @@ got_it:
 
 	/* LFS mode write path */
 	f2fs_outplace_write_data(&dn, fio);
+	// 可以在这一层更新多inode的映射
+	
+	bool from_gc = (get_seg_type(fio) == CURSEG_ALL_DATA_ATGC);
+	if(from_gc && check_sit_mulref_entry(fio->sbi, fio->old_blkaddr)){
+		int i = 0;
+		struct f2fs_sm_info *sm = SM_I(fio->sbi);
+		struct curmulref_info *cmr = &sm->curmulref_blk;
+		block_t mulref_addr = fio->sbi->magic_info->mulref_blkaddr;
+
+		struct f2fs_mulref_block *blk = NULL;
+		struct f2fs_mulref_block *blk2 = NULL;
+		struct page *mulref_page = NULL;
+		struct page *tmp_mulref_page = NULL;
+		struct f2fs_mulref_entry *mgentry = NULL;
+		struct f2fs_mulref_entry *tmp_mgentry = NULL;
+		struct f2fs_summary old_sum;
+		u8 mgcount = 0;
+		block_t tmp_blkaddr = 0;
+		block_t blkaddr2 = 0;
+		struct dnode_of_data *dns;
+		struct inode **mul_inodes;
+		nid_t *mul_nids;
+		u32 tmp_next = 0;
+		u16 eidx_tmp = 0;
+    	u16 eidx1 = 0, eidx2 = 0, eidx3 = 0;
+
+		err = f2fs_get_summary_by_addr(fio->sbi, fio->old_blkaddr, &old_sum);
+		if (err){
+			pr_info("get old_sum failed\n");
+			return 1;
+		}
+		// blk的来源有2种可能
+		if(cmr->blkaddr == old_sum.nid){//多引用块的sum中保存的nid是指向mulref的地址
+			blk = cmr->blk;
+		}else{
+			mulref_page = f2fs_get_meta_page(fio->sbi, old_sum.nid);
+			blk = (struct f2fs_mulref_block *)page_address(mulref_page);
+		}
+		if(!blk){
+			pr_info("get blk failed\n");
+		}
+		mgentry = &blk->mrentries[eidx1];
+		// nid = le32_to_cpu(mgentry->m_nid);
+		// ofs_in_node = le16_to_cpu(mgentry->m_ofs);
+		// version = mgentry->m_ver;
+		mgcount = mgentry->m_count;
+	
+		dns = kmalloc_array(mgcount, sizeof(struct dnode_of_data), GFP_KERNEL);
+		if (!dns)
+			return -ENOMEM;
+		mul_inodes = kmalloc_array(mgcount, sizeof(struct inode *), GFP_KERNEL);
+		if (!mul_inodes)
+			return -ENOMEM;
+		mul_nids = kmalloc_array(mgcount, sizeof(nid_t), GFP_KERNEL);
+		if (!mul_nids)
+			return -ENOMEM;
+
+		mul_nids[0] = le32_to_cpu(mgentry->m_nid);
+		tmp_next = le32_to_cpu(mgentry->next);
+		for(i = 1 ; i < mgcount ; i++){
+			tmp_blkaddr = tmp_next / MRENTRY_PER_BLOCK + mulref_addr; 
+            eidx_tmp = tmp_next % MRENTRY_PER_BLOCK;
+
+			if (tmp_blkaddr == old_sum.nid) {
+                // mulref_page3 = mulref_page2;
+                blk2 = blk;
+            }else if (tmp_blkaddr == cmr->blkaddr){ // 和上一个tmp blk一致
+                blk2 = cmr->blk;
+				// mulref_page3 保持不变
+            }else if(blkaddr2 == tmp_blkaddr){
+				// blk2 正常沿用上一次的
+			}else{
+                // 新的blkaddr
+                if(tmp_mulref_page){// 跨块处理的情况 ，第一次不用走这里
+                    f2fs_put_page(tmp_mulref_page, 1);
+                    tmp_mulref_page = NULL;
+                }
+                tmp_mulref_page = f2fs_get_meta_page(fio->sbi, tmp_blkaddr);//head next
+                blk2 = (struct f2fs_mulref_block *)page_address(tmp_mulref_page);
+            }
+            if(!blk2){
+                pr_info("[snapfs update inode]: debug alloc (is_mulref) blk2 failed\n");
+                break;
+            }
+			tmp_mgentry = &blk2->mrentries[eidx_tmp];
+			mul_nids[i] = le32_to_cpu(tmp_mgentry->m_nid);
+			tmp_next = le32_to_cpu(tmp_mgentry->next);
+			blkaddr2 = tmp_blkaddr;
+		}
+
+		if(mulref_page){
+			f2fs_put_page(mulref_page, 1);
+		}
+		if(tmp_mulref_page){
+			f2fs_put_page(tmp_mulref_page, 1);
+		}
+		
+		for(i = 1 ; i < mgcount ; i++){
+			mul_inodes[i] = f2fs_iget(fio->sbi->sb, mul_nids[i]);
+			set_new_dnode(&dns[i], mul_inodes[i], NULL, NULL, 0);
+			err = f2fs_get_dnode_of_data(&dns[i], page->index, LOOKUP_NODE);
+			if (err)
+				goto out;
+
+			f2fs_update_data_blkaddr(&dns[i], fio->new_blkaddr);
+			set_inode_flag(mul_inodes[i], FI_APPEND_WRITE);
+			if (page->index == 0)
+				set_inode_flag(mul_inodes[i], FI_FIRST_BLOCK_WRITTEN);
+			f2fs_put_dnode(&dns[i]);
+		}
+	}
+	
 	trace_f2fs_do_write_data_page(page, OPU);
 	set_inode_flag(inode, FI_APPEND_WRITE);
 	if (page->index == 0)

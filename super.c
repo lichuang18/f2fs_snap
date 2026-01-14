@@ -4243,6 +4243,7 @@ try_onemore:
 			 err);
 		goto free_nm;
 	}
+	pr_info("fill super tp----\n");
 	err = adjust_reserved_segment(sbi);
 	if (err)
 		goto free_nm;

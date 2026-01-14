@@ -203,6 +203,12 @@ bool f2fs_is_valid_blkaddr(struct f2fs_sb_info *sbi,
 			blkaddr >= MAIN_BLKADDR(sbi)))
 			return false;
 		break;
+	case META_SIT_MULREF://和sit保持一致，沿用sit的判断标准
+		if (unlikely(blkaddr >= SIT_BLK_CNT(sbi))){
+			pr_info("what happen? blkaddr %u >? SIT_BLK_CNT(sbi) %u\n",blkaddr,SIT_BLK_CNT(sbi));
+			return false;
+		}
+		break;
 	default:
 		BUG();
 	}
@@ -234,10 +240,13 @@ int f2fs_ra_meta_pages(struct f2fs_sb_info *sbi, block_t start, int nrpages,
 		fio.op_flags &= ~REQ_META;
 
 	blk_start_plug(&plug);
+	// pr_info("read page: blkno %u, TOTAL_SEGS(sbi) %u\n",blkno ,TOTAL_SEGS(sbi));
 	for (; nrpages-- > 0; blkno++) {
 
-		if (!f2fs_is_valid_blkaddr(sbi, blkno, type))
+		if (!f2fs_is_valid_blkaddr(sbi, blkno, type)){
+			pr_info("readch invalid blkaddr,%u\n",blkno);
 			goto out;
+		}
 
 		switch (type) {
 		case META_NAT:
@@ -249,17 +258,26 @@ int f2fs_ra_meta_pages(struct f2fs_sb_info *sbi, block_t start, int nrpages,
 					blkno * NAT_ENTRY_PER_BLOCK);
 			break;
 		case META_SIT:
-			if (unlikely(blkno >= TOTAL_SEGS(sbi)))
+			if (unlikely(blkno >= TOTAL_SEGS(sbi))){
 				goto out;
+			}
 			/* get sit block addr */
 			fio.new_blkaddr = current_sit_addr(sbi,
 					blkno * SIT_ENTRY_PER_BLOCK);
+			// pr_info("sit addr: %u blkno %u\n",fio.new_blkaddr,blkno);
 			break;
 		case META_SSA:
 		case META_CP:
 		case META_POR:
 		case META_GENERIC:
 			fio.new_blkaddr = blkno;
+			break;
+		case META_SIT_MULREF:
+			if (unlikely(blkno >= TOTAL_SEGS(sbi)))
+				goto out;
+			/* get sit block addr */
+			fio.new_blkaddr = SIT_MR_I(sbi)->base_addr + SIT_BLOCK_OFFSET(blkno * SIT_ENTRY_PER_BLOCK);
+			// pr_info("mulref sit base %u, addr: %u blkno %u\n",SIT_MR_I(sbi)->base_addr,fio.new_blkaddr,blkno);
 			break;
 		default:
 			BUG();
@@ -1688,7 +1706,9 @@ int f2fs_write_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 
 	/* --- 新增 sit_mulref flush --- */
     if (SIT_MR_I(sbi)) {
+		pr_info("umount error?  flush sit info\n");
         f2fs_flush_sit_mulref_entries(sbi); // 新函数，无需 cpc，可自己扩展
+		pr_info("umount success!  flush sit info\n");
     }
 
 	/* save inmem log status */

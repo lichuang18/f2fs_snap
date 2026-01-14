@@ -527,6 +527,7 @@ void f2fs_balance_fs(struct f2fs_sb_info *sbi, bool need)
 			finish_wait(&sbi->gc_thread->fggc_wq, &wait);
 		} else {
 			down_write(&sbi->gc_lock);
+			// if(SNAPFS_DEBUG_GC) pr_info("gc balance,then f2fs gc\n");
 			f2fs_gc(sbi, false, false, false, NULL_SEGNO);
 		}
 	}
@@ -2542,9 +2543,17 @@ static void get_new_segment(struct f2fs_sb_info *sbi,
 
 	spin_lock(&free_i->segmap_lock);
 
+	// if((*newseg + 1) % 1){
+	// 	pr_info("not skip [%u].   hint %u\n",sbi->segs_per_sec,hint);
+	// }else{
+	// 	pr_info("skip [%u].   hint %u\n",sbi->segs_per_sec,hint);
+	// }
+	
 	if (!new_sec && ((*newseg + 1) % sbi->segs_per_sec)) {
 		segno = find_next_zero_bit(free_i->free_segmap,
 			GET_SEG_FROM_SEC(sbi, hint + 1), *newseg + 1);
+		pr_info(" new segno %u, ??123??[%u]\n",segno,GET_SEG_FROM_SEC(sbi, hint + 1));
+		
 		if (segno < GET_SEG_FROM_SEC(sbi, hint + 1))
 			goto got_it;
 	}
@@ -2554,12 +2563,27 @@ find_other_zone:
 		if (dir == ALLOC_RIGHT) {
 			secno = find_next_zero_bit(free_i->free_secmap,
 							MAIN_SECS(sbi), 0);
+
+			if(secno == MAIN_SECS(sbi)){
+				pr_info("-----------error new secno2 %u MAIN_SECS(sbi) %u-----------\n",secno,MAIN_SECS(sbi));
+			}
+
 			f2fs_bug_on(sbi, secno >= MAIN_SECS(sbi));
 		} else {
 			go_left = 1;
 			left_start = hint - 1;
 		}
 	}
+	
+	// for(i = 0; i< MAIN_SECS(sbi); i++){
+	// 	if(!test_bit(i, free_i->free_secmap)){
+	// 		pr_info("old_segno[%u],have free sec, find sec[%u] seg[%u]\n",
+	// 				hint,i,GET_SEG_FROM_SEC(sbi, secno));
+	// 		break;
+	// 	}
+	// }
+
+	// pr_info(" go_left %u\n",go_left);
 	if (go_left == 0)
 		goto skip_left;
 
@@ -2574,10 +2598,13 @@ find_other_zone:
 		break;
 	}
 	secno = left_start;
+	
 skip_left:
 	segno = GET_SEG_FROM_SEC(sbi, secno);
 	zoneno = GET_ZONE_FROM_SEC(sbi, secno);
-
+	// if(secno <= 30 || secno > 15088){
+	// 	pr_info(" new segno3 %u, secno %u\n",segno,secno);
+	// }
 	/* give up on finding another zone */
 	if (!init)
 		goto got_it;
@@ -2646,8 +2673,13 @@ static unsigned int __get_next_segno(struct f2fs_sb_info *sbi, int type)
 	sanity_check_seg_type(sbi, seg_type);
 
 	/* if segs_per_sec is large than 1, we need to keep original policy. */
-	if (__is_large_section(sbi))
+	if (__is_large_section(sbi)){
+		// pr_info("large section?  fuck?\n");
 		return curseg->segno;
+	}
+	// {
+	// 	pr_info("is not large section\n");
+	// }
 
 	/* inmem log may not locate on any segment after mount */
 	if (!curseg->inited)
@@ -2679,6 +2711,7 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 	struct curseg_info *curseg = CURSEG_I(sbi, type);
 	unsigned short seg_type = curseg->seg_type;
 	unsigned int segno = curseg->segno;
+	unsigned int old_segno = segno; //dff
 	int dir = ALLOC_LEFT;
 	if (curseg->inited)
 		write_sum_page(sbi, curseg->sum_blk,
@@ -2687,11 +2720,22 @@ static void new_curseg(struct f2fs_sb_info *sbi, int type, bool new_sec)
 		dir = ALLOC_RIGHT;	
 	if (test_opt(sbi, NOHEAP))
 		dir = ALLOC_RIGHT;
-
+    
 	segno = __get_next_segno(sbi, type);
+	// pr_info("tp 2.1 segno %u\n",segno);
+	// if (curseg->alloc_type == SSR){
+	// 	pr_info("SSR allloc %u\n",curseg->alloc_type);
+	// }else{
+	// 	pr_info("other alloc %u at_ssr?\n",curseg->alloc_type);
+	// }
+
+			
 	get_new_segment(sbi, &segno, new_sec, dir);
+	// pr_info("tp old_segno %u, new segno %u\n",old_segno, segno);
+	// pr_info("tp 2.2 segno %u, next %u\n",segno,curseg->next_segno);
 	curseg->next_segno = segno;
 	reset_curseg(sbi, type, 1);
+	// pr_info("tp 3.4 segno %u, next %u\n",segno,curseg->next_segno);
 	curseg->alloc_type = LFS;
 }
 
@@ -3489,10 +3533,15 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	unsigned long long old_mtime;
 	bool from_gc = (type == CURSEG_ALL_DATA_ATGC);
 	struct seg_entry *se = NULL;
+	struct f2fs_summary old_sum;
 	int ret = 0;
+	nid_t sum_nid = le32_to_cpu(sum->nid);
 	down_read(&SM_I(sbi)->curseg_lock);
 	mutex_lock(&curseg->curseg_mutex);
 	down_write(&sit_i->sentry_lock);
+
+	// fio->old_blkaddr 判断旧信息
+
 	// 这是 “搬迁已有有效块”
 	// 与普通写入不同：
 	// old_blkaddr 一定合法
@@ -3513,6 +3562,14 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	* because, this function updates a summary entry in the
 	* current summary block.
 	*/
+	// 原本你的sum是一个inode的sum， 现在如果是一个GC 迁移多引用块，那么sum就要修改
+	if(from_gc && f2fs_is_mulref_blkaddr(sbi, old_blkaddr)){
+		ret = f2fs_get_summary_by_addr(sbi, old_blkaddr, sum);
+		if (ret){
+			pr_info("get old_sum failed\n");
+			return ;
+		}
+	}
 	__add_sum_entry(sbi, type, sum);
 
 	__refresh_next_blkoff(sbi, curseg);
@@ -3531,44 +3588,53 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	 * since SSR needs latest valid block information.
 	 */
 	update_sit_entry(sbi, *new_blkaddr, 1);
-
+	
 	// if(!f2fs_is_mulref_blkaddr(sbi, fio->old_blkaddr)){
 	if(!f2fs_is_mulref_blkaddr(sbi, old_blkaddr)){
+		// check sit mulref_entry(sbi, start_addr + off);
+		// pr_info("-------    invalid oldblkaddr %u -------\n",old_blkaddr);
 		update_sit_entry(sbi, old_blkaddr, -1);	
 	} else{
 		// mulref process.   多引用转单引用
 		// pr_info("[snapfs IO]: allocate blk and is mulref blk[%u]\n",old_blkaddr);
-		ret = f2fs_mulref_overwrite(sbi,old_blkaddr,le32_to_cpu(sum->nid));
-		if(ret){
-			pr_info("[snapfs IO]: allocate mulref update failed\n");
+		if(!from_gc){
+			ret = f2fs_mulref_overwrite(sbi,old_blkaddr,sum_nid);
+			if(ret){
+				pr_info("[snapfs IO]: allocate mulref update failed\n");
+			}else{
+				// pr_info("[snapfs IO]: allocate mulref update success\n");
+			}
 		}else{
-			// pr_info("[snapfs IO]: allocate mulref update success\n");
+			// 
+			f2fs_mulref_replace_block(sbi,old_blkaddr,new_blkaddr,&old_sum);
 		}
 	}
-	// fio.type     → 这是在写什么？（数据 / 节点 / 元数据）
-	// fio.io_type  → 这次 IO 算在谁头上？（FS / GC / checkpoint / flush）
-	// 新写数据块，肯定不会涉及共享数据块
-	// 修改数据块，才可能触发共享数据块的变动 blk1 -> blk2
-
 	// 段空间管理，如果当前段空间不足
 	if (!__has_curseg_space(sbi, curseg)) {
+
 		/*
 		 * Flush out current segment and replace it with new segment.
 		 */
+		// pr_info("has not space: tp 1 segno %u new_addr %u, next_blkoff %u, usable %u\n",
+		// 	curseg->segno, *new_blkaddr, curseg->next_blkoff, f2fs_usable_blks_in_seg(sbi, curseg->segno));
 		// GC情况，获取新段
 		if (from_gc) {
+			pr_info("tp 2 gc\n");
 			get_atssr_segment(sbi, type, se->type,
 						AT_SSR, se->mtime);
 		} else {
 			if (need_new_seg(sbi, type)){
-				
+				// pr_info("tp 2 new\n");
 				new_curseg(sbi, type, false);
 			}else{
+				// pr_info("tp 2 change\n");
 				change_curseg(sbi, type);
 			}
 			stat_inc_seg_type(sbi, curseg);
 		}
+		// pr_info("tp 4 segno %u\n",curseg->segno);
 	}
+	
 	/*
 	 * segment dirty status should be updated after segment allocation,
 	 * so we just need to update status only one time after previous
@@ -3705,6 +3771,8 @@ void f2fs_outplace_write_data(struct dnode_of_data *dn,
 	f2fs_bug_on(sbi, dn->data_blkaddr == NULL_ADDR);
 
 	// 添加我的私货
+	// fio->old_blkaddr 判断旧信息
+	// 
 	// 修改ssa
 	set_summary(&sum, dn->nid, dn->ofs_in_node, fio->version);
 	do_write_page(&sum, fio);
@@ -4137,6 +4205,7 @@ static int restore_curmulref_normal(struct f2fs_sb_info *sbi)
     f2fs_info(sbi, "Restoring curmulref: block %u", cur_mulref_blk);
 
     f2fs_ra_meta_pages(sbi, cur_mulref_blk, 1, META_CP, true);
+	pr_info("ra page with restore for build curmulref_info\n");
     // 5. 尝试加载 block 到缓存
     err = load_curmulref_block_now(sbi, cur_mulref_blk);
     if (err) {
@@ -4434,23 +4503,23 @@ void f2fs_flush_sit_mulref_entries(struct f2fs_sb_info *sbi)
     struct sit_mulref_entry *sme;
     struct page *page = NULL;
     struct f2fs_sit_mulref_block *raw_sit_mulref;
-    unsigned int segno;
+    unsigned int entry_id;
     unsigned int start;//, end;
     block_t blkaddr;
 
     down_write(&smi->smentry_lock);
 
     /* 遍历所有 segment entries */
-    for (segno = 0; segno < sbi->raw_super->segment_count_ssa; segno++) {
-        sme = &smi->smentries[segno];
+    for (entry_id = 0; entry_id < MAIN_SEGS(sbi); entry_id++) {
+        sme = &smi->smentries[entry_id];
 
         /* 判断是否 dirty，这里你需要自己加标记字段，例如 sme->dirty */
         if (!sme->dirty)
             continue;
 
         /* 计算对应 disk block 和 offset */
-        blkaddr = smi->base_addr + (segno / smi->sments_per_block);
-        start = segno % smi->sments_per_block;
+        blkaddr = smi->base_addr + (entry_id / smi->sments_per_block);
+        start = entry_id % smi->sments_per_block;
 
         /* 获取 page */
         page = f2fs_get_meta_page(sbi, blkaddr);
@@ -4460,8 +4529,10 @@ void f2fs_flush_sit_mulref_entries(struct f2fs_sb_info *sbi)
         raw_sit_mulref = (struct f2fs_sit_mulref_block *)page_address(page);
 
         /* 写回 disk block 对应 entry */
-        memcpy(&raw_sit_mulref->entries[start], sme, sizeof(struct sit_mulref_entry));
-
+		raw_sit_mulref->entries[entry_id].mblocks = sme->mblocks;
+        raw_sit_mulref->entries[entry_id].m_mtime = sme->m_mtime;
+        memcpy(raw_sit_mulref->entries[entry_id].mvalid_map, 
+               sme->mvalid_map, SIT_VBLOCK_MAP_SIZE);
         /* 标记 page dirty 等待 writeback */
         set_page_dirty(page);
         f2fs_put_page(page, 1);
@@ -4603,7 +4674,7 @@ static int build_sit_mulref_info(struct f2fs_sb_info *sbi)
 	struct f2fs_super_block *raw_super = F2FS_RAW_SUPER(sbi);
 	struct sit_mulref_info *smi;
 	unsigned int segs;
-
+	pr_info("build sit_mulref info tp 1\n");
 	/* allocate mulref SIT info */
 	smi = f2fs_kzalloc(sbi, sizeof(struct sit_mulref_info), GFP_KERNEL);
 	if (!smi)
@@ -4620,22 +4691,27 @@ static int build_sit_mulref_info(struct f2fs_sb_info *sbi)
 	 * 已由你在 mkfs / superblock 中确定
 	 */
 	segs = le32_to_cpu(raw_super->segment_count_ssa);
-	smi->base_addr = le32_to_cpu(raw_super->magic_blkaddr) + 1024;
-	smi->sit_mulref_blocks = DIV_ROUND_UP(segs * 64, F2FS_BLKSIZE);
-	smi->sments_per_block = F2FS_BLKSIZE / sizeof(struct sit_mulref_entry);
-
+	smi->base_addr = le32_to_cpu(raw_super->magic_blkaddr) + 2048;
+	smi->sit_mulref_blocks = SIT_BLK_CNT(sbi);
+	//(le32_to_cpu(raw_super->segment_count_sit) >> 1) << sbi->log_blocks_per_seg;// DIV_ROUND_UP(segs * 64, F2FS_BLKSIZE);
+	smi->sments_per_block = F2FS_BLKSIZE / sizeof(struct f2fs_sit_mulref_entry);
+	pr_info("magic addr %u\n",le32_to_cpu(raw_super->magic_blkaddr));
+	pr_info("smi->base_addr %u\n",smi->base_addr);
+	pr_info("sit_mulref_blocks %u ssa segs %u \n",smi->sit_mulref_blocks,segs);
+	pr_info("smi->sments_per_block %u\n",smi->sments_per_block);
 	/*
 	 * allocate in-memory cache
 	 * one entry per segment
 	 */
 	smi->smentries = f2fs_kvzalloc(sbi,
-			array_size(sizeof(struct sit_mulref_entry), segs),
+			array_size(sizeof(struct sit_mulref_entry), smi->sit_mulref_blocks * smi->sments_per_block),
 			GFP_KERNEL);
 	if (!smi->smentries)
 		return -ENOMEM;
 
 	/* init lock */
 	init_rwsem(&smi->smentry_lock);
+	pr_info("build sit_mulref info tp 2\n");
 	return 0;
 }
 
@@ -4713,7 +4789,7 @@ static int build_sit_info(struct f2fs_sb_info *sbi)
 
 	/* get information related with SIT */
 	sit_segs = le32_to_cpu(raw_super->segment_count_sit) >> 1;
-
+	
 	/* setup SIT bitmap from ckeckpoint pack */
 	sit_bitmap_size = __bitmap_size(sbi, SIT_BITMAP);
 	src_bitmap = __bitmap_ptr(sbi, SIT_BITMAP);
@@ -4742,6 +4818,9 @@ static int build_sit_info(struct f2fs_sb_info *sbi)
 	sit_i->sents_per_block = SIT_ENTRY_PER_BLOCK;
 	sit_i->elapsed_time = le64_to_cpu(sbi->ckpt->elapsed_time);
 	sit_i->mounted_time = ktime_get_boottime_seconds();
+	pr_info("seg sit: %u, %u\n",le32_to_cpu(raw_super->segment_count_sit),sit_segs);
+	pr_info("sit_i->sit_blocks %u\n",sit_i->sit_blocks);
+	pr_info("sit_i->sit_base_addr  %u\n",sit_i->sit_base_addr);
 	init_rwsem(&sit_i->sentry_lock);
 	return 0;
 }
@@ -4845,61 +4924,133 @@ static int build_sit_mulref_entries(struct f2fs_sb_info *sbi)
 {
 	struct sit_mulref_info *smi = SIT_MR_I(sbi);
 	struct sit_mulref_entry *me;
-	struct page *page;
+	struct page *page = NULL;
 	struct f2fs_sit_mulref_block *raw;
+	struct f2fs_sit_mulref_entry sit_mulref;
 	unsigned int start_blk = 0;
 	unsigned int readed;
-	unsigned int start, end;
-	unsigned int seg;
+	unsigned int start = 0, end = 0;
+	unsigned int mf_blk;
+	unsigned int sments_per_block = 0;
 	block_t blkaddr;
-	unsigned int total_segs;
+	block_t base_blkaddr;
+	// unsigned int total_segs;
 	int err = 0;
 	if (!smi || !smi->smentries)
 		return -EINVAL;
-
-	total_segs = le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count_ssa);
 
 	/*
 	 * 顺序 readahead 扫描 sit_mulref 区域
 	 * 和 build_sit_entries() 一样的模式
 	 */
+
+	pr_info("[build]: smi->base_addr %u, mulref addr %u\n",smi->base_addr,sbi->magic_info->mulref_blkaddr);
+	sments_per_block = smi->sments_per_block;
+	base_blkaddr = smi->base_addr;
+	if (sments_per_block == 0) {
+        pr_err("FATAL: sments_per_block is 0!\n");
+        return -EINVAL;
+    }
+	if (base_blkaddr == 0) {
+        pr_err("FATAL: base_blkaddr is 0!\n");
+        return -EINVAL;
+    }
+	// 检查blkaddr有效性
 	do {
 		readed = f2fs_ra_meta_pages(
 				sbi,
-				smi->base_addr + start_blk,
+				start_blk,
 				BIO_MAX_VECS,
-				META_GENERIC,
+				META_SIT_MULREF,
 				true);
-		start = start_blk * smi->sments_per_block;
-		end   = (start_blk + readed) * smi->sments_per_block;
-		for (; start < end && start < total_segs; start++) {
+		if (readed == 0) {
+            pr_err("No pages read at start_blk=%u\n", start_blk);
+            break;
+        }
+		start = start_blk * smi->sments_per_block;// 0 277
+		end   = (start_blk + readed) * smi->sments_per_block;// 
+		pr_info("build mulref entry: start %u ,readed %u, end %u smi->sit_mulref_blocks %u \n",start,readed, end,smi->sit_mulref_blocks);
+		for (; start < end && start < MAIN_SEGS(sbi); start++) {//MAIN_SEGS(sbi)
 			unsigned int blkoff;
+			
+			
+			blkoff = start % sments_per_block;
+			mf_blk = start / sments_per_block;
+			blkaddr = base_blkaddr + mf_blk;
+				//   (start / smi->sments_per_block);
+			
+			if (blkaddr < base_blkaddr || blkaddr >= sbi->magic_info->mulref_blkaddr) {
+				pr_err("FATAL: blkaddr %u out of range [%u, %u)\n", 
+					blkaddr, base_blkaddr, base_blkaddr + smi->sit_mulref_blocks);
+				return -EINVAL;
+			}
 
-			seg = start;
-			blkaddr = smi->base_addr +
-				  (seg / smi->sments_per_block);
-			blkoff  = seg % smi->sments_per_block;
+			pr_info("tp 0 %u\n",start);
 			page = f2fs_get_meta_page(sbi, blkaddr);
 			if (IS_ERR(page)) {
 				err = PTR_ERR(page);
+				pr_info("get page failed\n");
 				goto out;
 			}
+			pr_info("tp 0.1 \n");
 			raw = (struct f2fs_sit_mulref_block *)page_address(page);
-			me  = &smi->smentries[seg];
+			// pr_info("start_blk %u, start / smi-- :[%u / %u]. addr/blkoff: [%u, %u]\n",
+				// start_blk, start, smi->sments_per_block,
+				// blkaddr,blkoff);
+			if (!raw) {
+                pr_err("CPU=%d: page_address returned NULL for page=%px\n",
+                       smp_processor_id(), page);
+                f2fs_put_page(page, 1);
+                err = -EIO;
+                goto out;
+            }	
+			pr_info("tp 1 \n");
+
+			if (blkoff >= sments_per_block) {
+                pr_err("CPU=%d: blkoff=%u >= sments_per_block=%u\n",
+                       smp_processor_id(), blkoff, sments_per_block);
+                f2fs_put_page(page, 1);
+                err = -ERANGE;
+                goto out;
+            }
+			if (!raw->entries) {
+                pr_err("CPU=%d: raw->entries is NULL!\n", smp_processor_id());
+                f2fs_put_page(page, 1);
+                err = -EINVAL;
+                goto out;
+            }
+			sit_mulref = raw->entries[blkoff];
+			
+			me  = &smi->smentries[start];
+			if (!me) {
+				pr_err("FATAL:  me is 0!\n");
+				return -EINVAL;
+			}
 			/* -------- load entry -------- */
 			me->mblocks =
-				le16_to_cpu(raw->entries[blkoff].mblocks);
+				raw->entries[blkoff].mblocks;
 			memcpy(me->mvalid_map,
 			       raw->entries[blkoff].mvalid_map,
 			       SIT_VBLOCK_MAP_SIZE);
 			me->m_mtime =
-				le64_to_cpu(raw->entries[blkoff].m_mtime);
+				raw->entries[blkoff].m_mtime;
+			
 			/* ---------------------------- */
-			f2fs_put_page(page, 1);
+
+			// if(page) f2fs_put_page(page, 1);
+			// break;
+			if(page){
+				f2fs_put_page(page, 1);
+				page = NULL;
+			}
+			// pr_info("loop over start [%u]\n",start);
 		}
 		start_blk += readed;
+		// pr_info("internal loop normal over, start_blk %u\n",start_blk);
 	} while (start_blk < smi->sit_mulref_blocks);
 out:
+	if(page) f2fs_put_page(page, 1);
+	pr_info("build over\n");
 	return err;
 }
 
@@ -4916,14 +5067,16 @@ static int build_sit_entries(struct f2fs_sb_info *sbi)
 	unsigned int readed, start_blk = 0;
 	int err = 0;
 	block_t sit_valid_blocks[2] = {0, 0};
-
+	pr_info("sit_blk_cnt %u\n",sit_blk_cnt);
+	pr_info("MAIN_SEGS(sbi) %u\n",MAIN_SEGS(sbi));
+	pr_info("SIT_ENTRY_PER_BLOCK %u\n",SIT_ENTRY_PER_BLOCK);
 	do {
 		readed = f2fs_ra_meta_pages(sbi, start_blk, BIO_MAX_VECS,
 							META_SIT, true);
 
 		start = start_blk * sit_i->sents_per_block;
 		end = (start_blk + readed) * sit_i->sents_per_block;
-
+		pr_info("build sit entry: start %u ,readed %u, end %u \n",start,readed, end);
 		for (; start < end && start < MAIN_SEGS(sbi); start++) {
 			struct f2fs_sit_block *sit_blk;
 			struct page *page;
@@ -5593,8 +5746,19 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 		return -EINVAL; 
 	
 	magic_info->mulref_flag_blkaddr = TOTAL_MAGIC_BLK + le32_to_cpu(raw_super->magic_blkaddr);
-	blks_per_mulref_flag = (le32_to_cpu(raw_super->segment_count_ssa) * 64 + 4095) / 4096;
+	// blks_per_mulref_flag = (le32_to_cpu(raw_super->segment_count_ssa) * 64 + 4095) / 4096;
+	blks_per_mulref_flag = SIT_BLK_CNT(sbi);
+	//(le32_to_cpu(raw_super->segment_count_sit) >> 1) << sbi->log_blocks_per_seg;
 	magic_info->mulref_blkaddr = blks_per_mulref_flag + TOTAL_MAGIC_BLK + le32_to_cpu(raw_super->magic_blkaddr);
+	
+	// sit_segs = le32_to_cpu(raw_super->segment_count_sit) >> 1;
+	// sit_i->sit_blocks = sit_segs << sbi->log_blocks_per_seg;
+
+	pr_info("blk1: %u size %u\n",magic_info->magic_blkaddr, TOTAL_MAGIC_BLK*1);
+	pr_info("ssa_count %u\n",le32_to_cpu(raw_super->segment_count_ssa) );
+	int sit_blk_cnt = SIT_BLK_CNT(sbi);
+	pr_info("blk2: %u size %u\n",magic_info->mulref_flag_blkaddr, blks_per_mulref_flag);
+	pr_info("blk3: %u size %u - 前面\n",magic_info->mulref_blkaddr, sm_info->ssa_blkaddr);
 	// magic_info->mul_blocks =kmalloc_array(
 	// 	512 * magic_info->segment_count_magic - 
 	// 	TOTAL_MAGIC_BLK, sizeof(struct f2fs_mulref_block), GFP_KERNEL);
@@ -5638,12 +5802,14 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	err = build_free_segmap(sbi);
 	if (err)
 		return err;
-	err = build_curmulref_info(sbi);
-	if (err)
-		return err;	
+	
 	err = build_curseg(sbi);
 	if (err)
 		return err;
+	pr_info("build for curseg over, then build for curmulref\n");	
+	err = build_curmulref_info(sbi);
+	if (err)
+		return err;	
 	/* reinit free segmap based on SIT */
 	err = build_sit_entries(sbi); // sit_info
 	if (err)

@@ -119,6 +119,9 @@ static inline void sanity_check_seg_type(struct f2fs_sb_info *sbi,
 #define GET_SUM_BLOCK(sbi, segno)				\
 	((sbi)->sm_info->ssa_blkaddr + (segno))
 
+#define GET_MULREF_FLAG_BLOCK(sbi, segno)				\
+	((sbi)->magic_info->mulref_flag_blkaddr + (segno))
+
 #define GET_SUM_TYPE(footer) ((footer)->entry_type)
 #define SET_SUM_TYPE(footer, type) ((footer)->entry_type = (type))
 
@@ -243,7 +246,7 @@ struct sit_mulref_entry {
     // struct page *page;                        /* cached page pointer */
 };
 
-struct sit_mulref_info {
+struct sit_mulref_info { // 描述一个segment的blk情况
 	/* on-disk layout */
 	block_t base_addr;            /* start block addr of sit_mulref area */
 	block_t sit_mulref_blocks;  /* # of blocks used by sit_mulref area */

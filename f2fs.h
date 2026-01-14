@@ -269,6 +269,7 @@ enum {
 					 * bitmap for update case
 					 */
 	META_GENERIC,
+	META_SIT_MULREF,
 };
 
 /* for the list of ino */
