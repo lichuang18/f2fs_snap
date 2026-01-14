@@ -2539,7 +2539,7 @@ static int __f2fs_build_free_nids(struct f2fs_sb_info *sbi,
 	struct f2fs_nm_info *nm_i = NM_I(sbi);
 	int i = 0, ret;
 	nid_t nid = nm_i->next_scan_nid;
-	pr_info("build nid tp1 \n");
+	// pr_info("build nid tp1 \n");
 	if (unlikely(nid >= nm_i->max_nid))
 		nid = 0;
 
@@ -2560,7 +2560,7 @@ static int __f2fs_build_free_nids(struct f2fs_sb_info *sbi,
 		if (nm_i->nid_cnt[FREE_NID] >= NAT_ENTRY_PER_BLOCK)
 			return 0;
 	}
-	pr_info("build nid tp2 \n");
+	// pr_info("build nid tp2 \n");
 	/* readahead nat pages to be scanned */
 	f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), FREE_NID_PAGES,
 							META_NAT, true);
@@ -2601,7 +2601,7 @@ static int __f2fs_build_free_nids(struct f2fs_sb_info *sbi,
 	scan_curseg_cache(sbi);
 
 	up_read(&nm_i->nat_tree_lock);
-	pr_info("build nid tp3 \n");
+	// pr_info("build nid tp3 \n");
 	f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nm_i->next_scan_nid),
 					nm_i->ra_nid_pages, META_NAT, false);
 

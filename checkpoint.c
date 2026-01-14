@@ -205,7 +205,7 @@ bool f2fs_is_valid_blkaddr(struct f2fs_sb_info *sbi,
 		break;
 	case META_SIT_MULREF://和sit保持一致，沿用sit的判断标准
 		if (unlikely(blkaddr >= SIT_BLK_CNT(sbi))){
-			pr_info("what happen? blkaddr %u >? SIT_BLK_CNT(sbi) %u\n",blkaddr,SIT_BLK_CNT(sbi));
+			// pr_info("what happen? blkaddr %u >? SIT_BLK_CNT(sbi) %u\n",blkaddr,SIT_BLK_CNT(sbi));
 			return false;
 		}
 		break;
@@ -244,7 +244,7 @@ int f2fs_ra_meta_pages(struct f2fs_sb_info *sbi, block_t start, int nrpages,
 	for (; nrpages-- > 0; blkno++) {
 
 		if (!f2fs_is_valid_blkaddr(sbi, blkno, type)){
-			pr_info("readch invalid blkaddr,%u\n",blkno);
+			// pr_info("readch invalid blkaddr,%u\n",blkno);
 			goto out;
 		}
 

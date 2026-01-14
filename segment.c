@@ -4985,14 +4985,14 @@ static int build_sit_mulref_entries(struct f2fs_sb_info *sbi)
 				return -EINVAL;
 			}
 
-			pr_info("tp 0 %u\n",start);
+			// pr_info("tp 0 %u\n",start);
 			page = f2fs_get_meta_page(sbi, blkaddr);
 			if (IS_ERR(page)) {
 				err = PTR_ERR(page);
 				pr_info("get page failed\n");
 				goto out;
 			}
-			pr_info("tp 0.1 \n");
+			// pr_info("tp 0.1 \n");
 			raw = (struct f2fs_sit_mulref_block *)page_address(page);
 			// pr_info("start_blk %u, start / smi-- :[%u / %u]. addr/blkoff: [%u, %u]\n",
 				// start_blk, start, smi->sments_per_block,
@@ -5004,7 +5004,7 @@ static int build_sit_mulref_entries(struct f2fs_sb_info *sbi)
                 err = -EIO;
                 goto out;
             }	
-			pr_info("tp 1 \n");
+			// pr_info("tp 1 \n");
 
 			if (blkoff >= sments_per_block) {
                 pr_err("CPU=%d: blkoff=%u >= sments_per_block=%u\n",
