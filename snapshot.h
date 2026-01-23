@@ -9,9 +9,9 @@
 #include "f2fs.h"
 #include <linux/ktime.h>
 #include <linux/types.h>
-#define SNAPFS_DEBUG 1
+#define SNAPFS_DEBUG 0
 #define SNAPFS_DEBUG1 0
-#define SNAPFS_DEBUG_GC 0
+#define SNAPFS_DEBUG_GC 1
 int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                                u32 src_ino, u32 snap_ino);//,
                             //    u32 *ret_entry_id,
@@ -54,7 +54,7 @@ void update_f2fs_inode(struct f2fs_inode *src_fi,struct f2fs_inode *new_fi);
 void update_f2fs_inode_inline(struct f2fs_inode *src_fi,struct f2fs_inode *new_fi);
 void f2fs_cow_update_inode(struct inode *src_inode,struct inode *snap_inode);
 bool check_sit_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr);
-
+void f2fs_dump_nonzero_sit_mulref_entries_simple(struct f2fs_sb_info *sbi);
 #define MAGIC_MAX		32678
 
 struct magic_mgr {

@@ -4,7 +4,7 @@ fio --name=fill \
     --filename=/mnt/test3/f0 \
     --rw=write \
     --bs=1M \
-    --size=12G \
+    --size=4G \
     --direct=1 \
     --ioengine=libaio \
     --numjobs=1 \
@@ -12,16 +12,4 @@ fio --name=fill \
 
 
     # --offset=10G \
-
-
-# fio --name=overwrite \
-#     --filename=/mnt/test3/f0 \
-#     --rw=randwrite \
-#     --bs=4k \
-#     --size=14G \
-#     --direct=1 \
-#     --ioengine=libaio \
-#     --numjobs=1 \
-#     --iodepth=1
-
 

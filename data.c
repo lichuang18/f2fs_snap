@@ -2791,7 +2791,6 @@ got_it:
 		goto out_writepage;
 
 	fio->version = ni.version;
-	// fio->version = 0;
 	err = f2fs_encrypt_one_page(fio);
 	if (err)
 		goto out_writepage;
@@ -2835,20 +2834,16 @@ got_it:
 			pr_info("get old_sum failed\n");
 			return 1;
 		}
-		// blk的来源有2种可能
-		if(cmr->blkaddr == old_sum.nid){//多引用块的sum中保存的nid是指向mulref的地址
-			blk = cmr->blk;
-		}else{
-			mulref_page = f2fs_get_meta_page(fio->sbi, old_sum.nid);
-			blk = (struct f2fs_mulref_block *)page_address(mulref_page);
+		mulref_page = f2fs_get_meta_page(fio->sbi, old_sum.nid);
+		if (IS_ERR(mulref_page)) {
+			err = PTR_ERR(mulref_page);
+			return err;
 		}
+		blk = (struct f2fs_mulref_block *)page_address(mulref_page);
 		if(!blk){
-			pr_info("get blk failed\n");
+			pr_err("get blk failed\n");
 		}
 		mgentry = &blk->mrentries[eidx1];
-		// nid = le32_to_cpu(mgentry->m_nid);
-		// ofs_in_node = le16_to_cpu(mgentry->m_ofs);
-		// version = mgentry->m_ver;
 		mgcount = mgentry->m_count;
 	
 		dns = kmalloc_array(mgcount, sizeof(struct dnode_of_data), GFP_KERNEL);
@@ -2870,9 +2865,6 @@ got_it:
 			if (tmp_blkaddr == old_sum.nid) {
                 // mulref_page3 = mulref_page2;
                 blk2 = blk;
-            }else if (tmp_blkaddr == cmr->blkaddr){ // 和上一个tmp blk一致
-                blk2 = cmr->blk;
-				// mulref_page3 保持不变
             }else if(blkaddr2 == tmp_blkaddr){
 				// blk2 正常沿用上一次的
 			}else{

@@ -1,10 +1,11 @@
 mkdir -p /mnt/test3
 sync
-fio --name=direct_write_12k \
+
+fio --name=fill \
     --filename=/mnt/test3/f0 \
-    --rw=read \
+    --rw=write \
     --bs=1M \
-    --size=10G \
+    --size=4G \
     --direct=1 \
     --ioengine=libaio \
     --numjobs=1 \

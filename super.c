@@ -30,6 +30,7 @@
 
 #include "f2fs.h"
 #include "node.h"
+#include "snapshot.h"
 #include "segment.h"
 #include "xattr.h"
 #include "gc.h"
@@ -3993,6 +3994,9 @@ static void f2fs_tuning_parameters(struct f2fs_sb_info *sbi)
 	sbi->readdir_ra = 1;
 }
 
+
+
+
 static int snapfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct f2fs_sb_info *sbi;
@@ -4243,7 +4247,8 @@ try_onemore:
 			 err);
 		goto free_nm;
 	}
-	pr_info("fill super tp----\n");
+	// pr_info("fill super tp----\n");
+	// f2fs_dump_nonzero_sit_mulref_entries_simple(sbi);
 	err = adjust_reserved_segment(sbi);
 	if (err)
 		goto free_nm;

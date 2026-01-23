@@ -3853,6 +3853,7 @@ out_free:
 	kfree(snap_filename);
     kfree(src_path_full);
     kfree(snap_pra_path_full);
+	f2fs_dump_nonzero_sit_mulref_entries_simple(sbi);
 	return err;
 }
 
@@ -4783,8 +4784,8 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			if(SNAPFS_DEBUG) pr_info("[snapfs write]: write with cow\n");
 			end = ktime_get_ns();
 			pr_info("write cow cost = %lld ns\n", end - start);
-			size_t i_count = iov_iter_count(from);
-			pr_info("ki_pos: %u, iov_count: %u\n",iocb->ki_pos, i_count);
+			// size_t i_count = iov_iter_count(from);
+			// pr_info("ki_pos: %u, iov_count: %u\n",iocb->ki_pos, i_count);
 		}
 	}
 	

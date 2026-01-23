@@ -1706,9 +1706,9 @@ int f2fs_write_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 
 	/* --- 新增 sit_mulref flush --- */
     if (SIT_MR_I(sbi)) {
-		pr_info("umount error?  flush sit info\n");
+		// pr_info("umount error?  flush sit info\n");
         f2fs_flush_sit_mulref_entries(sbi); // 新函数，无需 cpc，可自己扩展
-		pr_info("umount success!  flush sit info\n");
+		// pr_info("umount success!  flush sit info\n");
     }
 
 	/* save inmem log status */

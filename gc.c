@@ -1025,12 +1025,6 @@ static bool is_alive(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 		return false;
 	}
 
-	// if (sum->version != dni->version) {
-	// 	f2fs_warn(sbi, "%s: valid data with mismatched node version.",
-	// 		  __func__);
-	// 	set_sbi_flag(sbi, SBI_NEED_FSCK);
-	// }
-
 	if (f2fs_check_nid_range(sbi, dni->ino)) {
 		f2fs_put_page(node_page, 1);
 		return false;
@@ -1341,9 +1335,7 @@ static int move_data_page(struct inode *inode, block_t bidx, int gc_type,
 	struct page *page;
 	int err = 0;
 	bool is_dirty;
-	if(SNAPFS_DEBUG_GC) pr_info("[move_data_page]: ino %u, off %u, gc_type %u, segno %u\n",
-			inode->i_ino,off,gc_type,segno);
-
+	
 	page = f2fs_get_lock_data_page(inode, bidx, true);
 	if (IS_ERR(page))
 		return PTR_ERR(page);
@@ -1414,6 +1406,8 @@ retry:
 	}
 out:
 	f2fs_put_page(page, 1);
+	// if(SNAPFS_DEBUG_GC) pr_info("[move_data_page]: ino %u, off %u, gc_type %u, segno %u, err %u\n",
+	// 		inode->i_ino,off,gc_type,segno,err);
 	return err;
 }
 
@@ -1465,16 +1459,34 @@ next_step:
 		is_mulref = check_sit_mulref_entry(sbi, start_addr + off);
 		// down_read(&sm->curmulref_lock);
 		// up_read(&sm->curmulref_lock);
+		// if(!is_mulref){ 
+		// 	pr_info("[gc collect]: segno %u, blkaddr %u, old sum [%u, %u, %u], gc_type %u\n",segno,
+		// 		start_addr + off,le32_to_cpu(entry->nid),le16_to_cpu(entry->ofs_in_node),entry->version,
+		// 		gc_type);
+		// }else{
+		// 	pr_info("[gc collect]: segno %u, blkaddr %u, snap sum [%u, %u, %u], gc_type %u\n",segno,
+		// 		start_addr + off,le32_to_cpu(entry->nid),le16_to_cpu(entry->ofs_in_node),entry->version,
+		// 		gc_type);
+		// }
+
 		if(is_mulref){ // 多引用块
-			// blk的来源有2种可能
-			if(cmr->blkaddr == nid){//多引用块的sum中保存的nid是指向mulref的地址
-				blk = cmr->blk;
-			}else{
-				mulref_page = f2fs_get_meta_page(sbi, nid);
-				blk = (struct f2fs_mulref_block *)page_address(mulref_page);
+			mulref_page = f2fs_get_meta_page(sbi, nid);
+			if (IS_ERR(mulref_page)) {
+				pr_err("get mulref meta page failed, nid %u\n", nid);
+				continue;   // 或 break / return
 			}
+			blk = (struct f2fs_mulref_block *)page_address(mulref_page);
 			if(!blk){
-				pr_info("get blk failed\n");
+				pr_err("get blk failed\n");
+			}
+
+			if (SNAPFS_DEBUG_GC && is_mulref) {
+				pr_info("[GC DEBUG] Mulref entry: segno=%u, off of segno %u, sum[%u, %u, %u]\n",
+						segno, off, nid, eidx1,entry->version);
+			}
+			if(eidx1 >= MRENTRY_PER_BLOCK){
+				pr_err("f2fs mulref entry in blk, out of range(max %u), %u\n",MRENTRY_PER_BLOCK,eidx1);
+				continue;
 			}
 			mgentry = &blk->mrentries[eidx1];
 			nid = le32_to_cpu(mgentry->m_nid);
@@ -1484,7 +1496,10 @@ next_step:
 			tmp_sum.nid = mgentry->m_nid;
 			tmp_sum.ofs_in_node = mgentry->m_ofs;
 			tmp_sum.version = mgentry->m_ver;
-
+			pr_info("[gc collect]: segno %u, blkaddr %u, is_mulref sum [%u, %u, %u], old sum [%u, %u, %u], gc_type %u\n",segno,
+				start_addr + off,le32_to_cpu(tmp_sum.nid),le16_to_cpu(tmp_sum.ofs_in_node),tmp_sum.version,
+				le32_to_cpu(entry->nid),le16_to_cpu(entry->ofs_in_node),entry->version,
+				gc_type);
 			if(mulref_page){
 				f2fs_put_page(mulref_page, 1);
 			}
@@ -1500,19 +1515,23 @@ next_step:
 			return submitted;
 
 		// 对于多引用块，有效与无效和单引用一致
-		if (check_valid_map(sbi, segno, off) == 0)
+		if (check_valid_map(sbi, segno, off) == 0){
+			// pr_info("tp -1\n");
 			continue;
+		}
 
 		// 多引用块，需要特殊处理
 		if (phase == 0) {
 			// 单引用块的处理
 			f2fs_ra_meta_pages(sbi, NAT_BLOCK_OFFSET(nid), 1,
 							META_NAT, true);
+			// pr_info("tp 0\n");
 			continue;
 		}
 
 		if (phase == 1) {
 			f2fs_ra_node_page(sbi, nid);
+			// pr_info("tp 1\n");
 			continue;
 		}
 
@@ -1527,6 +1546,7 @@ next_step:
 
 		if (phase == 2) {
 			f2fs_ra_node_page(sbi, dni.ino);
+			// pr_info("tp 2\n");
 			continue;
 		}
 		
@@ -1536,6 +1556,7 @@ next_step:
 		}
 
 		if (phase == 3) {
+			// pr_info("tp 31\n");
 			inode = f2fs_iget(sb, dni.ino);
 			if (IS_ERR(inode) || is_bad_inode(inode) ||
 					special_file(inode->i_mode))
@@ -1558,7 +1579,7 @@ next_step:
 				sbi->skipped_gc_rwsem++;
 				continue;
 			}
-
+			// pr_info("tp 32\n");
 			start_bidx = f2fs_start_bidx_of_node(nofs, inode) +
 								ofs_in_node;
 
@@ -1584,16 +1605,18 @@ next_step:
 
 			f2fs_put_page(data_page, 0);
 			add_gc_inode(gc_list, inode);
+			// pr_info("tp 33\n");
 			continue;
 		}
 
 		/* phase 4 */
 		inode = find_gc_inode(gc_list, dni.ino);
+		// pr_info("tp 41\n");
 		if (inode) {
 			struct f2fs_inode_info *fi = F2FS_I(inode);
 			bool locked = false;
 			int err;
-
+			// pr_info("tp 42\n");
 			if (S_ISREG(inode->i_mode)) {
 				if (!down_write_trylock(&fi->i_gc_rwsem[READ])) {
 					sbi->skipped_gc_rwsem++;
@@ -1610,7 +1633,7 @@ next_step:
 				/* wait for all inflight aio data */
 				inode_dio_wait(inode);
 			}
-
+			// pr_info("tp 43\n");
 			start_bidx = f2fs_start_bidx_of_node(nofs, inode)
 								+ ofs_in_node;
 			if (f2fs_post_read_required(inode))
@@ -1628,7 +1651,7 @@ next_step:
 				up_write(&fi->i_gc_rwsem[WRITE]);
 				up_write(&fi->i_gc_rwsem[READ]);
 			}
-
+			// pr_info("tp 44\n");
 			stat_inc_data_blk_count(sbi, 1, gc_type);
 		}
 	}
@@ -1636,7 +1659,7 @@ next_step:
 	if (++phase < 5)
 		goto next_step;
 	// if(SNAPFS_DEBUG_GC) 
-	pr_info("[gc_data_segment]: submitted %u, gc_type %u, segno %u\n",
+	pr_info("[gc data segment]: submitted %u, gc_type %u, segno %u\n",
 			submitted,gc_type,segno);
 
 	return submitted;
@@ -1689,7 +1712,7 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 		f2fs_ra_meta_pages(sbi, GET_SUM_BLOCK(sbi, segno),
 					end_segno - segno, META_SSA, true);
 
-	// if(SNAPFS_DEBUG_GC) pr_info("[do_garbage_collect]: tp2, segno %u, end_segno %u\n",
+	// if(SNAPFS_DEBUG_GC) pr_info("[do_garbage_collect]: segno %u, end_segno %u\n",
 	// 	segno, end_segno);
 
 	/* reference all summary page */

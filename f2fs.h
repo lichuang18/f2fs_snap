@@ -1023,8 +1023,8 @@ struct flush_cmd_control {
 
 
 struct f2fs_mulref_entry { // 12 Bytes
-	__le32 m_nid;	/* inode number */
-	__le16 m_ofs;	/* inode offset */
+	__le32 m_nid;	/* node id */
+	__le16 m_ofs;	/* node offset */
 	__u8 m_ver;	  // version
 	__u8 m_count; // ref entry数量
 	__le32 next;  // next entry blkaddr
@@ -1041,12 +1041,12 @@ struct f2fs_mulref_block { // 12 Byte * 338 + 40 Byte = 4096 K Byte
 } __packed;
 
 
-struct f2fs_magic_entry { //29B
+struct f2fs_magic_entry {
     __le32 snap_ino;     /* snap inode number */
 	__le32 src_ino; 
 	__le32 next; 
 	__u8 count; 
-	struct timespec64 c_time; //快照创建时间      
+	struct timespec64 c_time; // 快照创建时间      
 } __packed;
 
 struct f2fs_magic_block {
@@ -1075,7 +1075,7 @@ struct curmulref_info {
 
 	bool inited;                    /* 是否已经初始化 */
 	/* cache */
-	struct f2fs_mulref_block *blk;  /* 缓存的 mulref block */
+	// struct f2fs_mulref_block *blk;  /* 缓存的 mulref block */
 	// struct page *page;
 };
 
@@ -1084,11 +1084,11 @@ struct f2fs_sm_info {
 	struct free_segmap_info *free_info;	/* free segment information */
 	struct dirty_seglist_info *dirty_info;	/* dirty segment information */
 	struct curseg_info *curseg_array;	/* active segment information */
-
 	struct rw_semaphore curseg_lock;	/* for preventing curseg change */
 	//sihuo
 	struct curmulref_info curmulref_blk;
 	struct rw_semaphore curmulref_lock;
+
 	struct sit_mulref_info *sit_mr_info;
 
 	block_t seg0_blkaddr;		/* block address of 0'th segment */

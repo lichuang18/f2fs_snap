@@ -493,7 +493,7 @@ static void set_node_addr(struct f2fs_sb_info *sbi, struct node_info *ni,
 	/* increment version no as node is removed */
 	if (nat_get_blkaddr(e) != NEW_ADDR && new_blkaddr == NULL_ADDR) {
 		unsigned char version = nat_get_version(e);
-
+		// pr_info("fffuckffffuckfuuuffck\n");
 		nat_set_version(e, inc_node_version(version));
 	}
 
@@ -1981,7 +1981,7 @@ void f2fs_flush_inline_data(struct f2fs_sb_info *sbi)
 
 		for (i = 0; i < nr_pages; i++) {
 			struct page *page = pvec.pages[i];
-
+			// pr_info("page : nid %u\n",ino_of_node(page));
 			if (!IS_DNODE(page))
 				continue;
 
