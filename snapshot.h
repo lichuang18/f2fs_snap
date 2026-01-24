@@ -13,10 +13,7 @@
 #define SNAPFS_DEBUG1 0
 #define SNAPFS_DEBUG_GC 1
 int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
-                               u32 src_ino, u32 snap_ino);//,
-                            //    u32 *ret_entry_id,
-                            //    struct f2fs_magic_entry **ret_entry,
-                            //    struct page **ret_page);
+                               u32 src_ino, u32 snap_ino, u32 *ret_entry_id);
 
 
 int f2fs_magic_lookup_or_alloc_hopscotch(struct f2fs_sb_info *sbi,
@@ -45,6 +42,14 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
                           block_t old_blkaddr,
                           nid_t new_nid);
 
+int f2fs_clear_mulref_blocks(struct inode *inode);
+
+int f2fs_delete_snap_dir_recursive(struct inode *dir);
+
+bool f2fs_dir_has_mulref_dentry(struct inode *dir);
+
+bool f2fs_is_under_snapshot_dir(struct inode *inode);
+
 void f2fs_mulref_replace_block(struct f2fs_sb_info *sbi, block_t old_addr, block_t new_addr, struct f2fs_summary *old_sum);
 
 int f2fs_get_summary_by_addr(struct f2fs_sb_info *sbi,
@@ -55,6 +60,17 @@ void update_f2fs_inode_inline(struct f2fs_inode *src_fi,struct f2fs_inode *new_f
 void f2fs_cow_update_inode(struct inode *src_inode,struct inode *snap_inode);
 bool check_sit_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr);
 void f2fs_dump_nonzero_sit_mulref_entries_simple(struct f2fs_sb_info *sbi);
+
+static inline block_t magic_entry_to_blkaddr(u32 entry_id)
+{
+    return (entry_id / MGENTRY_PER_BLOCK);
+}
+
+static inline u32 magic_entry_to_offset(u32 entry_id)
+{
+    return entry_id % MGENTRY_PER_BLOCK;
+}
+
 #define MAGIC_MAX		32678
 
 struct magic_mgr {

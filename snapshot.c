@@ -1320,28 +1320,10 @@ static inline u32 magic_hash2(u32 ino)
     return (ino * 0x9e3779b1) | 1;
 }
 
-// static inline block_t magic_entry_to_blkaddr(
-//         struct f2fs_sb_info *sbi, u32 entry_id)
-static inline block_t magic_entry_to_blkaddr(u32 entry_id)
-{
-    // return sbi->magic_info->magic_blkaddr +
-    //        (entry_id / MGENTRY_PER_BLOCK);
-    return (entry_id / MGENTRY_PER_BLOCK);
-}
-
-static inline u32 magic_entry_to_offset(u32 entry_id)
-{
-    return entry_id % MGENTRY_PER_BLOCK;
-}
-
-
 
 
 int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
-        u32 src_ino, u32 snap_ino)//,
-        // u32 *ret_entry_id,
-        // struct f2fs_magic_entry **ret_entry,
-        // struct page **ret_page)
+        u32 src_ino, u32 snap_ino, u32 *ret_entry_id)
 {
     u32 h1 = magic_hash1(src_ino) % MAGIC_ENTRY_NR;
     u32 h2 = magic_hash2(src_ino) % MAGIC_ENTRY_NR;
@@ -1398,9 +1380,8 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
             me->count += 1;
             me->next = 0;
             me->c_time = current_time(snap_inode);
-            // *ret_entry_id = entry_id;
-            // *ret_entry = &mb->mgentries[off];
-            // *ret_page = page;
+            if (ret_entry_id)
+                *ret_entry_id = entry_id;
             goto out;
         }
         
@@ -1443,6 +1424,8 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                 me2->count = me->count;
                 me2->next = 0;
                 me2->c_time = current_time(snap_inode);
+                if (ret_entry_id)
+                    *ret_entry_id = off2 + (blkaddr2 - sbi->magic_info->magic_blkaddr) * MGENTRY_PER_BLOCK;
                 pr_info("[snapfs set_flag]: write magic page addr2/off2[%u,%u]\n"
                     ,blkaddr2, off2);
                 // pr_info("2snap addr[%u], off2[%u], next[%u]\n", blkaddr2, off2, me2->next);
@@ -1490,6 +1473,8 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                             me3->count = me->count;
                             me3->next = 0;
                             me3->c_time = current_time(snap_inode);
+                            if (ret_entry_id)
+                                *ret_entry_id = off3 + (blkaddr3 - sbi->magic_info->magic_blkaddr) * MGENTRY_PER_BLOCK;
                             // pr_info("2+ snap addr[%u], off3[%u], next3[%u]\n", blkaddr3, off3, me3->next);
                             break; 
                         }else{
@@ -1542,6 +1527,8 @@ int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                             me3->count = me->count;
                             me3->next = 0;
                             me3->c_time = current_time(snap_inode);
+                            if (ret_entry_id)
+                                *ret_entry_id = off3 + (blkaddr3 - sbi->magic_info->magic_blkaddr) * MGENTRY_PER_BLOCK;
                             break; 
                         }else{
                             tmp_next = tmp_me->next;
@@ -1810,6 +1797,80 @@ bool is_modified_cow(block_t blkaddr)
 {
     // 判断这个block是不是多引用块
     return true;
+}
+
+/*
+ * f2fs_is_under_snapshot_dir - 检查 inode 是否在快照目录下
+ * @inode: 要检查的 inode
+ *
+ * 从当前 inode 开始，向上遍历父目录，检查是否有任何一级是快照目录。
+ * 如果自身或任何父目录是快照目录，返回 true。
+ *
+ * 返回: true - 在快照目录下（禁止 rm 删除）
+ *       false - 不在快照目录下（可以正常删除）
+ */
+bool f2fs_is_under_snapshot_dir(struct inode *inode)
+{
+    struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
+    struct f2fs_magic_entry tmp_me;
+    u32 entry_id = 0;
+    struct inode *cur_inode = inode;
+    struct dentry *dentry = NULL;
+    struct dentry *parent_dentry = NULL;
+    bool result = false;
+    int depth = 0;
+    const int max_depth = 256; /* 防止无限循环 */
+
+    memset(&tmp_me, 0, sizeof(tmp_me));
+
+    /* 先检查自身是否是快照目录 */
+    if (!f2fs_magic_lookup(sbi, cur_inode->i_ino, &entry_id, &tmp_me)) {
+        pr_info("[snapfs rm]: inode %lu is a snapshot directory, rm denied\n",
+                cur_inode->i_ino);
+        return true;
+    }
+
+    /* 向上遍历父目录 */
+    while (depth < max_depth) {
+        depth++;
+
+        dentry = d_find_any_alias(cur_inode);
+        if (!dentry)
+            break;
+
+        parent_dentry = dget_parent(dentry);
+        dput(dentry);
+
+        if (!parent_dentry)
+            break;
+
+        /* 到达根目录 */
+        if (parent_dentry == parent_dentry->d_parent) {
+            dput(parent_dentry);
+            break;
+        }
+
+        cur_inode = d_inode(parent_dentry);
+        if (!cur_inode) {
+            dput(parent_dentry);
+            break;
+        }
+
+        /* 检查父目录是否是快照目录 */
+        memset(&tmp_me, 0, sizeof(tmp_me));
+        entry_id = 0;
+        if (!f2fs_magic_lookup(sbi, cur_inode->i_ino, &entry_id, &tmp_me)) {
+            pr_info("[snapfs rm]: parent dir %lu is a snapshot directory, rm denied\n",
+                    cur_inode->i_ino);
+            dput(parent_dentry);
+            result = true;
+            break;
+        }
+
+        dput(parent_dentry);
+    }
+
+    return result;
 }
 
 bool is_snapshot_inode(struct inode *inode, 
@@ -2251,6 +2312,676 @@ out:
         f2fs_put_page(ipage, 1);
         ipage = NULL;
     }
+    return 0;
+}
+
+/*
+ * f2fs_dir_has_mulref_dentry - 检查目录的 dentry block 是否有 mulref
+ * @dir: 目录 inode
+ *
+ * 遍历目录的所有 dentry block，检查是否有任何块被标记为 mulref。
+ * 如果有，说明该目录被其他快照引用，不能直接删除。
+ *
+ * 返回: true - 有 mulref（被其他快照引用）
+ *       false - 没有 mulref（可以安全删除）
+ */
+bool f2fs_dir_has_mulref_dentry(struct inode *dir)
+{
+    struct f2fs_sb_info *sbi = F2FS_I_SB(dir);
+    loff_t isize;
+    pgoff_t lblk, max_lblk;
+    unsigned int blkbits;
+    struct f2fs_inode *fi;
+    struct page *ipage = NULL;
+    struct page *dn_ipage = NULL;
+    nid_t nid = 0;
+    block_t blkaddr = 0;
+    struct direct_node *dn;
+    u32 i_nid[5];
+    struct page *indirect_page = NULL;
+    struct indirect_node *indirect;
+    struct page *indirect_page2 = NULL;
+    struct indirect_node *indirect2;
+    long in_dn = 0;
+    long in_dn2 = 0;
+    long off_in_dn = 0;
+    long off_in_dn2 = 0;
+    bool has_mulref = false;
+
+    const long direct_index = ADDRS_PER_INODE(dir);
+    const long direct_blks = ADDRS_PER_BLOCK(dir);
+    const long level1_blks = direct_index + direct_blks;
+    const long level2_blks = level1_blks + direct_blks;
+    const long level3_blks = level2_blks + direct_blks * direct_blks;
+    const long level4_blks = level3_blks + direct_blks * direct_blks;
+    const long level5_blks = level4_blks + direct_blks * direct_blks * direct_blks;
+    const long double_dir_blk = direct_blks * direct_blks;
+
+    /* inline dentry 存储在 inode page 中，不涉及数据块 mulref */
+    if (f2fs_has_inline_dentry(dir))
+        return false;
+
+    ipage = f2fs_get_node_page(sbi, dir->i_ino);
+    if (IS_ERR(ipage)) {
+        pr_err("[snapfs del_snap]: failed to get inode page[%lu]\n", dir->i_ino);
+        /* 出错时保守返回 true，阻止删除 */
+        return true;
+    }
+
+    fi = F2FS_INODE(ipage);
+    isize = le64_to_cpu(fi->i_size);
+    blkbits = dir->i_blkbits;
+    max_lblk = (isize + (1ULL << blkbits) - 1) >> blkbits;
+
+    i_nid[0] = le32_to_cpu(fi->i_nid[0]);
+    i_nid[1] = le32_to_cpu(fi->i_nid[1]);
+    i_nid[2] = le32_to_cpu(fi->i_nid[2]);
+    i_nid[3] = le32_to_cpu(fi->i_nid[3]);
+    i_nid[4] = le32_to_cpu(fi->i_nid[4]);
+
+    for (lblk = 0; lblk < max_lblk; lblk++) {
+        blkaddr = 0;
+
+        if (lblk < direct_index) {
+            /* direct blocks */
+            blkaddr = le32_to_cpu(fi->i_addr[lblk]);
+        } else if (lblk < (pgoff_t)level1_blks) {
+            /* level 1 indirect */
+            if (ipage) {
+                f2fs_put_page(ipage, 1);
+                ipage = NULL;
+            }
+            nid = i_nid[0];
+            if (nid == 0) continue;
+
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) {
+                has_mulref = true;
+                goto out;
+            }
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[lblk - direct_index]);
+            f2fs_put_page(dn_ipage, 1);
+            dn_ipage = NULL;
+        } else if (lblk < (pgoff_t)level2_blks) {
+            /* level 2 indirect */
+            nid = i_nid[1];
+            if (nid == 0) continue;
+
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) {
+                has_mulref = true;
+                goto out;
+            }
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[lblk - level1_blks]);
+            f2fs_put_page(dn_ipage, 1);
+            dn_ipage = NULL;
+        } else if (lblk < level3_blks) {
+            /* level 3 indirect */
+            nid = i_nid[2];
+            if (nid == 0) continue;
+
+            indirect_page = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(indirect_page)) {
+                has_mulref = true;
+                goto out;
+            }
+
+            in_dn = (lblk - level2_blks) / direct_blks;
+            off_in_dn = (lblk - level2_blks) % direct_blks;
+            indirect = (struct indirect_node *)page_address(indirect_page);
+            nid = le32_to_cpu(indirect->nid[in_dn]);
+            f2fs_put_page(indirect_page, 1);
+            indirect_page = NULL;
+
+            if (nid == 0) continue;
+
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) {
+                has_mulref = true;
+                goto out;
+            }
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[off_in_dn]);
+            f2fs_put_page(dn_ipage, 1);
+            dn_ipage = NULL;
+        } else if (lblk < level4_blks) {
+            /* level 4 indirect */
+            nid = i_nid[3];
+            if (nid == 0) continue;
+
+            indirect_page = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(indirect_page)) {
+                has_mulref = true;
+                goto out;
+            }
+
+            in_dn = (lblk - level3_blks) / direct_blks;
+            off_in_dn = (lblk - level3_blks) % direct_blks;
+            indirect = (struct indirect_node *)page_address(indirect_page);
+            nid = le32_to_cpu(indirect->nid[in_dn]);
+            f2fs_put_page(indirect_page, 1);
+            indirect_page = NULL;
+
+            if (nid == 0) continue;
+
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) {
+                has_mulref = true;
+                goto out;
+            }
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[off_in_dn]);
+            f2fs_put_page(dn_ipage, 1);
+            dn_ipage = NULL;
+        } else if (lblk < level5_blks) {
+            /* level 5 indirect (double indirect) */
+            nid = i_nid[4];
+            if (nid == 0) continue;
+
+            indirect_page = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(indirect_page)) {
+                has_mulref = true;
+                goto out;
+            }
+
+            in_dn = (lblk - level4_blks) / double_dir_blk;
+            off_in_dn = (lblk - level4_blks) % double_dir_blk;
+            indirect = (struct indirect_node *)page_address(indirect_page);
+            nid = le32_to_cpu(indirect->nid[in_dn]);
+            f2fs_put_page(indirect_page, 1);
+            indirect_page = NULL;
+
+            if (nid == 0) continue;
+
+            indirect_page2 = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(indirect_page2)) {
+                has_mulref = true;
+                goto out;
+            }
+
+            in_dn2 = off_in_dn / direct_blks;
+            off_in_dn2 = off_in_dn % direct_blks;
+            indirect2 = (struct indirect_node *)page_address(indirect_page2);
+            nid = le32_to_cpu(indirect2->nid[in_dn2]);
+            f2fs_put_page(indirect_page2, 1);
+            indirect_page2 = NULL;
+
+            if (nid == 0) continue;
+
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) {
+                has_mulref = true;
+                goto out;
+            }
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[off_in_dn2]);
+            f2fs_put_page(dn_ipage, 1);
+            dn_ipage = NULL;
+        }
+
+        /* 检查 mulref */
+        if (__is_valid_data_blkaddr(blkaddr)) {
+            if (check_sit_mulref_entry(sbi, blkaddr)) {
+                pr_info("[snapfs del_snap]: dir %lu has mulref dentry block at lblk %lu, blkaddr %u\n",
+                        dir->i_ino, lblk, blkaddr);
+                has_mulref = true;
+                goto out;
+            }
+        }
+    }
+
+out:
+    if (ipage)
+        f2fs_put_page(ipage, 1);
+    if (dn_ipage)
+        f2fs_put_page(dn_ipage, 1);
+    if (indirect_page)
+        f2fs_put_page(indirect_page, 1);
+    if (indirect_page2)
+        f2fs_put_page(indirect_page2, 1);
+
+    return has_mulref;
+}
+
+/*
+ * f2fs_clear_mulref_blocks - 清除快照 inode 所有数据块的 mulref 引用
+ * @inode: 快照 inode
+ *
+ * 遍历快照 inode 的所有数据块，对每个有 mulref 的块调用 f2fs_mulref_overwrite
+ * 来减少引用计数。这是 f2fs_set_mulref_blocks 的逆操作。
+ */
+int f2fs_clear_mulref_blocks(struct inode *inode)
+{
+    struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
+    loff_t isize;
+    pgoff_t lblk, max_lblk;
+    unsigned int blkbits;
+    struct f2fs_inode *fi;
+    struct page *ipage = NULL;
+    struct page *dn_ipage = NULL;
+    nid_t nid = 0;
+    block_t blkaddr = 0;
+    struct direct_node *dn;
+    u32 i_nid[5];
+    struct page *indirect_page = NULL;
+    struct indirect_node *indirect;
+    struct page *indirect_page2 = NULL;
+    struct indirect_node *indirect2;
+    long in_dn = 0;
+    long in_dn2 = 0;
+    long off_in_dn = 0;
+    long off_in_dn2 = 0;
+    int ret = 0;
+    int cleared_count = 0;
+
+    const long direct_index = ADDRS_PER_INODE(inode);
+    const long direct_blks = ADDRS_PER_BLOCK(inode);
+    const long level1_blks = direct_index + direct_blks;
+    const long level2_blks = level1_blks + direct_blks;
+    const long level3_blks = level2_blks + direct_blks * direct_blks;
+    const long level4_blks = level3_blks + direct_blks * direct_blks;
+    const long level5_blks = level4_blks + direct_blks * direct_blks * direct_blks;
+    const long double_dir_blk = direct_blks * direct_blks;
+
+    pr_info("[snapfs del_snap]: clearing mulref blocks for inode %lu\n", inode->i_ino);
+
+    if (f2fs_is_empty_file(sbi, inode)) {
+        pr_info("[snapfs del_snap]: empty file, no mulref to clear\n");
+        return 0;
+    }
+
+    ipage = f2fs_get_node_page(sbi, inode->i_ino);
+    if (IS_ERR(ipage)) {
+        pr_err("[snapfs del_snap]: failed to get inode page[%lu]\n", inode->i_ino);
+        return PTR_ERR(ipage);
+    }
+
+    fi = F2FS_INODE(ipage);
+    isize = le64_to_cpu(fi->i_size);
+    blkbits = inode->i_blkbits;
+    max_lblk = (isize + (1ULL << blkbits) - 1) >> blkbits;
+
+    i_nid[0] = le32_to_cpu(fi->i_nid[0]);
+    i_nid[1] = le32_to_cpu(fi->i_nid[1]);
+    i_nid[2] = le32_to_cpu(fi->i_nid[2]);
+    i_nid[3] = le32_to_cpu(fi->i_nid[3]);
+    i_nid[4] = le32_to_cpu(fi->i_nid[4]);
+
+    pr_info("[snapfs del_snap]: processing %lu blocks\n", max_lblk);
+
+    for (lblk = 0; lblk < max_lblk; lblk++) {
+        blkaddr = 0;
+        nid = 0;
+
+        if (lblk < direct_index) {
+            /* direct blocks */
+            blkaddr = le32_to_cpu(fi->i_addr[lblk]);
+            nid = inode->i_ino;
+        } else if (lblk < (pgoff_t)level1_blks) {
+            /* level 1 indirect */
+            if (ipage) {
+                f2fs_put_page(ipage, 1);
+                ipage = NULL;
+            }
+            nid = i_nid[0];
+            if (nid == 0) continue;
+
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) {
+                pr_err("[snapfs del_snap]: failed to get dn_ipage\n");
+                goto out;
+            }
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[lblk - direct_index]);
+            f2fs_put_page(dn_ipage, 1);
+            dn_ipage = NULL;
+        } else if (lblk < (pgoff_t)level2_blks) {
+            /* level 2 indirect */
+            nid = i_nid[1];
+            if (nid == 0) continue;
+
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) goto out;
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[lblk - level1_blks]);
+            f2fs_put_page(dn_ipage, 1);
+            dn_ipage = NULL;
+        } else if (lblk < level3_blks) {
+            /* level 3 indirect */
+            nid = i_nid[2];
+            if (nid == 0) continue;
+
+            indirect_page = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(indirect_page)) goto out;
+
+            in_dn = (lblk - level2_blks) / direct_blks;
+            off_in_dn = (lblk - level2_blks) % direct_blks;
+            indirect = (struct indirect_node *)page_address(indirect_page);
+            nid = le32_to_cpu(indirect->nid[in_dn]);
+            f2fs_put_page(indirect_page, 1);
+            indirect_page = NULL;
+
+            if (nid == 0) continue;
+
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) goto out;
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[off_in_dn]);
+            f2fs_put_page(dn_ipage, 1);
+            dn_ipage = NULL;
+        } else if (lblk < level4_blks) {
+            /* level 4 indirect */
+            nid = i_nid[3];
+            if (nid == 0) continue;
+
+            indirect_page = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(indirect_page)) goto out;
+
+            in_dn = (lblk - level3_blks) / direct_blks;
+            off_in_dn = (lblk - level3_blks) % direct_blks;
+            indirect = (struct indirect_node *)page_address(indirect_page);
+            nid = le32_to_cpu(indirect->nid[in_dn]);
+            f2fs_put_page(indirect_page, 1);
+            indirect_page = NULL;
+
+            if (nid == 0) continue;
+
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) goto out;
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[off_in_dn]);
+            f2fs_put_page(dn_ipage, 1);
+            dn_ipage = NULL;
+        } else if (lblk < level5_blks) {
+            /* level 5 indirect (double indirect) */
+            nid = i_nid[4];
+            if (nid == 0) continue;
+
+            indirect_page = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(indirect_page)) goto out;
+
+            in_dn = (lblk - level4_blks) / double_dir_blk;
+            off_in_dn = (lblk - level4_blks) % double_dir_blk;
+            indirect = (struct indirect_node *)page_address(indirect_page);
+            nid = le32_to_cpu(indirect->nid[in_dn]);
+            f2fs_put_page(indirect_page, 1);
+            indirect_page = NULL;
+
+            if (nid == 0) continue;
+
+            indirect_page2 = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(indirect_page2)) goto out;
+
+            in_dn2 = off_in_dn / direct_blks;
+            off_in_dn2 = off_in_dn % direct_blks;
+            indirect2 = (struct indirect_node *)page_address(indirect_page2);
+            nid = le32_to_cpu(indirect2->nid[in_dn2]);
+            f2fs_put_page(indirect_page2, 1);
+            indirect_page2 = NULL;
+
+            if (nid == 0) continue;
+
+            dn_ipage = f2fs_get_node_page(sbi, nid);
+            if (IS_ERR(dn_ipage)) goto out;
+            dn = (struct direct_node *)page_address(dn_ipage);
+            blkaddr = le32_to_cpu(dn->addr[off_in_dn2]);
+            f2fs_put_page(dn_ipage, 1);
+            dn_ipage = NULL;
+        }
+
+        /* 检查并清除 mulref */
+        if (__is_valid_data_blkaddr(blkaddr)) {
+            if (check_sit_mulref_entry(sbi, blkaddr)) {
+                ret = f2fs_mulref_overwrite(sbi, blkaddr, nid);
+                if (ret == 0) {
+                    cleared_count++;
+                } else if (ret == 1) {
+                    /* entry not found, skip */
+                    pr_info("[snapfs del_snap]: mulref entry not found for blk %u, nid %u\n", blkaddr, nid);
+                    ret = 0;
+                } else if (ret < 0) {
+                    pr_err("[snapfs del_snap]: failed to clear mulref for blk %u, err=%d\n", blkaddr, ret);
+                }
+            }
+        }
+    }
+
+    pr_info("[snapfs del_snap]: cleared %d mulref blocks\n", cleared_count);
+
+out:
+    if (ipage)
+        f2fs_put_page(ipage, 1);
+    if (dn_ipage)
+        f2fs_put_page(dn_ipage, 1);
+    if (indirect_page)
+        f2fs_put_page(indirect_page, 1);
+    if (indirect_page2)
+        f2fs_put_page(indirect_page2, 1);
+
+    return ret < 0 ? ret : 0;
+}
+
+/*
+ * f2fs_delete_snap_inode - 删除单个快照 inode（文件或空目录）
+ * @dir: 父目录 inode
+ * @inode: 要删除的 inode
+ * @name: 文件名
+ * @name_len: 文件名长度
+ *
+ * 清除 mulref 并删除目录项
+ */
+static int f2fs_delete_snap_inode(struct inode *dir, struct inode *inode,
+                                   const unsigned char *name, int name_len)
+{
+    struct f2fs_sb_info *sbi = F2FS_I_SB(dir);
+    struct f2fs_dir_entry *de;
+    struct page *page = NULL;
+    struct qstr qname;
+    int err = 0;
+
+    qname.name = name;
+    qname.len = name_len;
+
+    pr_info("[snapfs del_snap]: deleting inode %lu, name=%.*s\n",
+            inode->i_ino, name_len, name);
+
+    /* 清除 mulref（仅对普通文件） */
+    if (S_ISREG(inode->i_mode)) {
+        err = f2fs_clear_mulref_blocks(inode);
+        if (err) {
+            pr_err("[snapfs del_snap]: failed to clear mulref for ino %lu\n", inode->i_ino);
+            err = 0; /* 继续删除 */
+        }
+    }
+
+    /* 初始化 dquot */
+    err = f2fs_dquot_initialize(dir);
+    if (err)
+        return err;
+    err = f2fs_dquot_initialize(inode);
+    if (err)
+        return err;
+
+    /* 查找目录项 */
+    de = f2fs_find_entry(dir, &qname, &page);
+    if (!de) {
+        if (IS_ERR(page))
+            return PTR_ERR(page);
+        return -ENOENT;
+    }
+
+    f2fs_balance_fs(sbi, true);
+
+    f2fs_lock_op(sbi);
+
+    err = f2fs_acquire_orphan_inode(sbi);
+    if (err) {
+        f2fs_unlock_op(sbi);
+        f2fs_put_page(page, 0);
+        return err;
+    }
+
+    f2fs_delete_entry(de, page, dir, inode);
+
+    f2fs_unlock_op(sbi);
+
+    return 0;
+}
+
+/*
+ * f2fs_delete_snap_dir_recursive - 递归删除快照目录
+ * @dir: 要删除的目录 inode
+ *
+ * 遍历目录中的所有条目，递归删除子目录，删除文件
+ */
+int f2fs_delete_snap_dir_recursive(struct inode *dir)
+{
+    struct f2fs_sb_info *sbi = F2FS_I_SB(dir);
+    unsigned long bidx;
+    struct page *dentry_page;
+    unsigned int bit_pos;
+    struct f2fs_dentry_block *dentry_blk;
+    unsigned long nblock;
+    struct f2fs_dir_entry *de;
+    struct inode *child_inode;
+    int err = 0;
+    int slots;
+
+    /* 处理 inline dentry */
+    if (f2fs_has_inline_dentry(dir)) {
+        struct page *ipage;
+        void *inline_dentry;
+        struct f2fs_dentry_ptr d;
+
+        ipage = f2fs_get_node_page(sbi, dir->i_ino);
+        if (IS_ERR(ipage))
+            return PTR_ERR(ipage);
+
+        inline_dentry = inline_data_addr(dir, ipage);
+        make_dentry_ptr_inline(dir, &d, inline_dentry);
+
+        bit_pos = 2; /* 跳过 . 和 .. */
+        while (bit_pos < d.max) {
+            bit_pos = find_next_bit_le(d.bitmap, d.max, bit_pos);
+            if (bit_pos >= d.max)
+                break;
+
+            de = &d.dentry[bit_pos];
+            if (de->name_len == 0) {
+                bit_pos++;
+                continue;
+            }
+
+            child_inode = f2fs_iget(sbi->sb, le32_to_cpu(de->ino));
+            if (IS_ERR(child_inode)) {
+                pr_err("[snapfs del_snap]: failed to get child inode %u\n",
+                       le32_to_cpu(de->ino));
+                bit_pos += GET_DENTRY_SLOTS(le16_to_cpu(de->name_len));
+                continue;
+            }
+
+            f2fs_put_page(ipage, 1);
+
+            if (S_ISDIR(child_inode->i_mode)) {
+                /* 递归删除子目录 */
+                err = f2fs_delete_snap_dir_recursive(child_inode);
+                if (err) {
+                    iput(child_inode);
+                    return err;
+                }
+            }
+
+            /* 删除这个 inode */
+            err = f2fs_delete_snap_inode(dir, child_inode, d.filename[bit_pos],
+                                         le16_to_cpu(de->name_len));
+            iput(child_inode);
+
+            if (err) {
+                pr_err("[snapfs del_snap]: failed to delete child inode\n");
+                return err;
+            }
+
+            /* 重新获取 ipage，因为目录可能已经改变 */
+            ipage = f2fs_get_node_page(sbi, dir->i_ino);
+            if (IS_ERR(ipage))
+                return PTR_ERR(ipage);
+
+            inline_dentry = inline_data_addr(dir, ipage);
+            make_dentry_ptr_inline(dir, &d, inline_dentry);
+
+            bit_pos = 2; /* 从头开始，因为目录已改变 */
+        }
+
+        f2fs_put_page(ipage, 1);
+        return 0;
+    }
+
+    /* 处理普通 dentry block */
+restart:
+    nblock = ((unsigned long long)(i_size_read(dir) + PAGE_SIZE - 1)) >> PAGE_SHIFT;
+    for (bidx = 0; bidx < nblock; bidx++) {
+        dentry_page = f2fs_get_lock_data_page(dir, bidx, false);
+        if (IS_ERR(dentry_page)) {
+            if (PTR_ERR(dentry_page) == -ENOENT)
+                continue;
+            return PTR_ERR(dentry_page);
+        }
+
+        dentry_blk = page_address(dentry_page);
+        bit_pos = (bidx == 0) ? 2 : 0; /* 第一个块跳过 . 和 .. */
+
+        while (bit_pos < NR_DENTRY_IN_BLOCK) {
+            bit_pos = find_next_bit_le(&dentry_blk->dentry_bitmap,
+                                       NR_DENTRY_IN_BLOCK, bit_pos);
+            if (bit_pos >= NR_DENTRY_IN_BLOCK)
+                break;
+
+            de = &dentry_blk->dentry[bit_pos];
+            if (de->name_len == 0) {
+                bit_pos++;
+                continue;
+            }
+
+            child_inode = f2fs_iget(sbi->sb, le32_to_cpu(de->ino));
+            if (IS_ERR(child_inode)) {
+                pr_err("[snapfs del_snap]: failed to get child inode %u\n",
+                       le32_to_cpu(de->ino));
+                slots = GET_DENTRY_SLOTS(le16_to_cpu(de->name_len));
+                bit_pos += slots;
+                continue;
+            }
+
+            f2fs_put_page(dentry_page, 1);
+
+            if (S_ISDIR(child_inode->i_mode)) {
+                /* 递归删除子目录 */
+                err = f2fs_delete_snap_dir_recursive(child_inode);
+                if (err) {
+                    iput(child_inode);
+                    return err;
+                }
+            }
+
+            /* 删除这个 inode */
+            err = f2fs_delete_snap_inode(dir, child_inode,
+                                         dentry_blk->filename[bit_pos],
+                                         le16_to_cpu(de->name_len));
+            iput(child_inode);
+
+            if (err) {
+                pr_err("[snapfs del_snap]: failed to delete child inode\n");
+                return err;
+            }
+
+            /* 目录已改变，从头开始 */
+            goto restart;
+        }
+
+        f2fs_put_page(dentry_page, 1);
+    }
+
     return 0;
 }
 

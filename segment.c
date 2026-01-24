@@ -3421,202 +3421,206 @@ static int __get_segment_type(struct f2fs_io_info *fio)
 }
 
 void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
-		block_t old_blkaddr, block_t *new_blkaddr,
-		struct f2fs_summary *sum, int type,
-		struct f2fs_io_info *fio)
+        block_t old_blkaddr, block_t *new_blkaddr,
+        struct f2fs_summary *sum, int type,
+        struct f2fs_io_info *fio)
 {
-	struct sit_info *sit_i = SIT_I(sbi);
-	struct curseg_info *curseg = CURSEG_I(sbi, type);
-	unsigned long long old_mtime;
-	bool from_gc = (type == CURSEG_ALL_DATA_ATGC);
-	struct seg_entry *se = NULL;
-	struct f2fs_summary old_sum;
-	int ret = 0;
-	nid_t sum_nid = le32_to_cpu(sum->nid);
-	bool is_mulref = false;
-	if(__is_valid_data_blkaddr(old_blkaddr)){
-		// pr_info("[DEBUG ALLOC] checking old_blkaddr=%u\n", old_blkaddr);
-	 	is_mulref = check_sit_mulref_entry(sbi, old_blkaddr);
-	}
-	down_read(&SM_I(sbi)->curseg_lock);
-	mutex_lock(&curseg->curseg_mutex);
-	down_write(&sit_i->sentry_lock);
+    struct sit_info *sit_i = SIT_I(sbi);
+    struct curseg_info *curseg = CURSEG_I(sbi, type);
+    unsigned long long old_mtime;
+    bool from_gc = (type == CURSEG_ALL_DATA_ATGC);
 
-	// fio->old_blkaddr 判断旧信息
+    bool from_im =((type == CURSEG_ALL_DATA_ATGC) ||
+                  (fio && fio->io_type == FS_GC_DATA_IO) ||
+                 (fio && fio->page && page_private_gcing(fio->page)));
+    struct seg_entry *se = NULL;
+    struct f2fs_summary old_sum;
+    int ret = 0;
+    nid_t sum_nid = le32_to_cpu(sum->nid);
+    bool is_mulref = false;
+    if(__is_valid_data_blkaddr(old_blkaddr)){
+        // pr_info("[DEBUG ALLOC] checking old_blkaddr=%u\n", old_blkaddr);
+        is_mulref = check_sit_mulref_entry(sbi, old_blkaddr);
+    }
+    down_read(&SM_I(sbi)->curseg_lock);
+    mutex_lock(&curseg->curseg_mutex);
+    down_write(&sit_i->sentry_lock);
 
-	// 这是 “搬迁已有有效块”
-	// 与普通写入不同：
-	// old_blkaddr 一定合法
-	// old_mtime 要继承
-	// segment 类型必须匹配
-	if (from_gc) {
-		f2fs_bug_on(sbi, GET_SEGNO(sbi, old_blkaddr) == NULL_SEGNO);
-		se = get_seg_entry(sbi, GET_SEGNO(sbi, old_blkaddr));
-		sanity_check_seg_type(sbi, se->type);
-		f2fs_bug_on(sbi, IS_NODESEG(se->type));
-	}
-	*new_blkaddr = NEXT_FREE_BLKADDR(sbi, curseg);
-	// pr_info("[%lu] new_blkaddr: %x\n", fio->ino, *new_blkaddr);
-	f2fs_bug_on(sbi, curseg->next_blkoff >= sbi->blocks_per_seg);
-	f2fs_wait_discard_bio(sbi, *new_blkaddr);
-	/*
-	* __add sum entry should be resided under the curseg_mutex
-	* because, this function updates a summary entry in the
-	* current summary block.
-	*/
-	
-	if(is_mulref){
-		// pr_info("准备获得old sum\n");
-		ret = f2fs_get_summary_by_addr(sbi, old_blkaddr, &old_sum);
-		if (ret){
-			pr_info("get old sum2 failed\n");
-			return ;
-		}
-	}
-	
-	// if(__is_valid_data_blkaddr(old_blkaddr) && !check_sit_mulref_entry(sbi,old_blkaddr)){
-	// 	if(old_sum.nid == sum->nid){
-	// 		pr_info("allocate add sum: [%u, %u, %u],old sum[%u, %u, %u], old new addr[%u, %u]\n",le32_to_cpu(sum->nid),le16_to_cpu(sum->ofs_in_node),sum->version,
-	// 				old_sum.nid, old_sum.ofs_in_node,old_sum.version,
-	// 				old_blkaddr, *new_blkaddr);
-	// 	}
-	// }else if(__is_valid_data_blkaddr(old_blkaddr)){
-	// 	if(old_sum.nid == sum->nid){
-	// 		pr_info("allocate mulref add sum: [%u, %u, %u],old sum[%u, %u, %u], old new addr[%u, %u]\n",le32_to_cpu(sum->nid),le16_to_cpu(sum->ofs_in_node),sum->version,
-	// 				old_sum.nid, old_sum.ofs_in_node,old_sum.version,			
-	// 				old_blkaddr, *new_blkaddr);
-	// 	}
-	// }
-	if(is_mulref){
-		if((old_blkaddr != NULL_ADDR) && (old_sum.nid != sum->nid)){
-			// __add_sum_entry(sbi, type, sum);
-			goto skip_normal_addsum;
-		}
+    // fio->old_blkaddr 判断旧信息
 
-		if(from_gc){
-			// 原本你的sum是一个inode的sum， 现在如果是一个GC 迁移多引用块，那么sum就要修改
-			__add_sum_entry(sbi, type, &old_sum);
-			goto skip_normal_addsum;
-		}else {
-			__add_sum_entry(sbi, type, sum);
-		}
-		goto skip_normal_addsum;	
-	}
+    // 这是 “搬迁已有有效块”
+    // 与普通写入不同：
+    // old_blkaddr 一定合法
+    // old_mtime 要继承
+    // segment 类型必须匹配
+    if (from_gc) {
+        f2fs_bug_on(sbi, GET_SEGNO(sbi, old_blkaddr) == NULL_SEGNO);
+        se = get_seg_entry(sbi, GET_SEGNO(sbi, old_blkaddr));
+        sanity_check_seg_type(sbi, se->type);
+        f2fs_bug_on(sbi, IS_NODESEG(se->type));
+    }
+    *new_blkaddr = NEXT_FREE_BLKADDR(sbi, curseg);
+    // pr_info("[%lu] new_blkaddr: %x\n", fio->ino, *new_blkaddr);
+    f2fs_bug_on(sbi, curseg->next_blkoff >= sbi->blocks_per_seg);
+    f2fs_wait_discard_bio(sbi, *new_blkaddr);
+    /*
+    * __add sum entry should be resided under the curseg_mutex
+    * because, this function updates a summary entry in the
+    * current summary block.
+    */
+    
+    if(is_mulref){
+        // pr_info("准备获得old sum\n");
+        ret = f2fs_get_summary_by_addr(sbi, old_blkaddr, &old_sum);
+        if (ret){
+            pr_info("get old sum2 failed\n");
+            return ;
+        }
+    }
+    
+    // if(__is_valid_data_blkaddr(old_blkaddr) && !check_sit_mulref_entry(sbi,old_blkaddr)){
+    //  if(old_sum.nid == sum->nid){
+    //      pr_info("allocate add sum: [%u, %u, %u],old sum[%u, %u, %u], old new addr[%u, %u]\n",le32_to_cpu(sum->nid),le16_to_cpu(sum->ofs_in_node),sum->version,
+    //              old_sum.nid, old_sum.ofs_in_node,old_sum.version,
+    //              old_blkaddr, *new_blkaddr);
+    //  }
+    // }else if(__is_valid_data_blkaddr(old_blkaddr)){
+    //  if(old_sum.nid == sum->nid){
+    //      pr_info("allocate mulref add sum: [%u, %u, %u],old sum[%u, %u, %u], old new addr[%u, %u]\n",le32_to_cpu(sum->nid),le16_to_cpu(sum->ofs_in_node),sum->version,
+    //              old_sum.nid, old_sum.ofs_in_node,old_sum.version,           
+    //              old_blkaddr, *new_blkaddr);
+    //  }
+    // }
+    if(is_mulref){
+        if((old_blkaddr != NULL_ADDR) && (old_sum.nid != sum->nid)){
+            // __add_sum_entry(sbi, type, sum);
+            goto skip_normal_addsum;
+        }
 
-	__add_sum_entry(sbi, type, sum);
-	
+        if(from_im){
+            // 原本你的sum是一个inode的sum， 现在如果是一个GC 迁移多引用块，那么sum就要修改
+            __add_sum_entry(sbi, type, &old_sum);
+            goto skip_normal_addsum;
+        }else {
+            __add_sum_entry(sbi, type, sum);
+        }
+        goto skip_normal_addsum;    
+    }
+
+    __add_sum_entry(sbi, type, sum);
+    
 skip_normal_addsum:
 
-	__refresh_next_blkoff(sbi, curseg);
+    __refresh_next_blkoff(sbi, curseg);
 
-	stat_inc_block_count(sbi, curseg);
+    stat_inc_block_count(sbi, curseg);
 
-	if (from_gc) {
-		old_mtime = get_segment_mtime(sbi, old_blkaddr);
-	} else {
-		update_segment_mtime(sbi, old_blkaddr, 0);
-		old_mtime = 0;
-	}
-	update_segment_mtime(sbi, *new_blkaddr, old_mtime);
-	/*
-	 * SIT information should be updated before segment allocation,
-	 * since SSR needs latest valid block information.
-	 */
-	update_sit_entry(sbi, *new_blkaddr, 1);
-	
-	if(!is_mulref){
-		// check sit mulref_entry(sbi, start_addr + off);
-		// pr_info("-------   allocate invalid oldblkaddr %u -------\n",old_blkaddr);
-		update_sit_entry(sbi, old_blkaddr, -1);	
-	} else{
-		// mulref process.   多引用转单引用
-		// pr_info("[snapfs IO]: allocate blk and is mulref blk[%u]\n",old_blkaddr);
-		if(old_blkaddr >= 4503280 && old_blkaddr <= 4503285){
-			pr_info("[snapfs IO]: mulref sum: [%u, %u, %u],old sum[%u, %u, %u], old new addr[%u, %u]\n",
-				le32_to_cpu(sum->nid),le16_to_cpu(sum->ofs_in_node),sum->version,
-						old_sum.nid, old_sum.ofs_in_node,old_sum.version,			
-						old_blkaddr, *new_blkaddr);
-		}
-		if(!from_gc){
-			ret = f2fs_mulref_overwrite(sbi,old_blkaddr,sum_nid);
-			if(ret){
-				pr_info("[snapfs IO]: allocate mulref update failed\n");
-			}else{
-				if(old_blkaddr >= 4503280 && old_blkaddr <= 4503285){
-					pr_info("[snapfs IO]: allocate mulref update success\n");
-					if(__is_valid_data_blkaddr(old_blkaddr)){
-						if(!check_sit_mulref_entry(sbi, old_blkaddr)){
-							pr_info("old_blkaddr is not mulref\n");
-						}else{
-							pr_info("clear bit failed?    old_blkaddr is still mulref\n");
-						}
-					}
-				}
-			}
-		}else{
-			// 
-			f2fs_mulref_replace_block(sbi,old_blkaddr,new_blkaddr,&old_sum);
-		}
-	}
-	// 段空间管理，如果当前段空间不足
-	if (!__has_curseg_space(sbi, curseg)) {
+    if (from_gc) {
+        old_mtime = get_segment_mtime(sbi, old_blkaddr);
+    } else {
+        update_segment_mtime(sbi, old_blkaddr, 0);
+        old_mtime = 0;
+    }
+    update_segment_mtime(sbi, *new_blkaddr, old_mtime);
+    /*
+     * SIT information should be updated before segment allocation,
+     * since SSR needs latest valid block information.
+     */
+    update_sit_entry(sbi, *new_blkaddr, 1);
+    
+    if(!is_mulref){
+        // check sit mulref_entry(sbi, start_addr + off);
+        // pr_info("-------   allocate invalid oldblkaddr %u -------\n",old_blkaddr);
+        update_sit_entry(sbi, old_blkaddr, -1); 
+    } else{
+        // mulref process.   多引用转单引用
+        // pr_info("[snapfs IO]: allocate blk and is mulref blk[%u]\n",old_blkaddr);
+        if(old_blkaddr >= 4503280 && old_blkaddr <= 4503285){
+            pr_info("[snapfs IO]: mulref sum: [%u, %u, %u],old sum[%u, %u, %u], old new addr[%u, %u]\n",
+                le32_to_cpu(sum->nid),le16_to_cpu(sum->ofs_in_node),sum->version,
+                        old_sum.nid, old_sum.ofs_in_node,old_sum.version,           
+                        old_blkaddr, *new_blkaddr);
+        }
+        if(!from_im){
+            ret = f2fs_mulref_overwrite(sbi,old_blkaddr,sum_nid);
+            if(ret){
+                pr_info("[snapfs IO]: allocate mulref update failed\n");
+            }else{
+                if(old_blkaddr >= 4503280 && old_blkaddr <= 4503285){
+                    pr_info("[snapfs IO]: allocate mulref update success\n");
+                    if(__is_valid_data_blkaddr(old_blkaddr)){
+                        if(!check_sit_mulref_entry(sbi, old_blkaddr)){
+                            pr_info("old_blkaddr is not mulref\n");
+                        }else{
+                            pr_info("clear bit failed?    old_blkaddr is still mulref\n");
+                        }
+                    }
+                }
+            }
+        }else{
+            // 
+            f2fs_mulref_replace_block(sbi,old_blkaddr,new_blkaddr,&old_sum);
+        }
+    }
+    // 段空间管理，如果当前段空间不足
+    if (!__has_curseg_space(sbi, curseg)) {
 
-		/*
-		 * Flush out current segment and replace it with new segment.
-		 */
-		// pr_info("has not space: tp 1 segno %u new_addr %u, next_blkoff %u, usable %u\n",
-		// 	curseg->segno, *new_blkaddr, curseg->next_blkoff, f2fs_usable_blks_in_seg(sbi, curseg->segno));
-		// GC情况，获取新段
-		if (from_gc) {
-			pr_info("tp 2 gc\n");
-			get_atssr_segment(sbi, type, se->type,
-						AT_SSR, se->mtime);
-		} else {
-			if (need_new_seg(sbi, type)){
-				// pr_info("tp 2 new\n");
-				new_curseg(sbi, type, false);
-			}else{
-				// pr_info("tp 2 change\n");
-				change_curseg(sbi, type);
-			}
-			stat_inc_seg_type(sbi, curseg);
-		}
-		// pr_info("tp 4 segno %u\n",curseg->segno);
-	}
-	
-	/*
-	 * segment dirty status should be updated after segment allocation,
-	 * so we just need to update status only one time after previous
-	 * segment being closed.
-	 */
-	// 定位脏段
-	locate_dirty_segment(sbi, GET_SEGNO(sbi, old_blkaddr));
-	locate_dirty_segment(sbi, GET_SEGNO(sbi, *new_blkaddr));
+        /*
+         * Flush out current segment and replace it with new segment.
+         */
+        // pr_info("has not space: tp 1 segno %u new_addr %u, next_blkoff %u, usable %u\n",
+        //  curseg->segno, *new_blkaddr, curseg->next_blkoff, f2fs_usable_blks_in_seg(sbi, curseg->segno));
+        // GC情况，获取新段
+        if (from_gc) {
+            pr_info("tp 2 gc\n");
+            get_atssr_segment(sbi, type, se->type,
+                        AT_SSR, se->mtime);
+        } else {
+            if (need_new_seg(sbi, type)){
+                // pr_info("tp 2 new\n");
+                new_curseg(sbi, type, false);
+            }else{
+                // pr_info("tp 2 change\n");
+                change_curseg(sbi, type);
+            }
+            stat_inc_seg_type(sbi, curseg);
+        }
+        // pr_info("tp 4 segno %u\n",curseg->segno);
+    }
+    
+    /*
+     * segment dirty status should be updated after segment allocation,
+     * so we just need to update status only one time after previous
+     * segment being closed.
+     */
+    // 定位脏段
+    locate_dirty_segment(sbi, GET_SEGNO(sbi, old_blkaddr));
+    locate_dirty_segment(sbi, GET_SEGNO(sbi, *new_blkaddr));
 
-	up_write(&sit_i->sentry_lock);
-	// 页节点更新
-	if (page && IS_NODESEG(type)) {
-		fill_node_footer_blkaddr(page, NEXT_FREE_BLKADDR(sbi, curseg));
+    up_write(&sit_i->sentry_lock);
+    // 页节点更新
+    if (page && IS_NODESEG(type)) {
+        fill_node_footer_blkaddr(page, NEXT_FREE_BLKADDR(sbi, curseg));
 
-		f2fs_inode_chksum_set(sbi, page);
-	}
+        f2fs_inode_chksum_set(sbi, page);
+    }
 
-	if (fio) {
-		struct f2fs_bio_info *io;
+    if (fio) {
+        struct f2fs_bio_info *io;
 
-		if (F2FS_IO_ALIGNED(sbi))
-			fio->retry = 0;
+        if (F2FS_IO_ALIGNED(sbi))
+            fio->retry = 0;
 
-		INIT_LIST_HEAD(&fio->list);
-		fio->in_list = 1;
-		io = sbi->write_io[fio->type] + fio->temp;
-		spin_lock(&io->io_lock);
-		list_add_tail(&fio->list, &io->io_list);
-		spin_unlock(&io->io_lock);
-	}
-	mutex_unlock(&curseg->curseg_mutex);
+        INIT_LIST_HEAD(&fio->list);
+        fio->in_list = 1;
+        io = sbi->write_io[fio->type] + fio->temp;
+        spin_lock(&io->io_lock);
+        list_add_tail(&fio->list, &io->io_list);
+        spin_unlock(&io->io_lock);
+    }
+    mutex_unlock(&curseg->curseg_mutex);
 
-	up_read(&SM_I(sbi)->curseg_lock);
+    up_read(&SM_I(sbi)->curseg_lock);
 }
 
 void f2fs_update_device_state(struct f2fs_sb_info *sbi, nid_t ino,
@@ -5645,6 +5649,43 @@ static void init_min_max_mtime(struct f2fs_sb_info *sbi)
 	up_write(&sit_i->sentry_lock);
 }
 
+static int rebuild_snap_index(struct f2fs_sb_info *sbi)
+{ 
+	struct f2fs_magic_info *mi = sbi->magic_info; 
+	block_t blkaddr;  
+	struct page *page;  
+	struct f2fs_magic_block *mb;  
+	int i, j; 
+
+	INIT_RADIX_TREE(&mi->snap_tree, GFP_NOFS); 
+	// 遍历所有 magic block（约 2240 个）
+	for (i = 0; i < (MAGIC_ENTRY_NR / MGENTRY_PER_BLOCK + 1); i++) {
+		blkaddr = mi->magic_blkaddr + i;
+		page = f2fs_get_meta_page(sbi, blkaddr); 
+		if (IS_ERR(page))
+			continue;
+
+		mb = (struct f2fs_magic_block *)page_address(page); 
+		// 跳过空块
+		if (le16_to_cpu(mb->v_mgentry) == 0) { 
+			f2fs_put_page(page, 1);
+			continue; 
+		}
+		// 遍历块内的 entry 
+		for (j = 0; j < MGENTRY_PER_BLOCK; j++) {
+			if (!test_bit(j, (unsigned long *)(mb->multi_bitmap))) 
+				continue;
+			struct f2fs_magic_entry *me = &mb->mgentries[j];
+			u32 snap_ino = le32_to_cpu(me->snap_ino); 
+			u32 entry_id = i * MGENTRY_PER_BLOCK + j;
+			// 插入哈希表 
+			radix_tree_insert(&mi->snap_tree, snap_ino, (void *)(unsigned long)entry_id);
+		} 
+		f2fs_put_page(page, 1); 
+	}
+	return 0; 
+} 
+
 int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 {
 	struct f2fs_super_block *raw_super = F2FS_RAW_SUPER(sbi);
@@ -5689,12 +5730,17 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	magic_info->mulref_flag_blkaddr = TOTAL_MAGIC_BLK + le32_to_cpu(raw_super->magic_blkaddr);
 	blks_per_mulref_flag = SIT_BLK_CNT(sbi);
 	magic_info->mulref_blkaddr = blks_per_mulref_flag + TOTAL_MAGIC_BLK + le32_to_cpu(raw_super->magic_blkaddr);
+	err = rebuild_snap_index(sbi);
+	if(err){
+		pr_err("rebuild_snap_index failed...\n");
+	}
+	
 	pr_info("[build sm]: ssa_count %u\n",le32_to_cpu(raw_super->segment_count_ssa) );
 	pr_info("[build sm]: magic addr: %u, size %u\n",magic_info->magic_blkaddr, TOTAL_MAGIC_BLK*1);
 	// int sit_blk_cnt = SIT_BLK_CNT(sbi);
 	pr_info("[build sm]: mr sit addr %u, size %u\n",magic_info->mulref_flag_blkaddr, blks_per_mulref_flag);
 	pr_info("[build sm]: mulref addr %u, end %u, size = end - mulref addr\n",magic_info->mulref_blkaddr, sm_info->ssa_blkaddr);
-
+	
 	sm_info->rec_prefree_segments = sm_info->main_segments *
 					DEF_RECLAIM_PREFREE_SEGMENTS / 100;
 	if (sm_info->rec_prefree_segments > DEF_MAX_RECLAIM_PREFREE_SEGMENTS)

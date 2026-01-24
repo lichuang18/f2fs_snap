@@ -123,6 +123,7 @@ extern const char *f2fs_fault_name[FAULT_MAX];
 
 #define F2FS_IOC_SNAPSHOT   _IOW(F2FS_IOCTL_MAGIC, 28, char*[3])
 #define F2FS_IOC_SNAPDUMP   _IOW(F2FS_IOCTL_MAGIC, 29, char*[2])
+#define F2FS_IOC_DELETE_SNAPSHOT _IOW(F2FS_IOCTL_MAGIC, 30, char*)
 #define ver_after(a, b)	(typecheck(unsigned long long, a) &&		\
 		typecheck(unsigned long long, b) &&			\
 		((long long)((a) - (b)) > 0))
@@ -1065,6 +1066,7 @@ struct f2fs_magic_info {
 	__le32 segment_count_magic; // 2MB * segment_count_magic
 	block_t mulref_flag_blkaddr;
 	block_t mulref_blkaddr;
+	struct radix_tree_root snap_tree;
 };
 
 struct curmulref_info {

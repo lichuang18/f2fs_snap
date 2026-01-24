@@ -543,6 +543,12 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 	ktime_t start, end;
 	pr_info("f2fs_unlink START: i_state=0x%x\n",inode->i_state);
 
+	/* 检查是否在快照目录下，如果是则禁止 rm 删除 */
+	if (f2fs_is_under_snapshot_dir(inode)) {
+		pr_err("[snapfs rm]: cannot rm file/dir under snapshot directory, use ioctl instead\n");
+		return -EPERM;
+	}
+
 	unsigned int flags = F2FS_I(inode)->i_flags;
 	if (flags & F2FS_COWED_FL){
 		if(SNAPFS_DEBUG) pr_info("[snapfs unlink]: write with O_TRUNC, F2FS_COWED_FL is 1\n");

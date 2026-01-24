@@ -3611,6 +3611,205 @@ static int f2fs_read_snap_dump(struct file *filp, unsigned long arg)
 	return 0;
 }
 
+static int f2fs_magic_delete_entry(struct f2fs_sb_info *sbi,
+										u32 snap_ino, u32 *src_ino)
+{  
+	struct f2fs_magic_info *mi = sbi->magic_info;
+	void *entry_ptr; 
+	u32 entry_id; 
+	block_t blkaddr;  
+	u32 off;  
+	struct page *page;       
+	struct f2fs_magic_block *mb; 
+	struct f2fs_magic_entry *me;
+	down_write(&mi->rwsem); 
+	// O(1) 查找！ 
+	entry_ptr = radix_tree_lookup(&mi->snap_tree, snap_ino); 
+	if (!entry_ptr) { 
+		up_write(&mi->rwsem);
+		return -ENOENT;
+	}  
+	entry_id = (u32)(unsigned long)entry_ptr; 
+	blkaddr = mi->magic_blkaddr + magic_entry_to_blkaddr(entry_id); 
+	off = magic_entry_to_offset(entry_id); 
+	page = f2fs_get_meta_page(sbi, blkaddr); 
+	if (IS_ERR(page)) {
+		up_write(&mi->rwsem);
+		return PTR_ERR(page);
+	}
+	mb = (struct f2fs_magic_block *)page_address(page);
+	me = &mb->mgentries[off];
+	*src_ino = le32_to_cpu(me->src_ino);
+	// 删除 entry 
+	f2fs_clear_bit(off, (char *)mb->multi_bitmap);
+	memset(me, 0, sizeof(*me)); 
+	if (mb->v_mgentry > 0)
+		mb->v_mgentry = cpu_to_le16(le16_to_cpu(mb->v_mgentry) - 1);
+	set_page_dirty(page);
+	f2fs_put_page(page, 1); 
+	// 从哈希表中删除 
+	radix_tree_delete(&mi->snap_tree, snap_ino);
+	up_write(&mi->rwsem);
+	return 0;
+}
+
+static int f2fs_delete_snapshot(struct file *filp, unsigned long arg)
+{
+	char __user *user_path;  // 从用户空间复制的快照路径指针
+	char *snap_path_full = NULL;
+	long len;
+	struct f2fs_sb_info *sbi = NULL;
+	struct path snap_path;
+	struct inode *snap_inode = NULL, *snap_par_inode = NULL;
+	int err = 0;
+	struct dentry *snap_dentry = NULL;
+	struct f2fs_dir_entry *de = NULL;
+	struct page *page = NULL;
+	u32 src_ino = 0;
+
+	/* ---------- 从用户态复制路径指针 ---------- */
+	if (copy_from_user(&user_path, (char __user * __user *)arg, sizeof(user_path)))
+		return -EFAULT;
+
+	/* ---------- 从用户态复制路径字符串 ---------- */
+	len = strnlen_user(user_path, PATH_MAX);
+	if (len <= 0 || len > PATH_MAX)
+		return -EFAULT;
+
+	snap_path_full = memdup_user(user_path, len);
+	if (IS_ERR(snap_path_full)) {
+		return PTR_ERR(snap_path_full);
+	}
+
+	pr_info("[snapfs del_snap]: snap_path_full[%s]\n", snap_path_full);
+
+	/* ---------- 检查 snap_path_full 是否存在 ---------- */
+	err = kern_path(snap_path_full, LOOKUP_FOLLOW | LOOKUP_REVAL, &snap_path);
+	if (err) {
+		pr_info("[snapfs del_snap]: snap_path '%s' not found\n", snap_path_full);
+		goto out_free;
+	}
+
+	snap_dentry = snap_path.dentry;
+	snap_inode = d_inode(snap_dentry);
+	if (!snap_inode) {
+		pr_info("[snapfs del_snap]: Invalid inode for snap_path\n");
+		err = -EINVAL;
+		goto out_path;
+	}
+
+	/* 获取父目录 */
+	snap_par_inode = d_inode(snap_dentry->d_parent);
+	if (!snap_par_inode) {
+		pr_info("[snapfs del_snap]: Invalid parent inode\n");
+		err = -EINVAL;
+		goto out_path;
+	}
+
+	sbi = F2FS_I_SB(snap_inode);
+
+	/* ---------- 检查是否是目录 ---------- */
+	if (!S_ISDIR(snap_inode->i_mode)) {
+		pr_info("[snapfs del_snap]: '%s' is not a directory\n", snap_path_full);
+		err = -ENOTDIR;
+		goto out_path;
+	}
+
+	pr_info("[snapfs del_snap]: Deleting snapshot ino=%lu\n", snap_inode->i_ino);
+
+	/* ---------- 检查目录的 dentry block 是否被其他快照引用 ---------- */
+	if (f2fs_dir_has_mulref_dentry(snap_inode)) {
+		pr_err("[snapfs del_snap]: snapshot '%s' is referenced by another snapshot, delete the dependent snapshot first\n",
+		       snap_path_full);
+		err = -EBUSY;
+		goto out_path;
+	}
+
+	/* ---------- 递归删除子文件和子目录 ---------- */
+	if (!f2fs_empty_dir(snap_inode)) {
+		pr_info("[snapfs del_snap]: directory '%s' is not empty, deleting recursively\n", snap_path_full);
+		err = f2fs_delete_snap_dir_recursive(snap_inode);
+		if (err) {
+			pr_err("[snapfs del_snap]: Failed to delete children, err=%d\n", err);
+			goto out_path;
+		}
+	}
+
+	/* ---------- 删除 magic entry ---------- */
+	err = f2fs_magic_delete_entry(sbi, snap_inode->i_ino, &src_ino);
+	if (err) {
+		pr_err("[snapfs del_snap]: Failed to delete magic entry, err=%d\n", err);
+		/* 继续删除目录，即使 magic entry 不存在 */
+		if (err == -ENOENT) {
+			pr_info("[snapfs del_snap]: Magic entry not found, continue deletion\n");
+			err = 0;
+		} else {
+			goto out_path;
+		}
+	} else {
+		pr_info("[snapfs del_snap]: Deleted magic entry, src_ino=%u\n", src_ino);
+	}
+
+	/* ---------- 清除快照目录自身的 mulref 引用计数 ---------- */
+	/* 目录的 dentry block 也可能有 mulref（当目录本身是快照时） */
+	err = f2fs_clear_mulref_blocks(snap_inode);
+	if (err) {
+		pr_err("[snapfs del_snap]: Failed to clear mulref blocks, err=%d\n", err);
+		/* 继续删除，即使清除 mulref 失败 */
+		err = 0;
+	}
+
+	/* ---------- 初始化 dquot ---------- */
+	err = f2fs_dquot_initialize(snap_par_inode);
+	if (err)
+		goto out_path;
+	err = f2fs_dquot_initialize(snap_inode);
+	if (err)
+		goto out_path;
+
+	/* ---------- 查找目录项 ---------- */
+	de = f2fs_find_entry(snap_par_inode, &snap_dentry->d_name, &page);
+	if (!de) {
+		if (IS_ERR(page))
+			err = PTR_ERR(page);
+		else
+			err = -ENOENT;
+		pr_err("[snapfs del_snap]: Failed to find directory entry\n");
+		goto out_path;
+	}
+
+	f2fs_balance_fs(sbi, true);
+
+	f2fs_lock_op(sbi);
+
+	/* ---------- 获取 orphan inode ---------- */
+	err = f2fs_acquire_orphan_inode(sbi);
+	if (err) {
+		f2fs_unlock_op(sbi);
+		f2fs_put_page(page, 0);
+		goto out_path;
+	}
+
+	/* ---------- 删除目录项 ---------- */
+	f2fs_delete_entry(de, page, snap_par_inode, snap_inode);
+
+	f2fs_unlock_op(sbi);
+
+	/* 同步父目录 */
+	if (IS_DIRSYNC(snap_par_inode))
+		f2fs_sync_fs(sbi->sb, 1);
+
+	pr_info("[snapfs del_snap]: Successfully deleted snapshot '%s' (ino=%lu, src_ino=%u)\n",
+			snap_path_full, snap_inode->i_ino, src_ino);
+
+out_path:
+	path_put(&snap_path);
+
+out_free:
+	kfree(snap_path_full);
+	return err;
+}
+
 static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 {
 	char __user *user_paths[3];  // 从用户空间复制的指针数组
@@ -3735,9 +3934,18 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 	f2fs_alloc_nid_done(sbi, snap_inode->i_ino);
 	d_instantiate_new(snap_dentry, snap_inode);
 	// pr_info("[snapfs mk_snap]: magic alloc\n");
-	err = f2fs_magic_lookup_or_alloc(sbi, src_inode->i_ino, snap_inode->i_ino);
-	if(err){
-		pr_info("magic alloc failed\n");
+	{
+		u32 ret_entry_id = 0;
+		err = f2fs_magic_lookup_or_alloc(sbi, src_inode->i_ino, snap_inode->i_ino, &ret_entry_id);
+		if(err){
+			pr_info("magic alloc failed\n");
+		} else {
+			/* 插入 radix tree: snap_ino -> entry_id，用于删除时快速查找 */
+			down_write(&sbi->magic_info->rwsem);
+			radix_tree_insert(&sbi->magic_info->snap_tree, snap_inode->i_ino,
+					  (void *)(unsigned long)ret_entry_id);
+			up_write(&sbi->magic_info->rwsem);
+		}
 	}
 	// pr_info("[snapfs mk_snap]: magic alloc over\n");
 
@@ -4726,6 +4934,8 @@ static long __f2fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return f2fs_create_snapshot(filp, arg);
 	case F2FS_IOC_SNAPDUMP:
 		return f2fs_read_snap_dump(filp, arg);
+	case F2FS_IOC_DELETE_SNAPSHOT:
+		return f2fs_delete_snapshot(filp, arg);
 	default:
 		return -ENOTTY;
 	}

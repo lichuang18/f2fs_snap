@@ -2804,8 +2804,11 @@ got_it:
 	/* LFS mode write path */
 	f2fs_outplace_write_data(&dn, fio);
 	// 可以在这一层更新多inode的映射
-	
-	bool from_gc = (get_seg_type(fio) == CURSEG_ALL_DATA_ATGC);
+	bool from_gc =((get_seg_type(fio) == CURSEG_ALL_DATA_ATGC) ||
+                  (fio && fio->io_type == FS_GC_DATA_IO) ||
+                 (fio && fio->page && page_private_gcing(fio->page)));
+
+	// bool from_gc = (get_seg_type(fio) == CURSEG_ALL_DATA_ATGC);
 	if(from_gc && check_sit_mulref_entry(fio->sbi, fio->old_blkaddr)){
 		int i = 0;
 		struct f2fs_sm_info *sm = SM_I(fio->sbi);
