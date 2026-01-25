@@ -61,6 +61,13 @@ void f2fs_cow_update_inode(struct inode *src_inode,struct inode *snap_inode);
 bool check_sit_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr);
 void f2fs_dump_nonzero_sit_mulref_entries_simple(struct f2fs_sb_info *sbi);
 
+/* mulref compact thread */
+int f2fs_start_mulref_compact_thread(struct f2fs_sb_info *sbi);
+void f2fs_stop_mulref_compact_thread(struct f2fs_sb_info *sbi);
+void f2fs_wakeup_mulref_compact_thread(struct f2fs_sb_info *sbi, bool urgent);
+int f2fs_mulref_get_stats(struct f2fs_sb_info *sbi, unsigned int *used,
+			  unsigned int *total, unsigned int *usage_percent);
+
 static inline block_t magic_entry_to_blkaddr(u32 entry_id)
 {
     return (entry_id / MGENTRY_PER_BLOCK);

@@ -170,6 +170,7 @@ int f2fs_start_gc_thread(struct f2fs_sb_info *sbi)
 	gc_th->no_gc_sleep_time = DEF_GC_THREAD_NOGC_SLEEP_TIME;
 
 	gc_th->gc_wake = 0;
+	gc_th->mulref_extra_weight = DEF_GC_MULREF_EXTRA_WEIGHT;
 
 	sbi->gc_thread = gc_th;
 	init_waitqueue_head(&sbi->gc_thread->gc_wait_queue_head);
@@ -318,14 +319,22 @@ static unsigned int get_cb_cost(struct f2fs_sb_info *sbi, unsigned int segno)
 	unsigned int start = GET_SEG_FROM_SEC(sbi, secno);
 	unsigned long long mtime = 0;
 	unsigned int vblocks;
+	unsigned int mblocks;
 	unsigned char age = 0;
 	unsigned char u;
 	unsigned int i;
 	unsigned int usable_segs_per_sec = f2fs_usable_segs_in_sec(sbi, segno);
+	unsigned int base_cost;
+	unsigned int weight = DEF_GC_MULREF_EXTRA_WEIGHT;
+
+	/* 使用 gc_thread 中的可配置权重 */
+	if (sbi->gc_thread)
+		weight = sbi->gc_thread->mulref_extra_weight;
 
 	for (i = 0; i < usable_segs_per_sec; i++)
 		mtime += get_seg_entry(sbi, start + i)->mtime;
 	vblocks = get_valid_blocks(sbi, segno, true);
+	mblocks = get_mulref_blocks(sbi, segno, true);
 
 	mtime = div_u64(mtime, usable_segs_per_sec);
 	vblocks = div_u64(vblocks, usable_segs_per_sec);
@@ -341,7 +350,45 @@ static unsigned int get_cb_cost(struct f2fs_sb_info *sbi, unsigned int segno)
 		age = 100 - div64_u64(100 * (mtime - sit_i->min_mtime),
 				sit_i->max_mtime - sit_i->min_mtime);
 
-	return UINT_MAX - ((100 * (100 - u) * age) / (100 + u));
+	base_cost = UINT_MAX - ((100 * (100 - u) * age) / (100 + u));
+
+	/*
+	 * Mulref penalty for CB mode:
+	 *
+	 * CB 算法基于 (free_space * age) / utilization 选择 victim
+	 * 我们需要对多引用块增加惩罚，使其不容易被选中
+	 *
+	 * 策略：根据多引用块占比增加 cost
+	 * mulref_penalty = weight * (mblocks / vblocks) * penalty_base
+	 *
+	 * 其中 penalty_base 根据 base_cost 的剩余空间计算
+	 */
+	if (vblocks > 0 && mblocks > 0 && weight > 0) {
+		unsigned int mulref_ratio;
+		unsigned int mulref_penalty;
+		unsigned int penalty_base;
+
+		/* 多引用块占有效块的百分比 (0-100) */
+		mulref_ratio = (mblocks * 100) / vblocks;
+		if (mulref_ratio > 100)
+			mulref_ratio = 100;
+
+		/*
+		 * penalty_base = 可用的惩罚空间
+		 * 最大惩罚 = weight * 25% 的剩余空间
+		 * weight=1 时最大惩罚 25%，weight=2 时最大惩罚 50%
+		 */
+		penalty_base = (UINT_MAX - base_cost) / 4;
+		mulref_penalty = (mulref_ratio * penalty_base * weight) / 100;
+
+		/* 防止溢出 */
+		if (base_cost < UINT_MAX - mulref_penalty)
+			base_cost += mulref_penalty;
+		else
+			base_cost = UINT_MAX - 1;
+	}
+
+	return base_cost;
 }
 
 static inline unsigned int get_gc_cost(struct f2fs_sb_info *sbi,
@@ -351,10 +398,35 @@ static inline unsigned int get_gc_cost(struct f2fs_sb_info *sbi,
 		return get_seg_entry(sbi, segno)->ckpt_valid_blocks;
 
 	/* alloc_mode == LFS */
-	if (p->gc_mode == GC_GREEDY)
-		return get_valid_blocks(sbi, segno, true);
-	else if (p->gc_mode == GC_CB)
+	if (p->gc_mode == GC_GREEDY) {
+		unsigned int vblocks = get_valid_blocks(sbi, segno, true);
+		unsigned int mblocks = get_mulref_blocks(sbi, segno, true);
+		unsigned int weight = DEF_GC_MULREF_EXTRA_WEIGHT;
+
+		/* 使用 gc_thread 中的可配置权重 */
+		if (sbi->gc_thread)
+			weight = sbi->gc_thread->mulref_extra_weight;
+
+		/*
+		 * GREEDY 模式优化：考虑多引用块
+		 *
+		 * cost = valid_blocks + weight * mulref_blocks
+		 *      = single_ref + (1 + weight) * mulref
+		 *
+		 * 其中：
+		 * - valid_blocks = single_ref + mulref (总迁移量)
+		 * - mulref_blocks 是 valid_blocks 的子集
+		 * - weight 是多引用块的额外惩罚系数
+		 *
+		 * 效果：
+		 * - weight=0: 不考虑多引用，等同原始算法
+		 * - weight=1: 多引用块代价是单引用块的 2 倍 (默认)
+		 * - weight=2: 多引用块代价是单引用块的 3 倍
+		 */
+		return vblocks + weight * mblocks;
+	} else if (p->gc_mode == GC_CB) {
 		return get_cb_cost(sbi, segno);
+	}
 
 	f2fs_bug_on(sbi, 1);
 	return 0;

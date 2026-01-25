@@ -4261,3 +4261,488 @@ void f2fs_dump_nonzero_sit_mulref_entries_simple(struct f2fs_sb_info *sbi)
     pr_info("Total: %u/%u entries have non-zero bitmap\n",
             nonzero_count, total_segments);
 }
+
+/*
+ * ============================================================================
+ * Mulref Compact Thread - 整理分散的 mulref entries
+ * ============================================================================
+ */
+
+#define DEF_MULREF_MIN_SLEEP_TIME	30000	/* 30 seconds */
+#define DEF_MULREF_MAX_SLEEP_TIME	60000	/* 60 seconds */
+#define DEF_MULREF_NO_WORK_SLEEP	120000	/* 2 minutes */
+#define DEF_MULREF_USAGE_THRESHOLD	90	/* warn when 90% used */
+#define DEF_MULREF_COMPACT_THRESHOLD	30	/* compact when 30% fragmented */
+
+/*
+ * 统计 mulref 区域的使用情况
+ */
+static void mulref_collect_stats(struct f2fs_sb_info *sbi,
+				 struct f2fs_mulref_compact_kthread *mt)
+{
+	struct f2fs_sm_info *sm = SM_I(sbi);
+	block_t start_addr = sbi->magic_info->mulref_blkaddr;
+	block_t end_addr = sm->ssa_blkaddr;
+	unsigned int total_blocks = end_addr - start_addr;
+	unsigned int used_blocks = 0;
+	unsigned int total_entries = 0;
+	unsigned int used_entries = 0;
+	unsigned int i, j;
+	struct page *page;
+	struct f2fs_mulref_block *blk;
+
+	for (i = 0; i < total_blocks; i++) {
+		u16 valid_in_block = 0;
+
+		page = f2fs_get_meta_page(sbi, start_addr + i);
+		if (IS_ERR(page))
+			continue;
+
+		blk = (struct f2fs_mulref_block *)page_address(page);
+
+		/* 统计这个块中的有效 entry */
+		for (j = 0; j < MRENTRY_PER_BLOCK; j++) {
+			if (f2fs_test_bit(j, (char *)blk->multi_bitmap))
+				valid_in_block++;
+		}
+
+		if (valid_in_block > 0)
+			used_blocks++;
+
+		used_entries += valid_in_block;
+		total_entries += MRENTRY_PER_BLOCK;
+
+		f2fs_put_page(page, 1);
+	}
+
+	mt->total_blocks = total_blocks;
+	mt->used_blocks = used_blocks;
+	mt->total_entries = total_entries;
+	mt->used_entries = used_entries;
+}
+
+/*
+ * 获取 mulref 统计信息（供外部调用）
+ */
+int f2fs_mulref_get_stats(struct f2fs_sb_info *sbi, unsigned int *used,
+			  unsigned int *total, unsigned int *usage_percent)
+{
+	struct f2fs_mulref_compact_kthread *mt;
+
+	if (!SM_I(sbi))
+		return -EINVAL;
+
+	mt = sbi->mulref_compact_thread;
+	if (!mt)
+		return -EINVAL;
+
+	if (used)
+		*used = mt->used_entries;
+	if (total)
+		*total = mt->total_entries;
+	if (usage_percent && mt->total_entries > 0)
+		*usage_percent = (mt->used_entries * 100) / mt->total_entries;
+
+	return 0;
+}
+
+/*
+ * 计算碎片率
+ * 碎片率 = (实际使用的块数 - 理想块数) / 实际使用的块数 * 100
+ */
+static unsigned int calc_fragmentation(struct f2fs_mulref_compact_kthread *mt)
+{
+	unsigned int ideal_blocks;
+
+	if (mt->used_blocks == 0 || mt->used_entries == 0)
+		return 0;
+
+	/* 理想情况：所有 entry 紧凑存放需要的最少块数 */
+	ideal_blocks = (mt->used_entries + MRENTRY_PER_BLOCK - 1) / MRENTRY_PER_BLOCK;
+
+	if (mt->used_blocks <= ideal_blocks)
+		return 0;
+
+	return ((mt->used_blocks - ideal_blocks) * 100) / mt->used_blocks;
+}
+
+/*
+ * 检查是否需要整理
+ */
+static bool need_mulref_compact(struct f2fs_sb_info *sbi,
+				struct f2fs_mulref_compact_kthread *mt)
+{
+	unsigned int frag_rate;
+	unsigned int usage_percent;
+
+	/* 收集最新统计 */
+	mulref_collect_stats(sbi, mt);
+
+	/* 检查使用率 */
+	if (mt->total_entries > 0) {
+		usage_percent = (mt->used_entries * 100) / mt->total_entries;
+		if (usage_percent >= mt->usage_threshold) {
+			pr_warn("[mulref compact]: WARNING! usage=%u%% (threshold=%u%%)\n",
+				usage_percent, mt->usage_threshold);
+		}
+	}
+
+	/* 紧急模式直接返回需要整理 */
+	if (mt->urgent) {
+		pr_info("[mulref compact]: urgent mode triggered\n");
+		return true;
+	}
+
+	/* 检查碎片率 */
+	frag_rate = calc_fragmentation(mt);
+	if (frag_rate >= mt->compact_threshold) {
+		pr_info("[mulref compact]: frag_rate=%u%% >= threshold=%u%%, need compact\n",
+			frag_rate, mt->compact_threshold);
+		return true;
+	}
+
+	return false;
+}
+
+/*
+ * 找到一个有空闲位置的目标块
+ * 返回块地址，如果没找到返回 0
+ */
+static block_t find_dst_block(struct f2fs_sb_info *sbi, block_t start,
+			      block_t end, block_t exclude)
+{
+	block_t addr;
+	struct page *page;
+	struct f2fs_mulref_block *blk;
+
+	for (addr = start; addr < end; addr++) {
+		u16 valid_count;
+
+		if (addr == exclude)
+			continue;
+
+		page = f2fs_get_meta_page(sbi, addr);
+		if (IS_ERR(page))
+			continue;
+
+		blk = (struct f2fs_mulref_block *)page_address(page);
+		valid_count = le16_to_cpu(blk->v_mrentrys);
+		f2fs_put_page(page, 1);
+
+		/* 找到一个未满的块 */
+		if (valid_count < MRENTRY_PER_BLOCK)
+			return addr;
+	}
+
+	return 0;
+}
+
+/*
+ * 将源块中的有效 entry 迁移到目标块
+ * 注意：这里不更新 summary，因为 mulref entry 的位置变化
+ *       不影响数据块的 summary（summary 指向链表头）
+ *
+ * 返回迁移的 entry 数量
+ */
+static int migrate_entries(struct f2fs_sb_info *sbi,
+			   block_t src_addr, block_t dst_addr)
+{
+	struct f2fs_sm_info *sm = SM_I(sbi);
+	struct page *src_page, *dst_page;
+	struct f2fs_mulref_block *src_blk, *dst_blk;
+	int migrated = 0;
+	u16 src_idx, dst_idx;
+
+	if (src_addr == dst_addr)
+		return 0;
+
+	src_page = f2fs_get_meta_page(sbi, src_addr);
+	if (IS_ERR(src_page))
+		return 0;
+
+	dst_page = f2fs_get_meta_page(sbi, dst_addr);
+	if (IS_ERR(dst_page)) {
+		f2fs_put_page(src_page, 1);
+		return 0;
+	}
+
+	src_blk = (struct f2fs_mulref_block *)page_address(src_page);
+	dst_blk = (struct f2fs_mulref_block *)page_address(dst_page);
+
+	down_write(&sm->curmulref_lock);
+
+	dst_idx = 0;
+	for (src_idx = 0; src_idx < MRENTRY_PER_BLOCK; src_idx++) {
+		/* 跳过无效 entry */
+		if (!f2fs_test_bit(src_idx, (char *)src_blk->multi_bitmap))
+			continue;
+
+		/* 在目标块找空闲位 */
+		while (dst_idx < MRENTRY_PER_BLOCK &&
+		       f2fs_test_bit(dst_idx, (char *)dst_blk->multi_bitmap)) {
+			dst_idx++;
+		}
+
+		if (dst_idx >= MRENTRY_PER_BLOCK)
+			break;  /* 目标块已满 */
+
+		/* 复制 entry */
+		memcpy(&dst_blk->mrentries[dst_idx],
+		       &src_blk->mrentries[src_idx],
+		       sizeof(struct f2fs_mulref_entry));
+
+		/* 更新 bitmap */
+		f2fs_set_bit(dst_idx, (char *)dst_blk->multi_bitmap);
+		f2fs_clear_bit(src_idx, (char *)src_blk->multi_bitmap);
+
+		/* 更新计数 */
+		dst_blk->v_mrentrys = cpu_to_le16(le16_to_cpu(dst_blk->v_mrentrys) + 1);
+		if (le16_to_cpu(src_blk->v_mrentrys) > 0)
+			src_blk->v_mrentrys = cpu_to_le16(le16_to_cpu(src_blk->v_mrentrys) - 1);
+
+		migrated++;
+		dst_idx++;
+	}
+
+	up_write(&sm->curmulref_lock);
+
+	if (migrated > 0) {
+		set_page_dirty(src_page);
+		set_page_dirty(dst_page);
+	}
+
+	f2fs_put_page(src_page, 1);
+	f2fs_put_page(dst_page, 1);
+
+	return migrated;
+}
+
+/*
+ * 执行整理操作
+ * 策略：从后向前扫描，将有效 entry 迁移到前面的块中
+ */
+static int do_mulref_compact(struct f2fs_sb_info *sbi)
+{
+	struct f2fs_sm_info *sm = SM_I(sbi);
+	struct f2fs_mulref_compact_kthread *mt = sbi->mulref_compact_thread;
+	block_t start_addr = sbi->magic_info->mulref_blkaddr;
+	block_t end_addr = sm->ssa_blkaddr;
+	block_t src_addr, dst_addr;
+	int total_migrated = 0;
+	int ret;
+	struct page *page;
+	struct f2fs_mulref_block *blk;
+
+	pr_info("[mulref compact]: starting compaction, range [%u, %u)\n",
+		start_addr, end_addr);
+	pr_info("[mulref compact]: before: used_blocks=%u, used_entries=%u, frag=%u%%\n",
+		mt->used_blocks, mt->used_entries, calc_fragmentation(mt));
+
+	dst_addr = start_addr;
+
+	/* 从后向前扫描源块 */
+	for (src_addr = end_addr - 1; src_addr > dst_addr; src_addr--) {
+		u16 valid_count;
+
+		/* 检查源块是否有有效 entry */
+		page = f2fs_get_meta_page(sbi, src_addr);
+		if (IS_ERR(page))
+			continue;
+
+		blk = (struct f2fs_mulref_block *)page_address(page);
+		valid_count = le16_to_cpu(blk->v_mrentrys);
+		f2fs_put_page(page, 1);
+
+		if (valid_count == 0)
+			continue;
+
+		/* 找一个未满的目标块 */
+		dst_addr = find_dst_block(sbi, dst_addr, src_addr, src_addr);
+		if (dst_addr == 0 || dst_addr >= src_addr)
+			break;
+
+		/* 迁移 */
+		ret = migrate_entries(sbi, src_addr, dst_addr);
+		if (ret > 0) {
+			total_migrated += ret;
+			if (SNAPFS_DEBUG)
+				pr_info("[mulref compact]: migrated %d entries from blk %u to %u\n",
+					ret, src_addr, dst_addr);
+		}
+
+		/* 让出 CPU */
+		cond_resched();
+
+		/* 检查是否应该停止 */
+		if (kthread_should_stop())
+			break;
+	}
+
+	mt->compacted_entries += total_migrated;
+
+	/* 重新收集统计 */
+	mulref_collect_stats(sbi, mt);
+
+	pr_info("[mulref compact]: done, migrated %d entries\n", total_migrated);
+	pr_info("[mulref compact]: after: used_blocks=%u, used_entries=%u, frag=%u%%\n",
+		mt->used_blocks, mt->used_entries, calc_fragmentation(mt));
+
+	return total_migrated;
+}
+
+/*
+ * mulref 整理线程主函数
+ */
+static int mulref_compact_thread_func(void *data)
+{
+	struct f2fs_sb_info *sbi = data;
+	struct f2fs_mulref_compact_kthread *mt = sbi->mulref_compact_thread;
+	wait_queue_head_t *wq = &mt->mulref_wait_queue;
+	unsigned int wait_ms;
+
+	set_freezable();
+
+	/* 启动时先收集一次统计 */
+	mulref_collect_stats(sbi, mt);
+	pr_info("[mulref compact]: initial stats: total_blocks=%u, used_blocks=%u, "
+		"total_entries=%u, used_entries=%u\n",
+		mt->total_blocks, mt->used_blocks,
+		mt->total_entries, mt->used_entries);
+
+	do {
+		wait_ms = mt->no_work_sleep_time;
+
+		/* 等待唤醒或超时 */
+		wait_event_interruptible_timeout(*wq,
+			kthread_should_stop() || freezing(current) || mt->urgent,
+			msecs_to_jiffies(wait_ms));
+
+		if (kthread_should_stop())
+			break;
+
+		if (try_to_freeze())
+			continue;
+
+		/* 检查文件系统状态 */
+		if (unlikely(f2fs_cp_error(sbi))) {
+			pr_err("[mulref compact]: CP error, stopping\n");
+			break;
+		}
+
+		if (f2fs_readonly(sbi->sb))
+			continue;
+
+		/* 判断是否需要整理 */
+		if (!need_mulref_compact(sbi, mt)) {
+			mt->urgent = false;
+			continue;
+		}
+
+		/* 执行整理 */
+		do_mulref_compact(sbi);
+
+		/* 重置紧急标志 */
+		mt->urgent = false;
+
+	} while (!kthread_should_stop());
+
+	return 0;
+}
+
+/*
+ * 启动 mulref 整理线程
+ */
+int f2fs_start_mulref_compact_thread(struct f2fs_sb_info *sbi)
+{
+	struct f2fs_mulref_compact_kthread *mt;
+	dev_t dev = sbi->sb->s_bdev->bd_dev;
+	int err = 0;
+
+	/* 检查 mulref 区域是否存在 */
+	if (!sbi->magic_info || sbi->magic_info->mulref_blkaddr == 0) {
+		pr_info("[mulref compact]: no mulref area, skip thread creation\n");
+		return 0;
+	}
+
+	mt = f2fs_kzalloc(sbi, sizeof(struct f2fs_mulref_compact_kthread), GFP_KERNEL);
+	if (!mt) {
+		err = -ENOMEM;
+		goto out;
+	}
+
+	/* 初始化参数 */
+	mt->min_sleep_time = DEF_MULREF_MIN_SLEEP_TIME;
+	mt->max_sleep_time = DEF_MULREF_MAX_SLEEP_TIME;
+	mt->no_work_sleep_time = DEF_MULREF_NO_WORK_SLEEP;
+	mt->usage_threshold = DEF_MULREF_USAGE_THRESHOLD;
+	mt->compact_threshold = DEF_MULREF_COMPACT_THRESHOLD;
+
+	/* 初始化统计 */
+	mt->total_blocks = 0;
+	mt->used_blocks = 0;
+	mt->total_entries = 0;
+	mt->used_entries = 0;
+	mt->compacted_entries = 0;
+
+	/* 初始化状态 */
+	mt->urgent = false;
+
+	init_waitqueue_head(&mt->mulref_wait_queue);
+
+	sbi->mulref_compact_thread = mt;
+
+	/* 创建内核线程 */
+	mt->f2fs_mulref_task = kthread_run(mulref_compact_thread_func, sbi,
+					   "f2fs_mulref-%u:%u",
+					   MAJOR(dev), MINOR(dev));
+	if (IS_ERR(mt->f2fs_mulref_task)) {
+		err = PTR_ERR(mt->f2fs_mulref_task);
+		kfree(mt);
+		sbi->mulref_compact_thread = NULL;
+		goto out;
+	}
+
+	pr_info("[mulref compact]: thread started for device %u:%u\n",
+		MAJOR(dev), MINOR(dev));
+
+out:
+	return err;
+}
+
+/*
+ * 停止 mulref 整理线程
+ */
+void f2fs_stop_mulref_compact_thread(struct f2fs_sb_info *sbi)
+{
+	struct f2fs_mulref_compact_kthread *mt = sbi->mulref_compact_thread;
+
+	if (!mt)
+		return;
+
+	if (mt->f2fs_mulref_task) {
+		kthread_stop(mt->f2fs_mulref_task);
+		mt->f2fs_mulref_task = NULL;
+	}
+
+	pr_info("[mulref compact]: thread stopped, total compacted entries=%u\n",
+		mt->compacted_entries);
+
+	kfree(mt);
+	sbi->mulref_compact_thread = NULL;
+}
+
+/*
+ * 唤醒 mulref 整理线程
+ */
+void f2fs_wakeup_mulref_compact_thread(struct f2fs_sb_info *sbi, bool urgent)
+{
+	struct f2fs_mulref_compact_kthread *mt = sbi->mulref_compact_thread;
+
+	if (!mt || !mt->f2fs_mulref_task)
+		return;
+
+	if (urgent)
+		mt->urgent = true;
+
+	wake_up_interruptible(&mt->mulref_wait_queue);
+}

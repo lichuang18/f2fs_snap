@@ -22,6 +22,24 @@
 #define DEF_GC_THREAD_AGE_WEIGHT		60	/* age weight */
 #define DEFAULT_ACCURACY_CLASS			10000	/* accuracy class */
 
+/*
+ * Mulref block extra weight for GC victim selection
+ *
+ * When selecting victim segment, mulref blocks have higher migration cost
+ * because they need to update mulref entry chain and potentially affect
+ * multiple snapshots.
+ *
+ * cost = valid_blocks + MULREF_EXTRA_WEIGHT * mulref_blocks
+ *      = single_ref_blocks + (1 + MULREF_EXTRA_WEIGHT) * mulref_blocks
+ *
+ * Examples:
+ *   MULREF_EXTRA_WEIGHT = 0: mulref cost = 1x (same as single ref, no penalty)
+ *   MULREF_EXTRA_WEIGHT = 1: mulref cost = 2x (default)
+ *   MULREF_EXTRA_WEIGHT = 2: mulref cost = 3x (stronger penalty)
+ *   MULREF_EXTRA_WEIGHT = 3: mulref cost = 4x (very strong penalty)
+ */
+#define DEF_GC_MULREF_EXTRA_WEIGHT	1	/* default: mulref cost = 2x */
+
 #define LIMIT_INVALID_BLOCK	40 /* percentage over total user space */
 #define LIMIT_FREE_BLOCK	40 /* percentage over invalid + free space */
 
@@ -42,6 +60,9 @@ struct f2fs_gc_kthread {
 
 	/* for changing gc mode */
 	unsigned int gc_wake;
+
+	/* mulref block extra weight for victim selection */
+	unsigned int mulref_extra_weight;
 
 	/* for GC_MERGE mount option */
 	wait_queue_head_t fggc_wq;		/*

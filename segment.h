@@ -401,6 +401,45 @@ static inline unsigned int get_ckpt_valid_blocks(struct f2fs_sb_info *sbi,
 	return get_seg_entry(sbi, segno)->ckpt_valid_blocks;
 }
 
+/*
+ * 获取 segment 中多引用块的数量
+ */
+static inline unsigned int get_seg_mulref_blocks(struct f2fs_sb_info *sbi,
+						 unsigned int segno)
+{
+	struct sit_mulref_info *smi = SIT_MR_I(sbi);
+	struct sit_mulref_entry *me;
+	unsigned int mblocks = 0;
+
+	if (!smi || !smi->smentries)
+		return 0;
+
+	down_read(&smi->smentry_lock);
+	me = &smi->smentries[segno];
+	mblocks = le16_to_cpu(me->mblocks);
+	up_read(&smi->smentry_lock);
+
+	return mblocks;
+}
+
+/*
+ * 获取 section 中多引用块的数量
+ */
+static inline unsigned int get_mulref_blocks(struct f2fs_sb_info *sbi,
+					     unsigned int segno, bool use_section)
+{
+	if (use_section && __is_large_section(sbi)) {
+		unsigned int start_segno = START_SEGNO(segno);
+		unsigned int blocks = 0;
+		int i;
+
+		for (i = 0; i < sbi->segs_per_sec; i++, start_segno++)
+			blocks += get_seg_mulref_blocks(sbi, start_segno);
+		return blocks;
+	}
+	return get_seg_mulref_blocks(sbi, segno);
+}
+
 static inline void seg_info_from_raw_sit(struct seg_entry *se,
 					struct f2fs_sit_entry *rs)
 {

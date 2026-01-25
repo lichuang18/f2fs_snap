@@ -1586,6 +1586,9 @@ static void f2fs_put_super(struct super_block *sb)
 	 */
 	f2fs_stop_ckpt_thread(sbi);
 
+	/* Stop mulref compact thread */
+	f2fs_stop_mulref_compact_thread(sbi);
+
 	/*
 	 * We don't need to do checkpoint when superblock is clean.
 	 * But, the previous checkpoint was not done by umount, it needs to do
@@ -4403,6 +4406,15 @@ reset_checkpoint:
 		if (err)
 			goto sync_free_meta;
 	}
+
+	/* Start mulref compact thread */
+	if (!f2fs_readonly(sb)) {
+		err = f2fs_start_mulref_compact_thread(sbi);
+		if (err)
+			f2fs_warn(sbi, "failed to start mulref compact thread");
+		/* 不作为致命错误，继续挂载 */
+	}
+
 	kvfree(options);
 
 	/* recover broken superblock */

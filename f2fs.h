@@ -1081,6 +1081,31 @@ struct curmulref_info {
 	// struct page *page;
 };
 
+/* Mulref compact thread for entry compaction */
+struct f2fs_mulref_compact_kthread {
+	struct task_struct *f2fs_mulref_task;
+	wait_queue_head_t mulref_wait_queue;
+
+	/* sleep time control */
+	unsigned int min_sleep_time;      /* min sleep time (ms) */
+	unsigned int max_sleep_time;      /* max sleep time (ms) */
+	unsigned int no_work_sleep_time;  /* sleep time when no work (ms) */
+
+	/* thresholds */
+	unsigned int usage_threshold;     /* usage % to trigger warning (e.g. 90) */
+	unsigned int compact_threshold;   /* fragmentation % to trigger compact */
+
+	/* statistics */
+	unsigned int total_blocks;        /* total mulref blocks */
+	unsigned int used_blocks;         /* blocks with valid entries */
+	unsigned int total_entries;       /* total entry slots */
+	unsigned int used_entries;        /* used entry count */
+	unsigned int compacted_entries;   /* entries compacted so far */
+
+	/* state */
+	bool urgent;                      /* urgent mode flag */
+};
+
 struct f2fs_sm_info {
 	struct sit_info *sit_info;		/*- whole segment information */
 	struct free_segmap_info *free_info;	/* free segment information */
@@ -1767,6 +1792,7 @@ struct f2fs_sb_info {
 						 * race between GC and GC or CP
 						 */
 	struct f2fs_gc_kthread	*gc_thread;	/* GC thread */
+	struct f2fs_mulref_compact_kthread *mulref_compact_thread; /* mulref compact thread */
 	struct atgc_management am;		/* atgc management */
 	unsigned int cur_victim_sec;		/* current victim section num */
 	unsigned int gc_mode;			/* current GC state */
