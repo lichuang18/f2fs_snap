@@ -27,7 +27,6 @@
 
 
 void update_f2fs_inode(struct f2fs_inode *src_fi,struct f2fs_inode *new_fi){
-	int idx = 0;
 	new_fi->i_mode = src_fi->i_mode;
 	new_fi->i_advise = src_fi->i_advise;
 	new_fi->i_inline = src_fi->i_inline;
@@ -53,10 +52,9 @@ void update_f2fs_inode(struct f2fs_inode *src_fi,struct f2fs_inode *new_fi){
 	new_fi->i_dir_level = src_fi->i_dir_level;
 	// 复制extent信息
 	memcpy(&new_fi->i_ext, &src_fi->i_ext, sizeof(struct f2fs_extent));
-	
-	for (idx = 0; idx < 5; idx++) {
-		new_fi->i_nid[idx] = src_fi->i_nid[idx];
-	}
+
+	// 不再复制 i_nid[0-4]，由 f2fs cow copy_all_nodes() 单独处理
+	// 只复制直接数据块地址
 	memcpy(new_fi->i_addr, src_fi->i_addr, sizeof(src_fi->i_addr));
 }
 void update_f2fs_inode_inline(struct f2fs_inode *src_fi,struct f2fs_inode *new_fi){
@@ -85,6 +83,539 @@ void update_f2fs_inode_inline(struct f2fs_inode *src_fi,struct f2fs_inode *new_f
 	new_fi->i_dir_level = src_fi->i_dir_level;
 	// 复制extent信息
 	memcpy(&new_fi->i_ext, &src_fi->i_ext, sizeof(struct f2fs_extent));
+}
+
+/*
+ * Node offset 定义 (参考 node.h 注释):
+ *   Inode block (0)
+ *     |- direct node (1)           <- i_nid[0]
+ *     |- direct node (2)           <- i_nid[1]
+ *     |- indirect node (3)         <- i_nid[2]
+ *     |            `- direct node (4 => 4 + N - 1)
+ *     |- indirect node (4 + N)     <- i_nid[3]
+ *     |            `- direct node (5 + N => 5 + 2N - 1)
+ *     `- double indirect node (5 + 2N)  <- i_nid[4]
+ *                  `- indirect node (6 + 2N)
+ *                        `- direct node
+ *   其中 N = NIDS_PER_BLOCK = 1018
+ */
+#define NODE_OFS_DIRECT_0       1
+#define NODE_OFS_DIRECT_1       2
+#define NODE_OFS_INDIRECT_0     3
+#define NODE_OFS_INDIRECT_1     (4 + NIDS_PER_BLOCK)
+#define NODE_OFS_DINDIRECT      (5 + 2 * NIDS_PER_BLOCK)
+
+/**
+ * f2fs_cow_copy_direct_node - 复制一个 direct_node
+ * @sbi: 超级块信息
+ * @src_nid: 源 node 的 nid
+ * @snap_inode: 快照 inode
+ * @ofs: node offset
+ *
+ * 为快照创建一个新的 direct_node，复制源 node 的 addr[] 数组。
+ * 数据块地址保持不变（通过 mulref 机制共享）。
+ *
+ * 返回: 新分配的 nid，失败返回 0
+ */
+static nid_t f2fs_cow_copy_direct_node(struct f2fs_sb_info *sbi,
+                                        nid_t src_nid,
+                                        struct inode *snap_inode,
+                                        unsigned int ofs)
+{
+	struct page *src_page = NULL;
+	struct page *new_page = NULL;
+	struct f2fs_node *src_rn, *new_rn;
+	struct direct_node dn_copy;
+	struct node_info new_ni;
+	nid_t new_nid = 0;
+	int err;
+
+	if (src_nid == 0)
+		return 0;
+
+	/* 1. 分配新的 nid */
+	if (!f2fs_alloc_nid(sbi, &new_nid)) {
+		pr_err("[snapfs cow_node]: failed to alloc nid for direct_node\n");
+		return 0;
+	}
+
+	/* 2. 读取源 node page，复制内容后立即释放 */
+	src_page = f2fs_get_node_page(sbi, src_nid);
+	if (IS_ERR(src_page)) {
+		pr_err("[snapfs cow_node]: failed to get src direct_node page, nid=%u\n", src_nid);
+		f2fs_alloc_nid_failed(sbi, new_nid);
+		return 0;
+	}
+	src_rn = F2FS_NODE(src_page);
+	/* 复制到栈上，然后立即释放源页面锁 */
+	memcpy(&dn_copy, &src_rn->dn, sizeof(struct direct_node));
+	f2fs_put_page(src_page, 1);
+	src_page = NULL;
+
+	/* 3. 创建新的 node page */
+	new_page = f2fs_grab_cache_page(NODE_MAPPING(sbi), new_nid, false);
+	if (!new_page) {
+		pr_err("[snapfs cow_node]: failed to grab cache page for new direct_node\n");
+		f2fs_alloc_nid_failed(sbi, new_nid);
+		return 0;
+	}
+
+	/* 4. 增加有效 node 计数 */
+	err = inc_valid_node_count(sbi, snap_inode, false);
+	if (err) {
+		pr_err("[snapfs cow_node]: failed to inc_valid_node_count\n");
+		f2fs_put_page(new_page, 1);
+		f2fs_alloc_nid_failed(sbi, new_nid);
+		return 0;
+	}
+
+	/* 5. 复制 direct_node 内容（从栈上的副本） */
+	new_rn = F2FS_NODE(new_page);
+	memcpy(&new_rn->dn, &dn_copy, sizeof(struct direct_node));
+
+	/* 6. 设置新的 node footer */
+	fill_node_footer(new_page, new_nid, snap_inode->i_ino, ofs, false);
+	set_cold_node(new_page, S_ISDIR(snap_inode->i_mode));
+
+	/* 7. 设置 NAT 映射 */
+	new_ni.nid = new_nid;
+	new_ni.ino = snap_inode->i_ino;
+	new_ni.blk_addr = NULL_ADDR;
+	new_ni.flag = 0;
+	new_ni.version = 0;
+	set_node_addr(sbi, &new_ni, NEW_ADDR, false);
+
+	/* 8. 标记页面为最新并设置脏 */
+	if (!PageUptodate(new_page))
+		SetPageUptodate(new_page);
+	set_page_dirty(new_page);
+
+	/* 9. 完成 nid 分配 */
+	f2fs_alloc_nid_done(sbi, new_nid);
+
+	/* 10. 释放页面 */
+	f2fs_put_page(new_page, 1);
+
+	if (SNAPFS_DEBUG)
+		pr_info("[snapfs cow_node]: copied direct_node src_nid=%u -> new_nid=%u, ofs=%u\n",
+			src_nid, new_nid, ofs);
+
+	return new_nid;
+}
+
+/**
+ * f2fs_cow_copy_indirect_node - 复制一个 indirect_node 及其所有子 direct_node
+ * @sbi: 超级块信息
+ * @src_nid: 源 indirect_node 的 nid
+ * @snap_inode: 快照 inode
+ * @ofs: indirect_node 的 offset
+ * @base_child_ofs: 子 direct_node 的起始 offset
+ *
+ * 递归复制 indirect_node 及其下属的所有 direct_node。
+ * 注意：为避免死锁，先收集所有子 nid，释放锁后再递归处理。
+ *
+ * 返回: 新分配的 nid，失败返回 0
+ */
+static nid_t f2fs_cow_copy_indirect_node(struct f2fs_sb_info *sbi,
+                                          nid_t src_nid,
+                                          struct inode *snap_inode,
+                                          unsigned int ofs,
+                                          unsigned int base_child_ofs)
+{
+	struct page *src_page = NULL;
+	struct page *new_page = NULL;
+	struct f2fs_node *src_rn, *new_rn;
+	struct node_info new_ni;
+	nid_t new_nid = 0;
+	nid_t child_nid, new_child_nid;
+	nid_t *child_nids = NULL;  /* 临时数组存储子 nid */
+	nid_t *new_child_nids = NULL;  /* 临时数组存储新子 nid */
+	int i, err;
+
+	if (src_nid == 0)
+		return 0;
+
+	/* 分配临时数组 */
+	child_nids = kvmalloc(NIDS_PER_BLOCK * sizeof(nid_t), GFP_KERNEL);
+	if (!child_nids) {
+		pr_err("[snapfs cow_node]: failed to alloc child_nids array\n");
+		return 0;
+	}
+	new_child_nids = kvmalloc(NIDS_PER_BLOCK * sizeof(nid_t), GFP_KERNEL);
+	if (!new_child_nids) {
+		pr_err("[snapfs cow_node]: failed to alloc new_child_nids array\n");
+		kvfree(child_nids);
+		return 0;
+	}
+	memset(new_child_nids, 0, NIDS_PER_BLOCK * sizeof(nid_t));
+
+	/* 1. 分配新的 nid */
+	if (!f2fs_alloc_nid(sbi, &new_nid)) {
+		pr_err("[snapfs cow_node]: failed to alloc nid for indirect_node\n");
+		kvfree(child_nids);
+		kvfree(new_child_nids);
+		return 0;
+	}
+
+	/* 2. 读取源 indirect_node page，复制子 nid 数组后立即释放 */
+	src_page = f2fs_get_node_page(sbi, src_nid);
+	if (IS_ERR(src_page)) {
+		pr_err("[snapfs cow_node]: failed to get src indirect_node page, nid=%u\n", src_nid);
+		f2fs_alloc_nid_failed(sbi, new_nid);
+		kvfree(child_nids);
+		kvfree(new_child_nids);
+		return 0;
+	}
+	src_rn = F2FS_NODE(src_page);
+	/* 复制所有子 nid 到临时数组 */
+	for (i = 0; i < NIDS_PER_BLOCK; i++) {
+		child_nids[i] = le32_to_cpu(src_rn->in.nid[i]);
+	}
+	f2fs_put_page(src_page, 1);
+	src_page = NULL;
+
+	/* 3. 递归复制所有子 direct_node（此时不持有任何 page 锁） */
+	for (i = 0; i < NIDS_PER_BLOCK; i++) {
+		child_nid = child_nids[i];
+		if (child_nid == 0) {
+			new_child_nids[i] = 0;
+			continue;
+		}
+
+		new_child_nid = f2fs_cow_copy_direct_node(sbi, child_nid, snap_inode,
+		                                           base_child_ofs + i);
+		if (new_child_nid == 0) {
+			pr_err("[snapfs cow_node]: failed to copy child direct_node[%d]\n", i);
+			/* 继续处理其他节点，不中断 */
+		}
+		new_child_nids[i] = new_child_nid;
+	}
+
+	/* 4. 创建新的 indirect node page */
+	new_page = f2fs_grab_cache_page(NODE_MAPPING(sbi), new_nid, false);
+	if (!new_page) {
+		pr_err("[snapfs cow_node]: failed to grab cache page for new indirect_node\n");
+		f2fs_alloc_nid_failed(sbi, new_nid);
+		kvfree(child_nids);
+		kvfree(new_child_nids);
+		return 0;
+	}
+
+	/* 5. 增加有效 node 计数 */
+	err = inc_valid_node_count(sbi, snap_inode, false);
+	if (err) {
+		pr_err("[snapfs cow_node]: failed to inc_valid_node_count for indirect\n");
+		f2fs_put_page(new_page, 1);
+		f2fs_alloc_nid_failed(sbi, new_nid);
+		kvfree(child_nids);
+		kvfree(new_child_nids);
+		return 0;
+	}
+
+	new_rn = F2FS_NODE(new_page);
+
+	/* 6. 填充新 indirect_node 的子 nid 数组 */
+	for (i = 0; i < NIDS_PER_BLOCK; i++) {
+		new_rn->in.nid[i] = cpu_to_le32(new_child_nids[i]);
+	}
+
+	/* 7. 设置新的 node footer */
+	fill_node_footer(new_page, new_nid, snap_inode->i_ino, ofs, false);
+	set_cold_node(new_page, S_ISDIR(snap_inode->i_mode));
+
+	/* 8. 设置 NAT 映射 */
+	new_ni.nid = new_nid;
+	new_ni.ino = snap_inode->i_ino;
+	new_ni.blk_addr = NULL_ADDR;
+	new_ni.flag = 0;
+	new_ni.version = 0;
+	set_node_addr(sbi, &new_ni, NEW_ADDR, false);
+
+	/* 9. 标记页面为最新并设置脏 */
+	if (!PageUptodate(new_page))
+		SetPageUptodate(new_page);
+	set_page_dirty(new_page);
+
+	/* 10. 完成 nid 分配 */
+	f2fs_alloc_nid_done(sbi, new_nid);
+
+	/* 11. 释放新页面 */
+	f2fs_put_page(new_page, 1);
+
+	/* 释放临时数组 */
+	kvfree(child_nids);
+	kvfree(new_child_nids);
+
+	if (SNAPFS_DEBUG)
+		pr_info("[snapfs cow_node]: copied indirect_node src_nid=%u -> new_nid=%u, ofs=%u\n",
+			src_nid, new_nid, ofs);
+
+	return new_nid;
+}
+
+/**
+ * f2fs_cow_copy_double_indirect_node - 复制 double_indirect_node 及其所有子节点
+ * @sbi: 超级块信息
+ * @src_nid: 源 double_indirect_node 的 nid
+ * @snap_inode: 快照 inode
+ *
+ * 递归复制 double_indirect_node -> indirect_node -> direct_node 整棵树。
+ * 注意：为避免死锁，先收集所有子 nid，释放锁后再递归处理。
+ *
+ * 返回: 新分配的 nid，失败返回 0
+ */
+static nid_t f2fs_cow_copy_double_indirect_node(struct f2fs_sb_info *sbi,
+                                                 nid_t src_nid,
+                                                 struct inode *snap_inode)
+{
+	struct page *src_page = NULL;
+	struct page *new_page = NULL;
+	struct f2fs_node *src_rn, *new_rn;
+	struct node_info new_ni;
+	nid_t new_nid = 0;
+	nid_t child_nid, new_child_nid;
+	nid_t *child_nids = NULL;  /* 临时数组存储子 nid */
+	nid_t *new_child_nids = NULL;  /* 临时数组存储新子 nid */
+	unsigned int dindirect_ofs = NODE_OFS_DINDIRECT;
+	unsigned int child_indirect_ofs;
+	unsigned int child_direct_base_ofs;
+	int i, err;
+
+	if (src_nid == 0)
+		return 0;
+
+	/* 分配临时数组 */
+	child_nids = kvmalloc(NIDS_PER_BLOCK * sizeof(nid_t), GFP_KERNEL);
+	if (!child_nids) {
+		pr_err("[snapfs cow_node]: failed to alloc child_nids array for dindirect\n");
+		return 0;
+	}
+	new_child_nids = kvmalloc(NIDS_PER_BLOCK * sizeof(nid_t), GFP_KERNEL);
+	if (!new_child_nids) {
+		pr_err("[snapfs cow_node]: failed to alloc new_child_nids array for dindirect\n");
+		kvfree(child_nids);
+		return 0;
+	}
+	memset(new_child_nids, 0, NIDS_PER_BLOCK * sizeof(nid_t));
+
+	/* 1. 分配新的 nid */
+	if (!f2fs_alloc_nid(sbi, &new_nid)) {
+		pr_err("[snapfs cow_node]: failed to alloc nid for double_indirect_node\n");
+		kvfree(child_nids);
+		kvfree(new_child_nids);
+		return 0;
+	}
+
+	/* 2. 读取源 double_indirect_node page，复制子 nid 数组后立即释放 */
+	src_page = f2fs_get_node_page(sbi, src_nid);
+	if (IS_ERR(src_page)) {
+		pr_err("[snapfs cow_node]: failed to get src double_indirect_node page, nid=%u\n", src_nid);
+		f2fs_alloc_nid_failed(sbi, new_nid);
+		kvfree(child_nids);
+		kvfree(new_child_nids);
+		return 0;
+	}
+	src_rn = F2FS_NODE(src_page);
+	/* 复制所有子 nid 到临时数组 */
+	for (i = 0; i < NIDS_PER_BLOCK; i++) {
+		child_nids[i] = le32_to_cpu(src_rn->in.nid[i]);
+	}
+	f2fs_put_page(src_page, 1);
+	src_page = NULL;
+
+	/* 3. 递归复制所有子 indirect_node（此时不持有任何 page 锁） */
+	for (i = 0; i < NIDS_PER_BLOCK; i++) {
+		child_nid = child_nids[i];
+		if (child_nid == 0) {
+			new_child_nids[i] = 0;
+			continue;
+		}
+
+		/*
+		 * 计算子 indirect_node 的 offset:
+		 * double_indirect 的 offset = 5 + 2N
+		 * 第 i 个子 indirect_node 的 offset = (6 + 2N) + i * (N + 1)
+		 * 其下 direct_node 的起始 offset = (6 + 2N) + i * (N + 1) + 1
+		 */
+		child_indirect_ofs = (dindirect_ofs + 1) + i * (NIDS_PER_BLOCK + 1);
+		child_direct_base_ofs = child_indirect_ofs + 1;
+
+		/* 递归复制子 indirect_node */
+		new_child_nid = f2fs_cow_copy_indirect_node(sbi, child_nid, snap_inode,
+		                                             child_indirect_ofs,
+		                                             child_direct_base_ofs);
+		if (new_child_nid == 0) {
+			pr_err("[snapfs cow_node]: failed to copy child indirect_node[%d]\n", i);
+			/* 继续处理其他节点 */
+		}
+		new_child_nids[i] = new_child_nid;
+	}
+
+	/* 4. 创建新的 double_indirect node page */
+	new_page = f2fs_grab_cache_page(NODE_MAPPING(sbi), new_nid, false);
+	if (!new_page) {
+		pr_err("[snapfs cow_node]: failed to grab cache page for new double_indirect_node\n");
+		f2fs_alloc_nid_failed(sbi, new_nid);
+		kvfree(child_nids);
+		kvfree(new_child_nids);
+		return 0;
+	}
+
+	/* 5. 增加有效 node 计数 */
+	err = inc_valid_node_count(sbi, snap_inode, false);
+	if (err) {
+		pr_err("[snapfs cow_node]: failed to inc_valid_node_count for double_indirect\n");
+		f2fs_put_page(new_page, 1);
+		f2fs_alloc_nid_failed(sbi, new_nid);
+		kvfree(child_nids);
+		kvfree(new_child_nids);
+		return 0;
+	}
+
+	new_rn = F2FS_NODE(new_page);
+
+	/* 6. 填充新 double_indirect_node 的子 nid 数组 */
+	for (i = 0; i < NIDS_PER_BLOCK; i++) {
+		new_rn->in.nid[i] = cpu_to_le32(new_child_nids[i]);
+	}
+
+	/* 7. 设置新的 node footer */
+	fill_node_footer(new_page, new_nid, snap_inode->i_ino, dindirect_ofs, false);
+	set_cold_node(new_page, S_ISDIR(snap_inode->i_mode));
+
+	/* 8. 设置 NAT 映射 */
+	new_ni.nid = new_nid;
+	new_ni.ino = snap_inode->i_ino;
+	new_ni.blk_addr = NULL_ADDR;
+	new_ni.flag = 0;
+	new_ni.version = 0;
+	set_node_addr(sbi, &new_ni, NEW_ADDR, false);
+
+	/* 9. 标记页面为最新并设置脏 */
+	if (!PageUptodate(new_page))
+		SetPageUptodate(new_page);
+	set_page_dirty(new_page);
+
+	/* 10. 完成 nid 分配 */
+	f2fs_alloc_nid_done(sbi, new_nid);
+
+	/* 11. 释放新页面 */
+	f2fs_put_page(new_page, 1);
+
+	/* 释放临时数组 */
+	kvfree(child_nids);
+	kvfree(new_child_nids);
+
+	if (SNAPFS_DEBUG)
+		pr_info("[snapfs cow_node]: copied double_indirect_node src_nid=%u -> new_nid=%u\n",
+			src_nid, new_nid);
+
+	return new_nid;
+}
+
+/**
+ * f2fs cow copy_all_nodes - 复制 inode 的所有间接节点树
+ * @src_inode: 源 inode
+ * @snap_inode: 快照 inode
+ *
+ * 为快照 inode 创建独立的 node block 树。
+ * 只复制 node block，数据块通过 mulref 机制共享。
+ * 注意：为避免死锁，采用三阶段处理：
+ *   1. 读取源 inode 的所有 i_nid，释放锁
+ *   2. 递归复制所有 node（不持有任何 inode page 锁）
+ *   3. 获取快照 inode page 锁，更新 i_nid
+ *
+ * 返回: 0 成功，负数错误码
+ */
+int f2fs_cow_copy_all_nodes(struct inode *src_inode, struct inode *snap_inode)
+{
+	struct f2fs_sb_info *sbi = F2FS_I_SB(src_inode);
+	struct page *src_ipage = NULL;
+	struct page *snap_ipage = NULL;
+	struct f2fs_inode *src_fi, *snap_fi;
+	nid_t src_nids[5];  /* 源 inode 的 i_nid[0-4] */
+	nid_t new_nids[5];  /* 新分配的 nid */
+	int i, ret = 0;
+
+	if (SNAPFS_DEBUG)
+		pr_info("[snapfs cow_node]: start copying nodes for inode %lu -> %lu\n",
+			src_inode->i_ino, snap_inode->i_ino);
+
+	memset(new_nids, 0, sizeof(new_nids));
+
+	/* 阶段1：读取源 inode 的所有 i_nid，然后释放锁 */
+	src_ipage = f2fs_get_node_page(sbi, src_inode->i_ino);
+	if (IS_ERR(src_ipage)) {
+		pr_err("[snapfs cow_node]: failed to get src inode page\n");
+		return PTR_ERR(src_ipage);
+	}
+	src_fi = F2FS_INODE(src_ipage);
+	for (i = 0; i < 5; i++) {
+		src_nids[i] = le32_to_cpu(src_fi->i_nid[i]);
+	}
+	f2fs_put_page(src_ipage, 1);
+	src_ipage = NULL;
+
+	/* 阶段2：递归复制所有 node（此时不持有任何 inode page 锁） */
+
+	/* 处理 i_nid[0]: direct_node, offset = 1 */
+	if (src_nids[0] != 0) {
+		new_nids[0] = f2fs_cow_copy_direct_node(sbi, src_nids[0], snap_inode, NODE_OFS_DIRECT_0);
+		if (SNAPFS_DEBUG)
+			pr_info("[snapfs cow_node]: i_nid[0]: %u -> %u\n", src_nids[0], new_nids[0]);
+	}
+
+	/* 处理 i_nid[1]: direct_node, offset = 2 */
+	if (src_nids[1] != 0) {
+		new_nids[1] = f2fs_cow_copy_direct_node(sbi, src_nids[1], snap_inode, NODE_OFS_DIRECT_1);
+		if (SNAPFS_DEBUG)
+			pr_info("[snapfs cow_node]: i_nid[1]: %u -> %u\n", src_nids[1], new_nids[1]);
+	}
+
+	/* 处理 i_nid[2]: indirect_node, offset = 3, 子 direct_node 起始 offset = 4 */
+	if (src_nids[2] != 0) {
+		new_nids[2] = f2fs_cow_copy_indirect_node(sbi, src_nids[2], snap_inode,
+		                                           NODE_OFS_INDIRECT_0, 4);
+		if (SNAPFS_DEBUG)
+			pr_info("[snapfs cow_node]: i_nid[2]: %u -> %u\n", src_nids[2], new_nids[2]);
+	}
+
+	/* 处理 i_nid[3]: indirect_node, offset = 4+N, 子 direct_node 起始 offset = 5+N */
+	if (src_nids[3] != 0) {
+		new_nids[3] = f2fs_cow_copy_indirect_node(sbi, src_nids[3], snap_inode,
+		                                           NODE_OFS_INDIRECT_1,
+		                                           5 + NIDS_PER_BLOCK);
+		if (SNAPFS_DEBUG)
+			pr_info("[snapfs cow_node]: i_nid[3]: %u -> %u\n", src_nids[3], new_nids[3]);
+	}
+
+	/* 处理 i_nid[4]: double_indirect_node, offset = 5+2N */
+	if (src_nids[4] != 0) {
+		new_nids[4] = f2fs_cow_copy_double_indirect_node(sbi, src_nids[4], snap_inode);
+		if (SNAPFS_DEBUG)
+			pr_info("[snapfs cow_node]: i_nid[4]: %u -> %u\n", src_nids[4], new_nids[4]);
+	}
+
+	/* 阶段3：获取快照 inode page 锁，更新 i_nid */
+	snap_ipage = f2fs_get_node_page(sbi, snap_inode->i_ino);
+	if (IS_ERR(snap_ipage)) {
+		pr_err("[snapfs cow_node]: failed to get snap inode page\n");
+		return PTR_ERR(snap_ipage);
+	}
+	snap_fi = F2FS_INODE(snap_ipage);
+
+	for (i = 0; i < 5; i++) {
+		snap_fi->i_nid[i] = cpu_to_le32(new_nids[i]);
+	}
+
+	/* 标记快照 inode page 为脏 */
+	set_page_dirty(snap_ipage);
+	f2fs_put_page(snap_ipage, 1);
+
+	if (SNAPFS_DEBUG)
+		pr_info("[snapfs cow_node]: finished copying all nodes, ret=%d\n", ret);
+
+	return ret;
 }
 
 void f2fs_cow_update_inode(struct inode *src_inode,struct inode *snap_inode){
@@ -740,7 +1271,8 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         ret = curmulref_alloc_entry(sbi, &eidx_tmp);
         if (ret) {
             pr_err("[snapfs cow2222]: debug alloc failed\n");
-            return ret;
+            // return ret;
+            goto out;
         }
         blkaddr1 = cmr->blkaddr;
         eidx1 = eidx_tmp;
@@ -748,7 +1280,8 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         ret = curmulref_alloc_entry(sbi, &eidx_tmp);
         if (ret) {
             pr_err("[snapfs cow2222]: debug alloc entry2 failed\n");
-            return ret;
+            // return ret;
+            goto out;
         }
         blkaddr2 = cmr->blkaddr; //上面分配函数可能触发块的切换，如果没切换那更好
         eidx2 = eidx_tmp;
@@ -761,7 +1294,8 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         ret = curmulref_alloc_entry(sbi, &eidx_tmp);
         if (ret) {
             pr_err("[snapfs cow2222]: debug alloc failed /is_mulref\n");
-            return ret;
+            goto out;
+            // return ret;
         }
         blkaddr1 = cmr->blkaddr;
         eidx1 = eidx_tmp;
@@ -776,18 +1310,22 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         if (blkaddr1 == blkaddr2) {// 同一数据块
             mulref_page = f2fs_get_meta_page(sbi, blkaddr1);
             if (IS_ERR(mulref_page)) {
-                pr_err("get mulref page failed\n");
-                f2fs_put_page(mulref_page, 1);
+                pr_err("get mulref page failed\n");                
                 mutex_unlock(&cmr->curmulref_mutex);  
                 up_write(&sm->curmulref_lock);
-                return 1; 
+                ret = 1;
+                goto out;
+                // return 1; 
             }
             blk = (struct f2fs_mulref_block *)page_address(mulref_page);
             if (!blk) {
                 pr_err("mulref blk is NULL\n");
+                f2fs_put_page(mulref_page, 1);
                 mutex_unlock(&cmr->curmulref_mutex);  
                 up_write(&sm->curmulref_lock);
-                return 1; 
+                // return 1; 
+                ret = 1;
+                goto out;
             }
             mgentry = &blk->mrentries[eidx1];
             mgentry->m_nid = old_sum.nid;
@@ -848,15 +1386,17 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
             up_write(&sm->curmulref_lock);
         } else { // 跨块处理的情况
             pr_info("[snapfs alloc]: tp42 !is_mulref\n");
-            down_write(&sm->curmulref_lock);
-            mutex_lock(&cmr->curmulref_mutex); 
+            // down_write(&sm->curmulref_lock);
+            // mutex_lock(&cmr->curmulref_mutex); 
             // page 1
             mulref_page = f2fs_get_meta_page(sbi, blkaddr1);
             if (IS_ERR(mulref_page)) {
                 pr_err("get mulref page failed\n");
                 mutex_unlock(&cmr->curmulref_mutex);  
                 up_write(&sm->curmulref_lock);
-                return 1; 
+                // return 1;
+                ret = 1;
+                goto out; 
             }
             // page 2
             mulref_page2 = f2fs_get_meta_page(sbi, blkaddr2);
@@ -866,7 +1406,9 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
                 pr_err("get mulref page2 failed\n");
                 mutex_unlock(&cmr->curmulref_mutex);  
                 up_write(&sm->curmulref_lock);
-                return 1; 
+                // return 1; 
+                ret = 1;
+                goto out;
             }
 
             blk = (struct f2fs_mulref_block *)page_address(mulref_page);
@@ -878,10 +1420,12 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
                 mulref_page2 = NULL;
                 mutex_unlock(&cmr->curmulref_mutex);  
                 up_write(&sm->curmulref_lock);
-                return 1; 
+                // return 1; 
+                ret = 1;
+                goto out;
             }
             blk2 = (struct f2fs_mulref_block *)page_address(mulref_page2);
-            if (!blk) {
+            if (!blk2) {
                 pr_err("mulref blk2 is NULL\n");
                 f2fs_put_page(mulref_page, 1);
                 mulref_page = NULL;
@@ -889,7 +1433,9 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
                 mulref_page2 = NULL;
                 mutex_unlock(&cmr->curmulref_mutex);  
                 up_write(&sm->curmulref_lock);
-                return 1; 
+                // return 1; 
+                ret = 1;
+                goto out;
             }
 
             mgentry = &blk->mrentries[eidx1];
@@ -955,18 +1501,23 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         mulref_page = f2fs_get_meta_page(sbi, blkaddr1);
         if (IS_ERR(mulref_page)) {
             pr_err("get mulref page failed\n");
-            f2fs_put_page(mulref_page, 1);
             mulref_page = NULL;
             mutex_unlock(&cmr->curmulref_mutex);  
             up_write(&sm->curmulref_lock);
-            return 1; 
+            // return 1; 
+            ret = 1;
+            goto out;
+            
         }
         blk = (struct f2fs_mulref_block *)page_address(mulref_page);
         if (!blk) {
             pr_err("mulref blk is NULL\n");
+            f2fs_put_page(mulref_page, 1);
             mutex_unlock(&cmr->curmulref_mutex);  
             up_write(&sm->curmulref_lock);
-            return 1; 
+            // return 1; 
+            ret = 1;
+            goto out;
         }
         mgentry = &blk->mrentries[eidx1];
 
@@ -977,6 +1528,19 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
             blk2 = blk;
         } else { // 跨块处理的情况
             mulref_page2 = f2fs_get_meta_page(sbi, blkaddr2);// head
+            if (IS_ERR(mulref_page2)) { 
+                pr_err("get mulref page3 failed\n"); 
+                // mulref_page3 = NULL;
+                if(mulref_page){
+                    f2fs_put_page(mulref_page, 1);
+                    mulref_page = NULL;
+                }
+                mutex_unlock(&cmr->curmulref_mutex);  
+                up_write(&sm->curmulref_lock);
+                ret = 1;
+                goto out;  
+                // 需要释放资源并退出 
+            }
             blk2 = (struct f2fs_mulref_block *)page_address(mulref_page2);
         }
         
@@ -1007,6 +1571,15 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
                     mulref_page3 = NULL;
                 }
                 mulref_page3 = f2fs_get_meta_page(sbi, blkaddr3);//head next
+                if (IS_ERR(mulref_page3)) {     
+                    pr_err("get mulref page3 failed\n"); 
+                    mulref_page3 = NULL; 
+                    // 释放资源... 
+                    mutex_unlock(&cmr->curmulref_mutex);
+                    up_write(&sm->curmulref_lock);
+                    ret = 1;
+                    goto out;
+                } 
                 blk3 = (struct f2fs_mulref_block *)page_address(mulref_page3);
             }
             if(!blk3){
@@ -1015,7 +1588,19 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
                     f2fs_put_page(mulref_page3, 1);
                     mulref_page3 = NULL;
                 }
-                return 1;
+                if(mulref_page2){
+                    f2fs_put_page(mulref_page2, 1);
+                    mulref_page2 = NULL;
+                }
+                if(mulref_page){
+                    f2fs_put_page(mulref_page, 1);
+                    mulref_page = NULL;
+                }
+                // return 1;
+                mutex_unlock(&cmr->curmulref_mutex);  
+                up_write(&sm->curmulref_lock);
+                ret = 1;
+                goto out;
                 // break;
             }
             mgentry3 = &blk3->mrentries[eidx3];
@@ -1051,6 +1636,12 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         up_write(&sm->curmulref_lock);
     }
     // pr_info("[snapfs alloc]: over\n");
+out:
+    if(sum_page){
+        f2fs_put_page(sum_page, 1);
+    }
+
+
 	return ret;
 }
 
@@ -1937,6 +2528,7 @@ bool f2fs_is_empty_file(struct f2fs_sb_info *sbi,
     ri = F2FS_INODE(page);
     isize  = le64_to_cpu(ri->i_size); 
     if (isize == 0) {
+        f2fs_put_page(page, 1);
 		if(SNAPFS_DEBUG) pr_info("[snapfs cow22]: debug inode %lu is empty file\n", inode->i_ino);
 		return true;
 	}else{
@@ -3201,6 +3793,14 @@ int f2fs_cow(struct inode *pra_inode,
                 set_page_dirty(new_ipage);
                 f2fs_put_page(son_ipage, 1);
                 f2fs_put_page(new_ipage, 1);
+
+                /* 复制 node 树，为快照创建独立的间接节点 */
+                ret = f2fs_cow_copy_all_nodes(son_inode, tmp_inode);
+                if (ret) {
+                    pr_err("[snapfs cow2]: failed to copy nodes for dir %lu\n", son_inode->i_ino);
+                    goto next_free;
+                }
+
                 new_dpage = f2fs_get_lock_data_page(tmp_inode, 0, false);
                 page_addr = page_address(new_dpage);
                 make_dentry_ptr_block(tmp_inode, &d, page_addr);
@@ -3257,6 +3857,13 @@ int f2fs_cow(struct inode *pra_inode,
                 set_page_dirty(new_ipage);
                 f2fs_put_page(son_ipage, 1);
                 f2fs_put_page(new_ipage, 1);
+
+                /* 复制 node 树，为快照创建独立的间接节点 */
+                ret = f2fs_cow_copy_all_nodes(son_inode, tmp_inode);
+                if (ret) {
+                    pr_err("[snapfs cow2]: failed to copy nodes for file %lu\n", son_inode->i_ino);
+                    goto next_free;
+                }
             }
         }
         f2fs_mark_inode_dirty_sync(snap_inode, true);
@@ -3439,6 +4046,8 @@ int f2fs_snapshot_cow(struct inode *inode)
                             pr_info("parent cow failed 1\n");
                             goto success;
                         }
+                        iput(pra_inode);
+                        iput(son_inode);
                         tmp2_inode = new_inode;
                     }
                 }else{
@@ -3469,6 +4078,8 @@ int f2fs_snapshot_cow(struct inode *inode)
                             pr_info("parent cow failed 2\n");
                             goto success;
                         }
+                        iput(pra_inode);
+                        iput(son_inode);
                         tmp2_inode = new_inode;
                     }
 
@@ -3520,6 +4131,8 @@ int f2fs_snapshot_cow(struct inode *inode)
                                 pr_info("parent cow failed 3\n");
                                 goto success;
                             }
+                            iput(pra_inode);
+                            iput(son_inode);
                             tmp2_inode = new_inode;
                         }
                         // next

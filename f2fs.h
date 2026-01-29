@@ -3560,6 +3560,8 @@ int f2fs_build_free_nids(struct f2fs_sb_info *sbi, bool sync, bool mount);
 bool f2fs_alloc_nid(struct f2fs_sb_info *sbi, nid_t *nid);
 void f2fs_alloc_nid_done(struct f2fs_sb_info *sbi, nid_t nid);
 void f2fs_alloc_nid_failed(struct f2fs_sb_info *sbi, nid_t nid);
+void set_node_addr(struct f2fs_sb_info *sbi, struct node_info *ni,
+			block_t new_blkaddr, bool fsync_done);
 int f2fs_try_to_free_nids(struct f2fs_sb_info *sbi, int nr_shrink);
 int f2fs_recover_inline_xattr(struct inode *inode, struct page *page);
 int f2fs_recover_xattr_data(struct inode *inode, struct page *page);

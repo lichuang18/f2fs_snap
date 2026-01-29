@@ -3983,13 +3983,6 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 		f2fs_truncate_inline_inode(snap_inode, snap_ipage, 0);
 		memcpy(inline_dentry2, inline_dentry, MAX_INLINE_DATA(src_inode));
 
-		// src_fi = F2FS_INODE(src_ipage);
-		// new_fi = F2FS_INODE(snap_ipage);
-		// update_f2fs_inode_inline(src_fi, new_fi);
-		// snap_inode->i_size = le64_to_cpu(src_fi->i_size);
-		// snap_inode->i_blocks = le64_to_cpu(src_fi->i_blocks);
-		// f2fs_cow_update_inode(src_inode, snap_inode);
-
 		// 更新.和..
 		make_dentry_ptr_inline(snap_inode, &d, inline_dentry2);
 		/* update dirent of "." */
