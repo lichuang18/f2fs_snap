@@ -1,0 +1,5 @@
+	snapfs	btrfs	lvm
+Flat	34	40	249
+Deep	34	36	258
+Wide	36	36	262
+Mix	25	24	241

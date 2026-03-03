@@ -3925,11 +3925,11 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 	/* 4. 在 snap_inode 下创建目录项 link */
 	err = f2fs_add_link(snap_dentry, snap_inode);
 	if (err) {
-		f2fs_unlock_op(sbi);
+		// f2fs_unlock_op(sbi);
 		pr_err("[snapfs f2fs_cow]: failed to add link: %d\n", err);
 		goto out_dput;
 	}
-	f2fs_unlock_op(sbi);
+	// f2fs_unlock_op(sbi); 
 
 	f2fs_alloc_nid_done(sbi, snap_inode->i_ino);
 	d_instantiate_new(snap_dentry, snap_inode);
@@ -4045,6 +4045,7 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 	f2fs_mark_inode_dirty_sync(snap_inode, true);
 	
 out_dput:
+	f2fs_unlock_op(sbi);
 	if (snap_dentry)
         dput(snap_dentry);
     path_put(&snap_par_path);
