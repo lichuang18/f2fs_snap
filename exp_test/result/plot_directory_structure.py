@@ -60,14 +60,6 @@ ax.grid(True, axis='y', linestyle='--', alpha=0.3)
 ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.15),
           ncol=3, frameon=False, fontsize=13)
 
-# 添加数值标签
-for i, bar_group in enumerate(bars):
-    for j, bar in enumerate(bar_group):
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width() / 2., height,
-                f'{height:.2f}',
-                ha='center', va='bottom', fontsize=11)
-
 # 调整布局，为上方图例留出空间
 plt.tight_layout(rect=[0, 0, 1, 0.90])
 

@@ -1568,10 +1568,10 @@ next_step:
 			tmp_sum.nid = mgentry->m_nid;
 			tmp_sum.ofs_in_node = mgentry->m_ofs;
 			tmp_sum.version = mgentry->m_ver;
-			pr_info("[gc collect]: segno %u, blkaddr %u, is_mulref sum [%u, %u, %u], old sum [%u, %u, %u], gc_type %u\n",segno,
-				start_addr + off,le32_to_cpu(tmp_sum.nid),le16_to_cpu(tmp_sum.ofs_in_node),tmp_sum.version,
-				le32_to_cpu(entry->nid),le16_to_cpu(entry->ofs_in_node),entry->version,
-				gc_type);
+			// pr_info("[gc collect]: segno %u, blkaddr %u, is_mulref sum [%u, %u, %u], old sum [%u, %u, %u], gc_type %u\n",segno,
+			// 	start_addr + off,le32_to_cpu(tmp_sum.nid),le16_to_cpu(tmp_sum.ofs_in_node),tmp_sum.version,
+			// 	le32_to_cpu(entry->nid),le16_to_cpu(entry->ofs_in_node),entry->version,
+			// 	gc_type);
 			if(mulref_page){
 				f2fs_put_page(mulref_page, 1);
 			}

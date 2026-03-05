@@ -688,8 +688,8 @@ int f2fs_update_summary(struct f2fs_sb_info *sbi, block_t blkaddr,
     unsigned int old_type;
     struct page *sum_page;
     struct f2fs_summary_block *sum_blk;
-    pr_info("update sum: nid[%u],ofs[%u](<336),ver[%u]\n",
-            le32_to_cpu(new_sum->nid),new_sum->ofs_in_node,new_sum->version);
+    // pr_info("update sum: nid[%u],ofs[%u](<336),ver[%u]\n",
+    //         le32_to_cpu(new_sum->nid),new_sum->ofs_in_node,new_sum->version);
     for (old_type = CURSEG_HOT_DATA; old_type <= CURSEG_COLD_DATA; old_type++) {
         struct curseg_info *ci = CURSEG_I(sbi, old_type);
         if (ci->segno == old_segno) {
@@ -699,7 +699,7 @@ int f2fs_update_summary(struct f2fs_sb_info *sbi, block_t blkaddr,
     }
     // 和f2fs_allocate_data_block一样的锁顺序
     if(curseg){
-        pr_info("[snapfs update]: summary with curseg\n");
+        // pr_info("[snapfs update]: summary with curseg\n");
         down_read(&SM_I(sbi)->curseg_lock);
         // pr_info("ttttttt 1\n");
         mutex_lock(&curseg->curseg_mutex);
@@ -1210,7 +1210,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
     struct f2fs_mulref_block *blk, *blk2, *blk3;
     block_t old_blkaddr = *blkaddr;
     bool is_mulref = check_sit_mulref_entry(sbi, old_blkaddr);
-    if(is_mulref) pr_info("[snapfs alloc]: tp1 is_mulref[%u], blkoff [%u],old data blkaddr[%u]\n",is_mulref, GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr),old_blkaddr);
+    // if(is_mulref) pr_info("[snapfs alloc]: tp1 is_mulref[%u], blkoff [%u],old data blkaddr[%u]\n",is_mulref, GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr),old_blkaddr);
     u16 eidx_tmp = 0;
     u16 eidx1 = 0, eidx2 = 0, eidx3 = 0;
     block_t blkaddr1 = 0;
@@ -1290,7 +1290,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         //     le16_to_cpu(old_sum.nid),le16_to_cpu(old_sum.ofs_in_node),
         //             old_sum.version);
     }else{
-        pr_info("[snapfs alloc]: tp3 (is_mulref)\n");
+        // pr_info("[snapfs alloc]: tp3 (is_mulref)\n");
         ret = curmulref_alloc_entry(sbi, &eidx_tmp);
         if (ret) {
             pr_err("[snapfs cow2222]: debug alloc failed /is_mulref\n");
@@ -1354,7 +1354,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
             // pr_info("[snapfs cow2222]: debug alloc new nid[%u],ofs[%u],ver[%u]\n",blkaddr1,eidx1,old_sum.version);
             // pr_info("sum_from_ssa %u, next: [%u]\n",sum_from_ssa,(blkaddr2 - start_addr) * MRENTRY_PER_BLOCK + eidx2);
             if(!sum_from_ssa){
-                pr_info("update new sum in curseg mulref\n");
+                // pr_info("update new sum in curseg mulref\n");
                 ret = f2fs_update_summary(sbi, old_blkaddr,&sum,old_segno,blk_off);
                 if(ret){
                     pr_info("[snapfs cow2222]: debug alloc update summary failed\n");
@@ -1387,7 +1387,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
             mutex_unlock(&cmr->curmulref_mutex);  
             up_write(&sm->curmulref_lock);
         } else { // 跨块处理的情况
-            pr_info("[snapfs alloc]: tp42 !is_mulref\n");
+            // pr_info("[snapfs alloc]: tp42 !is_mulref\n");
             down_write(&sm->curmulref_lock);
             mutex_lock(&cmr->curmulref_mutex);
             // page 1
@@ -1497,7 +1497,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
         
     }else{ // 已经是多引用块，也就是多版本快照的处理
         // 分配一个就行，就是 eidx1和blkaddr1
-        pr_info("[snapfs alloc]: tp5 is_mulref\n");
+        // pr_info("[snapfs alloc]: tp5 is_mulref\n");
         down_write(&sm->curmulref_lock);
         mutex_lock(&cmr->curmulref_mutex); 
         mulref_page = f2fs_get_meta_page(sbi, blkaddr1);
@@ -4011,6 +4011,7 @@ int f2fs_snapshot_cow(struct inode *inode)
     struct page *page3 = NULL;
     
     if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug start[%u]!\n",inode->i_ino);
+
     memset(&tmp_me, 0, sizeof(tmp_me));
     // 先判断这个inode是不是快照inode, 
     // 不用执行cow，后续更新引用关系即可
@@ -4025,6 +4026,7 @@ int f2fs_snapshot_cow(struct inode *inode)
         tmp_inode = inode;
         snap_initStack(&stack);
         snap_push(&stack, tmp_inode->i_ino);
+        ktime_t start_tmp, end_tmp;
         while (tmp_inode) {
             if(dentry) dput(dentry);
             dentry = d_find_any_alias(tmp_inode);  // 获取 inode 对应的 dentry
@@ -4066,12 +4068,19 @@ int f2fs_snapshot_cow(struct inode *inode)
                         son_inode = f2fs_iget(sb, son_ino);
                         parent_dentry = d_find_any_alias(pra_inode);
                         dentry = d_find_any_alias(son_inode);
+
+
+                        
+                        start_tmp = ktime_get_ns();
                         ret = f2fs_cow(pra_inode, tmp2_inode, son_inode, &new_inode);
                         if(ret){
                             pr_info("parent cow failed 1\n");
                             ret = -EIO;  // 明确设置错误码
                             goto cleanup;
                         }
+                        end_tmp = ktime_get_ns();
+                        pr_info("singleshot write cow cost = %lld ns\n", end_tmp - start_tmp);
+
                         iput(pra_inode);
                         iput(son_inode);
                         tmp2_inode = new_inode;
@@ -4080,8 +4089,14 @@ int f2fs_snapshot_cow(struct inode *inode)
                     // pr_info("inode is multi snapshot,count[%u]\n",tmp_me.count);
                     // 第一个
                     if(!f2fs_inode_is_new_or_cowed(sbi, inode, &(tmp_me.c_time))){
+                        // 判断第一个快照是否被修改过
                         // pr_info("[0] snap_ino:%u,next:%u\n",le32_to_cpu(tmp_me.snap_ino),tmp_next);
+                    }else{
+                        // 准备去执行第二快照
+                        // pr_info("skip process 1st snapshot cow witn mulsnap\n");
+                        goto second_snap;
                     }
+                    pr_info("process 1st snapshot cow witn mulsnap\n");
                     if(SNAPFS_DEBUG) pr_info("[snapfs cow]: debug parfile 1(%u) is snap-(%u)\n",
                         tmp_me.src_ino, tmp_me.snap_ino);
                     snap_inode = f2fs_iget(sb, le32_to_cpu(tmp_me.snap_ino));
@@ -4099,17 +4114,25 @@ int f2fs_snapshot_cow(struct inode *inode)
                         son_inode = f2fs_iget(sb, son_ino);
                         parent_dentry = d_find_any_alias(pra_inode);
                         dentry = d_find_any_alias(son_inode);
+
+                        // ktime_t start_tmp, end_tmp;
+                        start_tmp = ktime_get_ns();
                         ret = f2fs_cow(pra_inode, tmp2_inode, son_inode, &new_inode);
                         if(ret){
                             pr_info("parent cow failed 2\n");
                             ret = -EIO;  // 明确设置错误码
                             goto cleanup;
                         }
+                        end_tmp = ktime_get_ns();
+                        pr_info("1sd write cow cost = %lld ns\n", end_tmp - start_tmp);
+
+
                         iput(pra_inode);
                         iput(son_inode);
                         tmp2_inode = new_inode;
                     }
-
+                second_snap:
+                    // pr_info("process 2nd snapshot cow witn mulsnap\n");
                     block_t prev_blkaddr = 0;
                     down_read(&sbi->magic_info->rwsem);
                     block_t tmp_blkaddr = sbi->magic_info->magic_blkaddr + magic_entry_to_blkaddr(tmp_next);
@@ -4131,6 +4154,7 @@ int f2fs_snapshot_cow(struct inode *inode)
                         if(!f2fs_inode_is_new_or_cowed(sbi, inode, &(me3->c_time))){
                             // pr_info("[%d] tmp_blkaddr:%u, off:%u, snap_ino:%u,next:%u\n",i+1,tmp_blkaddr,tmp_off,le32_to_cpu(me3->snap_ino),tmp_next);
                         }else{
+                            // pr_info("skip process 2nd snapshot cow witn mulsnap\n");
                             goto snap_next;
                         }
                         // cow
@@ -4153,12 +4177,16 @@ int f2fs_snapshot_cow(struct inode *inode)
                             son_inode = f2fs_iget(sb, son_ino);
                             parent_dentry = d_find_any_alias(pra_inode);
                             dentry = d_find_any_alias(son_inode);
+                            start_tmp = ktime_get_ns();
                             ret = f2fs_cow(pra_inode, tmp2_inode, son_inode, &new_inode);
                             if(ret){
                                 pr_info("parent cow failed 3\n");
                                 ret = -EIO;  // 明确设置错误码
                                 goto cleanup;
                             }
+                            end_tmp = ktime_get_ns();
+                            pr_info("2nd write cow cost = %lld ns\n", end_tmp - start_tmp);
+
                             iput(pra_inode);
                             iput(son_inode);
                             tmp2_inode = new_inode;
@@ -4204,6 +4232,7 @@ cleanup:
 //     set_page_dirty(ipage);
 //     f2fs_put_page(ipage, 1);
 // next_free:
+    // pr_info("cow debug over!!\n");
     if (pra_inode)
         iput(pra_inode);
     if (son_inode)
@@ -4563,8 +4592,8 @@ found_entry:
                     new_sum.ofs_in_node = next_eidx;
                     new_sum.version = cur_entry->m_ver;
                     cur_entry->m_count -= 1;
-                    pr_info("2 head_page=%p locked=%d writeback=%d\n",
-                         head_page, PageLocked(head_page), PageWriteback(head_page));
+                    // pr_info("2 head_page=%p locked=%d writeback=%d\n",
+                    //      head_page, PageLocked(head_page), PageWriteback(head_page));
                     mulref_mark_invalid(cur_blk, cur_eidx);
                     // 不用清楚多引用块flag
                     down_write(&sm->curmulref_lock);

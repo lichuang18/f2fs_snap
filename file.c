@@ -3941,10 +3941,10 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 			pr_info("magic alloc failed\n");
 		} else {
 			/* 插入 radix tree: snap_ino -> entry_id，用于删除时快速查找 */
-			down_write(&sbi->magic_info->rwsem);
-			radix_tree_insert(&sbi->magic_info->snap_tree, snap_inode->i_ino,
-					  (void *)(unsigned long)ret_entry_id);
-			up_write(&sbi->magic_info->rwsem);
+			// down_write(&sbi->magic_info->rwsem);
+			// radix_tree_insert(&sbi->magic_info->snap_tree, snap_inode->i_ino,
+			// 		  (void *)(unsigned long)ret_entry_id);
+			// up_write(&sbi->magic_info->rwsem);
 		}
 	}
 	// pr_info("[snapfs mk_snap]: magic alloc over\n");

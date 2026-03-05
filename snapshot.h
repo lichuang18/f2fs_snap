@@ -11,7 +11,7 @@
 #include <linux/types.h>
 #define SNAPFS_DEBUG 0
 #define SNAPFS_DEBUG1 0
-#define SNAPFS_DEBUG_GC 1
+#define SNAPFS_DEBUG_GC 0
 int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                                u32 src_ino, u32 snap_ino, u32 *ret_entry_id);
 
