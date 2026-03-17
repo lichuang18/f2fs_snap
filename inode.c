@@ -749,7 +749,7 @@ void f2fs_evict_inode(struct inode *inode)
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	nid_t xnid = F2FS_I(inode)->i_xattr_nid;
 	int err = 0;
-	pr_info("f2fs_evict_inode [%lu]\n",inode->i_ino);
+	// pr_info("f2fs_evict_inode [%lu]\n",inode->i_ino);
 	/* some remained atomic pages should discarded */
 	if (f2fs_is_atomic_file(inode))
 		f2fs_drop_inmem_pages(inode);

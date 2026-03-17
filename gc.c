@@ -1731,8 +1731,8 @@ next_step:
 	if (++phase < 5)
 		goto next_step;
 	// if(SNAPFS_DEBUG_GC) 
-	pr_info("[gc data segment]: submitted %u, gc_type %u, segno %u\n",
-			submitted,gc_type,segno);
+	// pr_info("[gc data segment]: submitted %u, gc_type %u, segno %u\n",
+	// 		submitted,gc_type,segno);
 
 	return submitted;
 }

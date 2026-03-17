@@ -1,0 +1,10 @@
+	IOPS						BW(MiB/s)			
+随机读		4K	16K	64K		顺序读		256K	512K	1M
+	sanpfs	241K	122K	39.3K			sanpfs	3435	3433	3433
+	f2fs	242K	124K	39.5K			f2fs	3435	3444	3434
+	sanpfs-snap	241K	122K	39.3K			sanpfs-snap	3435	3437	3435
+										
+随机写		4K	16K	64K		顺序写		256K	512K	1M
+	sanpfs	288K	149K	41.5K			sanpfs	2576	2571	2566
+	f2fs	304K	152K	42.1K			f2fs	2604	2627	2644
+	sanpfs-snap	286K	147K	41.9K			sanpfs-snap	2573	2589	2544

@@ -966,9 +966,10 @@ int f2fs_setattr(struct user_namespace *mnt_userns, struct dentry *dentry,
 			F2FS_I(inode)->i_flags |= F2FS_COWED_FL;
 			// flags |= F2FS_COWED_FL;  // 设置SYNC标志
 			// flags &= ~F2FS_COWED_FL;  // 清除SYNC标志
+			end = ktime_get_ns();
+			pr_info("truncate cow cost = %lld ns\n", end - start);
 		}
-		end = ktime_get_ns();
-		pr_info("truncate cow cost = %lld ns\n", end - start);
+		
 	}
 
 
@@ -3894,12 +3895,15 @@ static int f2fs_create_snapshot(struct file *filp, unsigned long arg)
 	
 	pr_info("[snapfs mk_snap]: snap_filename[%s]\n",snap_filename);
 	/* ---------- 创建 snapshot 目录 ---------- */
+	inode_lock(snap_par_inode);
 	snap_dentry = lookup_one_len(snap_filename, snap_par_path.dentry, strlen(snap_filename));
 	if (IS_ERR(snap_dentry)) {
 		err = PTR_ERR(snap_dentry);
 		snap_dentry = NULL;
+		inode_unlock(snap_par_inode);
 		goto out_dput;
 	}
+	inode_unlock(snap_par_inode);
 	sbi = F2FS_I_SB(src_inode);
 
 
@@ -4990,6 +4994,11 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			pr_info("write cow cost = %lld ns\n", end - start);
 			// size_t i_count = iov_iter_count(from);
 			// pr_info("ki_pos: %u, iov_count: %u\n",iocb->ki_pos, i_count);
+		}else{
+			end = ktime_get_ns();
+			pr_info("write check cost = %lld ns\n", end - start);
+			size_t i_count = iov_iter_count(from);
+			pr_info("ki_pos: %u, iov_count: %u\n",iocb->ki_pos, i_count);
 		}
 	}
 	

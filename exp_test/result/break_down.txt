@@ -1,0 +1,6 @@
+	snapfs		btrfs
+node block	0.100387597	file tree	0.14125
+dentry	0.018217054	extent tree	0.28375
+other	0.88120155	checksum tree	0.0067
+sum	10320	other	0.5683
+		sum	200236

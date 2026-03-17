@@ -2,8 +2,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # 设置字体为 Times New Roman
-plt.rcParams['font.family'] = 'Times New Roman'
-plt.rcParams['font.size'] = 12
+plt.rcParams['font.family'] = 'serif'
+plt.rcParams['font.serif'] = ['Times New Roman']
+plt.rcParams['font.size'] = 18
+plt.rcParams['axes.labelsize'] = 18
+plt.rcParams['xtick.labelsize'] = 18
+plt.rcParams['ytick.labelsize'] = 18
+plt.rcParams['legend.fontsize'] = 18
 
 # 读取数据
 sizes = ['100M', '500M', '1G', '10G', '20G']
@@ -25,14 +30,17 @@ fig, ax = plt.subplots(figsize=(10, 6))
 x = np.arange(len(sizes))
 width = 0.25
 
-bars1 = ax.bar(x - width, snap_1_ms, width, label='1 snapshot', color=colors[0])
-bars2 = ax.bar(x, snap_2_ms, width, label='2 snapshots', color=colors[1], edgecolor='black', linewidth=0.5)
-bars3 = ax.bar(x + width, snap_4_ms, width, label='4 snapshots', color=colors[2])
+bars1 = ax.bar(x - width, snap_1_ms, width, label='1 snapshot',
+                color=colors[0], edgecolor='black', hatch='//')
+bars2 = ax.bar(x, snap_2_ms, width, label='2 snapshots',
+                color=colors[1], edgecolor='black', hatch='\\\\')
+bars3 = ax.bar(x + width, snap_4_ms, width, label='4 snapshots',
+                color=colors[2], edgecolor='black', hatch='/')
 
 # 移除了数值标签的添加代码
 
-ax.set_xlabel('Data per Snapshot', fontsize=14)
-ax.set_ylabel('Activation Latency (ms)', fontsize=14)
+ax.set_xlabel('Data per Snapshot', fontsize=18)
+ax.set_ylabel('Activation Latency (ms)', fontsize=18)
 # 删除了 title
 ax.set_xticks(x)
 ax.set_xticklabels(sizes)

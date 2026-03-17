@@ -3,8 +3,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Set font to Times New Roman
-plt.rcParams['font.family'] = 'Times New Roman'
-plt.rcParams['font.size'] = 12
+plt.rcParams['font.family'] = 'serif'
+plt.rcParams['font.serif'] = ['Times New Roman']
+plt.rcParams['font.size'] = 18
+plt.rcParams['axes.labelsize'] = 18
+plt.rcParams['xtick.labelsize'] = 18
+plt.rcParams['ytick.labelsize'] = 18
+plt.rcParams['legend.fontsize'] = 18
 
 # Read data file (skip first column which contains file size labels)
 data = np.loadtxt('motivation.txt', skiprows=1, usecols=(1, 2, 3))
@@ -33,16 +38,16 @@ colors = ['#B7D3FA', '#F6BABA', '#F8C999']
 
 
 # Upper subplot: show values from 14.5 to 16 (range of 1.5)
-bars1_upper = ax1.bar(x - width, snapfs, width, color=colors[0], alpha=0.9)
-bars2_upper = ax1.bar(x, btrfs, width, color=colors[1], alpha=0.9)
-bars3_upper = ax1.bar(x + width, lvm, width, color=colors[2], alpha=0.9)
+bars1_upper = ax1.bar(x - width, snapfs, width, color=colors[0], alpha=0.9, hatch='//', edgecolor='black')
+bars2_upper = ax1.bar(x, btrfs, width, color=colors[1], alpha=0.9, hatch='\\', edgecolor='black')
+bars3_upper = ax1.bar(x + width, lvm, width, color=colors[2], alpha=0.9, hatch='xx', edgecolor='black')
 ax1.set_ylim(14.5, 16)
 ax1.set_yticks([15, 16])  # Interval of 1
 
 # Lower subplot: show values from 0 to 4.5 (all normal values)
-bars1_lower = ax2.bar(x - width, snapfs, width, color=colors[0], alpha=0.9)
-bars2_lower = ax2.bar(x, btrfs, width, color=colors[1], alpha=0.9)
-bars3_lower = ax2.bar(x + width, lvm, width, color=colors[2], alpha=0.9)
+bars1_lower = ax2.bar(x - width, snapfs, width, color=colors[0], alpha=0.9, hatch='//', edgecolor='black')
+bars2_lower = ax2.bar(x, btrfs, width, color=colors[1], alpha=0.9, hatch='\\', edgecolor='black')
+bars3_lower = ax2.bar(x + width, lvm, width, color=colors[2], alpha=0.9, hatch='xx', edgecolor='black')
 ax2.set_ylim(0, 4.5)
 ax2.set_yticks([0, 1, 2, 3, 4])  # Interval of 1
 
@@ -54,16 +59,22 @@ ax2.set_xlabel('Block Size')
 # Remove individual ylabels and add centered one on left
 ax2.set_ylabel('')
 ax1.set_ylabel('')
-fig.text(0.005, 0.5, 'WA', ha='center', va='center', rotation='vertical', fontsize=12)
+fig.text(0.005, 0.5, 'WA', ha='center', va='center', rotation='vertical', fontsize=18)
 
 ax1.set_xticks(x)
 ax1.set_xticklabels([])
 ax2.set_xticks(x)
 ax2.set_xticklabels(file_sizes)
 
+# handles = [plt.Rectangle((0,0),1,1, facecolor=colors['f2fs'],  hatch=hatches['f2fs'], edgecolor='black', linewidth=1),
+#            plt.Rectangle((0,0),1,1, facecolor=colors['snapfs'], alpha=0.85, hatch=hatches['snapfs'], edgecolor='black', linewidth=1),
+#            plt.Rectangle((0,0),1,1, facecolor=colors['snapfs-snap'], alpha=0.85, hatch=hatches['snapfs-snap'], edgecolor='black', linewidth=1)]
+# fig.legend(handles, legend_labels, loc='upper center', bbox_to_anchor=(0.5, 1.05), ncol=3, prop={'family': 'Times New Roman'})
+
+hatches = ['/', '\\', 'x']
 # Combine legends
-handles = [plt.Rectangle((0,0),1,1, color=colors[i]) for i in range(3)]
-labels = ['snapfs', 'btrfs', 'lvm+ext4']
+handles = [plt.Rectangle((0,0),1,1, facecolor=colors[i],  hatch=hatches[i], edgecolor='black', linewidth=1) for i in range(3)]
+labels = ['SnapFS', 'Btrfs', 'LVM+Ext4']
 ax1.legend(handles, labels, loc='upper right')
 
 # Add grid

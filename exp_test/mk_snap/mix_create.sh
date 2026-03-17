@@ -6,7 +6,7 @@ set -e
 
 FILE_COUNT=${1:-10000}                 # 文件数量（可传参）
 MAX_TOTAL_GB=20                       # 最大总容量
-MIN_SIZE_BYTES=4                       # 单文件最小 4B
+MIN_SIZE_BYTES=4096                       # 单文件最小 4B
 MAX_SIZE_BYTES=$((3 * 1024 * 1024 * 1024))  # 单文件最大 3GB
 TARGET_DIR="/mnt/test_random"
 

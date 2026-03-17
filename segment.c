@@ -3527,13 +3527,17 @@ skip_normal_addsum:
      * since SSR needs latest valid block information.
      */
     update_sit_entry(sbi, *new_blkaddr, 1);
-    
+
     if(!is_mulref){
         // check sit mulref_entry(sbi, start_addr + off);
         // pr_info("-------   allocate invalid oldblkaddr %u -------\n",old_blkaddr);
-        update_sit_entry(sbi, old_blkaddr, -1); 
+        update_sit_entry(sbi, old_blkaddr, -1);
     } else{
         // mulref process.   多引用转单引用
+        // 因为旧块还被其他快照引用，不能减少计数，所以需要增加全局计数
+        spin_lock(&sbi->stat_lock);
+        sbi->total_valid_block_count++;
+        spin_unlock(&sbi->stat_lock);
         // pr_info("[snapfs IO]: allocate blk and is mulref blk[%u]\n",old_blkaddr);
         if(old_blkaddr >= 4503280 && old_blkaddr <= 4503285){
             pr_info("[snapfs IO]: mulref sum: [%u, %u, %u],old sum[%u, %u, %u], old new addr[%u, %u]\n",

@@ -3,8 +3,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Set font to Times New Roman
-plt.rcParams['font.family'] = 'Times New Roman'
-plt.rcParams['font.size'] = 12
+plt.rcParams['font.family'] = 'serif'
+plt.rcParams['font.serif'] = ['Times New Roman']
+plt.rcParams['font.size'] = 18
+plt.rcParams['axes.labelsize'] = 18
+plt.rcParams['xtick.labelsize'] = 18
+plt.rcParams['ytick.labelsize'] = 18
+plt.rcParams['legend.fontsize'] = 18
 
 # Read data file
 data = np.loadtxt('mk_snap.txt', skiprows=1)
@@ -26,15 +31,15 @@ xtick_positions = range(len(xtick_labels))  # Equal spacing positions
 ax2.set_xticks(xtick_positions)
 ax2.set_xticklabels(xtick_labels)
 
-# Plot data with equal spacing x positions
+# Plot data with equal spacing x positions - all lines as solid
 x_positions = range(len(x))
-ax1.plot(x_positions, f2fs, marker='o', linewidth=2, label='f2fs_snap', color='#2E86AB', markersize=6)
-ax1.plot(x_positions, btrfs, marker='s', linewidth=2, label='btrfs_snap', color='#A23B72', markersize=6)
-ax1.plot(x_positions, lvm, marker='^', linewidth=2, label='lvm_snap', color='#F18F01', markersize=6)
-
-ax2.plot(x_positions, f2fs, marker='o', linewidth=2, label='f2fs_snap', color='#2E86AB', markersize=6)
-ax2.plot(x_positions, btrfs, marker='s', linewidth=2, label='btrfs_snap', color='#A23B72', markersize=6)
-ax2.plot(x_positions, lvm, marker='^', linewidth=2, label='lvm_snap', color='#F18F01', markersize=6)
+ax1.plot(x_positions, f2fs, marker='o', linestyle='-', linewidth=2, label='f2fs_snap', color='#2E86AB', markersize=6)
+ax1.plot(x_positions, btrfs, marker='s', linestyle='--', linewidth=2, label='btrfs_snap', color='#A23B72', markersize=6)
+ax1.plot(x_positions, lvm, marker='^', linestyle='-.', linewidth=2, label='lvm_snap', color='#F18F01', markersize=6)
+# :
+ax2.plot(x_positions, f2fs, marker='o', linestyle='-', linewidth=2, label='f2fs_snap', color='#2E86AB', markersize=6)
+ax2.plot(x_positions, btrfs, marker='s', linestyle='--', linewidth=2, label='btrfs_snap', color='#A23B72', markersize=6)
+ax2.plot(x_positions, lvm, marker='^', linestyle='-.', linewidth=2, label='lvm_snap', color='#F18F01', markersize=6)
 
 # Set y-axis limits
 ax1.set_ylim(230, 270)   # Upper part for LVM
@@ -53,9 +58,9 @@ ax2.set_xticklabels(xtick_labels)
 ax2.set_xlabel('File Count')
 ax2.set_ylabel('')
 ax1.set_ylabel('')
-fig.text(-0.005, 0.5, 'Time (ms)', ha='center', va='center', rotation='vertical', fontsize=12)
+fig.text(-0.00, 0.5, 'Create Snapshot Time (ms)', ha='center', va='center', rotation='vertical', fontsize=18)
 # Remove title and move legend outside top
-ax1.legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=3)
+ax1.legend(loc='upper center', bbox_to_anchor=(0.5, 1.3), ncol=3)
 
 # Add legend - removed old legend call
 

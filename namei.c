@@ -541,7 +541,7 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 	// pr_info("f2fs_unlink START:i_count=%d, i_nlink=%d\n",
     //         atomic_read(&inode->i_count), inode->i_nlink);
 	ktime_t start, end;
-	pr_info("f2fs_unlink START: i_state=0x%x\n",inode->i_state);
+	// pr_info("f2fs_unlink START: i_state=0x%x\n",inode->i_state);
 
 	/* 检查是否在快照目录下，如果是则禁止 rm 删除 */
 	if (f2fs_is_under_snapshot_dir(inode)) {
@@ -557,9 +557,9 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 		start = ktime_get_ns();
 		if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
 			if(SNAPFS_DEBUG) pr_info("[snapfs unlink]: unlink with cow\n");
+			end = ktime_get_ns();
+			pr_info("unlink cow cost = %lld ns\n", end - start);
 		}
-		end = ktime_get_ns();
-		pr_info("unlink cow cost = %lld ns\n", end - start);
 	}
 
 	trace_f2fs_unlink_enter(dir, dentry);
@@ -606,7 +606,7 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 		f2fs_sync_fs(sbi->sb, 1);
 fail:
 	trace_f2fs_unlink_exit(inode, err);
-	pr_info("f2fs_unlink over ~~\n");
+	// pr_info("f2fs_unlink over ~~\n");
 	
 	return err;
 }

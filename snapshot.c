@@ -639,10 +639,6 @@ void f2fs_cow_update_inode(struct inode *src_inode,struct inode *snap_inode){
 	snap_inode->dirtied_when = src_inode->dirtied_when;
 	snap_inode->dirtied_time_when = src_inode->dirtied_time_when;
     snap_inode->i_count = src_inode->i_count;
-	if (snap_inode->i_blocks > 0) {
-		unsigned int valid_blocks = snap_inode->i_blocks / (F2FS_BLKSIZE >> 9);
-		f2fs_i_blocks_write(snap_inode, valid_blocks, true, true);
-	}
 }
 
 static void __add_sum_entry(struct f2fs_sb_info *sbi, int type,
@@ -1388,8 +1384,7 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
             up_write(&sm->curmulref_lock);
         } else { // 跨块处理的情况
             // pr_info("[snapfs alloc]: tp42 !is_mulref\n");
-            down_write(&sm->curmulref_lock);
-            mutex_lock(&cmr->curmulref_mutex);
+            // 注意：这里不需要重复加锁，因为外层 if(!is_mulref) 已经加过锁了
             // page 1
             mulref_page = f2fs_get_meta_page(sbi, blkaddr1);
             if (IS_ERR(mulref_page)) {
@@ -2597,7 +2592,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
         return 1;
     }
     fi = F2FS_INODE(ipage);
-    isize  = le64_to_cpu(fi->i_size); 
+    isize  = le64_to_cpu(fi->i_size);
     blkbits = inode->i_blkbits;
 	max_lblk = (isize + (1ULL << blkbits) - 1) >> blkbits;
     i_nid[0] = le32_to_cpu(fi->i_nid[0]);
@@ -2606,18 +2601,27 @@ int f2fs_set_mulref_blocks(struct inode *inode)
     i_nid[3] = le32_to_cpu(fi->i_nid[3]);
     i_nid[4] = le32_to_cpu(fi->i_nid[4]);
 
+    // 保存 i_addr 数组到栈上，避免后续 ipage 释放后的 use-after-free
+    const long addr_count = ADDRS_PER_INODE(inode);
+    block_t *i_addr = kmalloc(addr_count * sizeof(block_t), GFP_NOFS);
+    if (!i_addr) {
+        f2fs_put_page(ipage, 1);
+        return -ENOMEM;
+    }
+    memcpy(i_addr, fi->i_addr, addr_count * sizeof(block_t));
+
 
 	for (lblk = 0; lblk < max_lblk; lblk++) {
 
         if(lblk < direct_index){//873
             // if(SNAPFS_DEBUG) pr_info("------------------direct_index------------------\n");
-            if (__is_valid_data_blkaddr(le32_to_cpu(fi->i_addr[lblk]))) {
+            if (__is_valid_data_blkaddr(le32_to_cpu(i_addr[lblk]))) {
                 // 开始set mulref flag
                 // if(check_sit_mulref_entry(sbi, le32_to_cpu(fi->i_addr[lblk]))){
                 //     pr_info("direct_index [%u] is mulref\n",lblk);
                 // }
-                // pr_info("level0_blks lblk %u, node id %u, addr %u\n",lblk,inode->i_ino,le32_to_cpu(fi->i_addr[lblk]));
-                ret = set_mulref_entry(sbi, le32_to_cpu(fi->i_addr[lblk]), inode->i_ino);
+                // pr_info("level0_blks lblk %u, node id %u, addr %u\n",lblk,inode->i_ino,le32_to_cpu(i_addr[lblk]));
+                ret = set_mulref_entry(sbi, le32_to_cpu(i_addr[lblk]), inode->i_ino);
                 if(ret){
                     pr_err("[snapfs cow22]: debug setmulref failed![direct_index]\n");
                     goto out;
@@ -2848,8 +2852,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             f2fs_put_page(indirect_page, 1);
             indirect_page = NULL;
             if(nid == 0){
-                f2fs_put_page(indirect_page, 1);
-                indirect_page = NULL;
+                // indirect_page 已经释放，不要重复释放
                 continue; 
             }
             indirect_page2 = f2fs_get_node_page(sbi, nid);
@@ -2866,8 +2869,7 @@ int f2fs_set_mulref_blocks(struct inode *inode)
             f2fs_put_page(indirect_page2, 1);
             indirect_page2 = NULL;
             if(nid == 0){
-                f2fs_put_page(indirect_page2, 1);
-                indirect_page2 = NULL;
+                // indirect_page2 已经释放，不要重复释放
                 continue; 
             }
             // pr_info("Tp 3 indirect2 [%u]\n",indirect2);
@@ -2905,6 +2907,9 @@ out:
     if(ipage){
         f2fs_put_page(ipage, 1);
         ipage = NULL;
+    }
+    if(i_addr){
+        kfree(i_addr);
     }
     return 0;
 }
@@ -3628,7 +3633,7 @@ int f2fs_cow(struct inode *pra_inode,
     son_dentry = d_find_any_alias(son_inode);
     if (!son_dentry)
 		goto next_free;
-    
+
     snap_dentry = d_find_any_alias(snap_inode);
     if (!snap_dentry)
 		goto next_free;
@@ -3906,7 +3911,8 @@ int f2fs_cow(struct inode *pra_inode,
         // }
         goto out_success; 
     }else{
-        pr_info("not found dentry, error? %u\n",ret);
+        if(SNAPFS_DEBUG) pr_info("[snapfs cow debug] not found dentry for file '%s' (inode %lu) in snap dir %lu\n",
+                               d_name->name, son_inode->i_ino, snap_inode->i_ino);
         goto next_free;
     }
 
