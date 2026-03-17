@@ -3647,9 +3647,10 @@ static int f2fs_magic_delete_entry(struct f2fs_sb_info *sbi,
 	if (mb->v_mgentry > 0)
 		mb->v_mgentry = cpu_to_le16(le16_to_cpu(mb->v_mgentry) - 1);
 	set_page_dirty(page);
-	f2fs_put_page(page, 1); 
-	// 从哈希表中删除 
+	f2fs_put_page(page, 1);
+	// 从哈希表中删除
 	radix_tree_delete(&mi->snap_tree, snap_ino);
+	atomic_dec(&mi->used_entries);
 	up_write(&mi->rwsem);
 	return 0;
 }

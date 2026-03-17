@@ -2231,6 +2231,12 @@ static inline unsigned int hop_distance(unsigned int home,
     return pos + table_size - home;
 }
 
+/* Get current hop_range value */
+static inline u32 get_hop_range(struct f2fs_sb_info *sbi)
+{
+    return sbi->magic_info->hop_range;
+}
+
 int f2fs_magic_lookup_or_alloc_hopscotch(
         struct f2fs_sb_info *sbi,
         u32 src_ino,
@@ -2248,8 +2254,10 @@ int f2fs_magic_lookup_or_alloc_hopscotch(
     struct f2fs_magic_block *mb;
     struct f2fs_magic_entry *me;
     u32 eid;
-    /* ---------- 1. 查询阶段：只扫 HOP_RANGE ---------- */
-    for (i = 0; i < HOP_RANGE; i++) {
+    u32 current_hop_range = get_hop_range(sbi);
+
+    /* ---------- 1. 查询阶段：只扫 current_hop_range ---------- */
+    for (i = 0; i < current_hop_range; i++) {
         eid = (home + i) % MAGIC_ENTRY_NR;
         blk = sbi->magic_info->magic_blkaddr + magic_entry_to_blkaddr(eid);
         off = magic_entry_to_offset(eid);
@@ -2301,11 +2309,11 @@ int f2fs_magic_lookup_or_alloc_hopscotch(
         return -ENOSPC;
 
     /* ---------- 3. 尝试把空槽搬回 home ---------- */
-    while (hop_distance(home, free, MAGIC_ENTRY_NR) >= HOP_RANGE) {
+    while (hop_distance(home, free, MAGIC_ENTRY_NR) >= current_hop_range) {
         bool moved = false;
         u32 j;
 
-        for (j = HOP_RANGE - 1; j > 0; j--) {
+        for (j = current_hop_range - 1; j > 0; j--) {
             u32 cand = (free + MAGIC_ENTRY_NR - j) % MAGIC_ENTRY_NR;
             block_t blk = sbi->magic_info->magic_blkaddr + magic_entry_to_blkaddr(cand);
             u32 off = magic_entry_to_offset(cand);
@@ -2328,7 +2336,7 @@ int f2fs_magic_lookup_or_alloc_hopscotch(
             me = &mb->mgentries[off];
             cand_home = magic_home(le32_to_cpu(me->src_ino));
 
-            if (hop_distance(cand_home, free, MAGIC_ENTRY_NR) < HOP_RANGE) {
+            if (hop_distance(cand_home, free, MAGIC_ENTRY_NR) < current_hop_range) {
                 /* swap */
                 memcpy(&mb->mgentries[magic_entry_to_offset(free)],
                        me, sizeof(*me));
@@ -2351,6 +2359,8 @@ int f2fs_magic_lookup_or_alloc_hopscotch(
     }
 
     /* ---------- 4. 成功返回 free slot ---------- */
+    atomic_inc(&sbi->magic_info->used_entries);
+
     *ret_entry_id = free;
     *ret_page = free_page;
     *ret_entry =
@@ -5379,4 +5389,106 @@ void f2fs_wakeup_mulref_compact_thread(struct f2fs_sb_info *sbi, bool urgent)
 		mt->urgent = true;
 
 	wake_up_interruptible(&mt->mulref_wait_queue);
+}
+
+/*
+ * Hop range adjustment thread
+ */
+static int hop_range_adjust_thread(void *data)
+{
+	struct f2fs_sb_info *sbi = data;
+	struct f2fs_magic_info *mi = sbi->magic_info;
+	struct f2fs_hop_range_kthread *ht = sbi->hop_range_thread;
+	u32 used, load_percent, old_range, new_range;
+
+	set_freezable();
+
+	do {
+		wait_event_interruptible_timeout(ht->hop_wait_queue,
+			kthread_should_stop(),
+			msecs_to_jiffies(ht->sleep_time));
+
+		if (kthread_should_stop())
+			break;
+
+		if (try_to_freeze())
+			continue;
+
+		/* Calculate load percentage */
+		used = atomic_read(&mi->used_entries);
+		load_percent = (used * 100) / MAGIC_ENTRY_NR;
+		old_range = mi->hop_range;
+		new_range = old_range;
+
+		/* Adjust hop_range based on load */
+		if (load_percent >= 80) {
+			new_range = HOP_RANGE_HIGH;
+		} else if (load_percent >= 50) {
+			new_range = HOP_RANGE_MED;
+		} else {
+			new_range = HOP_RANGE_INIT;
+		}
+
+		if (new_range != old_range) {
+			mi->hop_range = new_range;
+			pr_info("[snapfs hop_range]: adjusted %u -> %u (load=%u%%, used=%u/%u)\n",
+				old_range, new_range, load_percent, used, MAGIC_ENTRY_NR);
+		}
+
+	} while (!kthread_should_stop());
+
+	return 0;
+}
+
+/*
+ * Start hop range adjustment thread
+ */
+int f2fs_start_hop_range_thread(struct f2fs_sb_info *sbi)
+{
+	struct f2fs_hop_range_kthread *ht;
+	struct task_struct *task;
+
+	ht = kzalloc(sizeof(struct f2fs_hop_range_kthread), GFP_KERNEL);
+	if (!ht)
+		return -ENOMEM;
+
+	init_waitqueue_head(&ht->hop_wait_queue);
+	ht->sleep_time = HOP_RANGE_ADJUST_INTERVAL;
+
+	sbi->hop_range_thread = ht;
+
+	task = kthread_run(hop_range_adjust_thread, sbi, "f2fs_hop_range");
+	if (IS_ERR(task)) {
+		kfree(ht);
+		sbi->hop_range_thread = NULL;
+		return PTR_ERR(task);
+	}
+
+	ht->f2fs_hop_task = task;
+
+	pr_info("[snapfs hop_range]: thread started, check interval=%ums\n",
+		ht->sleep_time);
+
+	return 0;
+}
+
+/*
+ * Stop hop range adjustment thread
+ */
+void f2fs_stop_hop_range_thread(struct f2fs_sb_info *sbi)
+{
+	struct f2fs_hop_range_kthread *ht = sbi->hop_range_thread;
+
+	if (!ht)
+		return;
+
+	if (ht->f2fs_hop_task) {
+		kthread_stop(ht->f2fs_hop_task);
+		ht->f2fs_hop_task = NULL;
+	}
+
+	pr_info("[snapfs hop_range]: thread stopped\n");
+
+	kfree(ht);
+	sbi->hop_range_thread = NULL;
 }

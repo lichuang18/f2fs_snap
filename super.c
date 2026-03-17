@@ -1589,6 +1589,9 @@ static void f2fs_put_super(struct super_block *sb)
 	/* Stop mulref compact thread */
 	f2fs_stop_mulref_compact_thread(sbi);
 
+	/* Stop hop range adjustment thread */
+	f2fs_stop_hop_range_thread(sbi);
+
 	/*
 	 * We don't need to do checkpoint when superblock is clean.
 	 * But, the previous checkpoint was not done by umount, it needs to do
@@ -4412,6 +4415,12 @@ reset_checkpoint:
 		err = f2fs_start_mulref_compact_thread(sbi);
 		if (err)
 			f2fs_warn(sbi, "failed to start mulref compact thread");
+		/* 不作为致命错误，继续挂载 */
+
+		/* Start hop range adjustment thread */
+		err = f2fs_start_hop_range_thread(sbi);
+		if (err)
+			f2fs_warn(sbi, "failed to start hop range thread");
 		/* 不作为致命错误，继续挂载 */
 	}
 

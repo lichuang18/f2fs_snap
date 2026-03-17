@@ -5654,40 +5654,47 @@ static void init_min_max_mtime(struct f2fs_sb_info *sbi)
 }
 
 static int rebuild_snap_index(struct f2fs_sb_info *sbi)
-{ 
-	struct f2fs_magic_info *mi = sbi->magic_info; 
-	block_t blkaddr;  
-	struct page *page;  
-	struct f2fs_magic_block *mb;  
-	int i, j; 
+{
+	struct f2fs_magic_info *mi = sbi->magic_info;
+	block_t blkaddr;
+	struct page *page;
+	struct f2fs_magic_block *mb;
+	int i, j;
+	u32 entry_count = 0;
 
-	INIT_RADIX_TREE(&mi->snap_tree, GFP_NOFS); 
+	INIT_RADIX_TREE(&mi->snap_tree, GFP_NOFS);
 	// 遍历所有 magic block（约 2240 个）
 	for (i = 0; i < (MAGIC_ENTRY_NR / MGENTRY_PER_BLOCK + 1); i++) {
 		blkaddr = mi->magic_blkaddr + i;
-		page = f2fs_get_meta_page(sbi, blkaddr); 
+		page = f2fs_get_meta_page(sbi, blkaddr);
 		if (IS_ERR(page))
 			continue;
 
-		mb = (struct f2fs_magic_block *)page_address(page); 
+		mb = (struct f2fs_magic_block *)page_address(page);
 		// 跳过空块
-		if (le16_to_cpu(mb->v_mgentry) == 0) { 
+		if (le16_to_cpu(mb->v_mgentry) == 0) {
 			f2fs_put_page(page, 1);
-			continue; 
+			continue;
 		}
-		// 遍历块内的 entry 
+		// 遍历块内的 entry
 		for (j = 0; j < MGENTRY_PER_BLOCK; j++) {
-			if (!test_bit(j, (unsigned long *)(mb->multi_bitmap))) 
+			if (!test_bit(j, (unsigned long *)(mb->multi_bitmap)))
 				continue;
 			struct f2fs_magic_entry *me = &mb->mgentries[j];
-			u32 snap_ino = le32_to_cpu(me->snap_ino); 
+			u32 snap_ino = le32_to_cpu(me->snap_ino);
 			u32 entry_id = i * MGENTRY_PER_BLOCK + j;
-			// 插入哈希表 
+			// 插入哈希表
 			radix_tree_insert(&mi->snap_tree, snap_ino, (void *)(unsigned long)entry_id);
-		} 
-		f2fs_put_page(page, 1); 
+			entry_count++;
+		}
+		f2fs_put_page(page, 1);
 	}
-	return 0; 
+
+	/* Initialize used_entries counter */
+	atomic_set(&mi->used_entries, entry_count);
+	pr_info("[rebuild snap index]: found %u existing magic entries\n", entry_count);
+
+	return 0;
 } 
 
 int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
@@ -5721,6 +5728,11 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	// mutex_init(&magic_info->mutex);
 	init_rwsem(&magic_info->rwsem);
 	sbi->magic_info = magic_info;
+
+	/* Initialize hop_range */
+	magic_info->hop_range = HOP_RANGE_INIT;
+	atomic_set(&magic_info->used_entries, 0);
+
 	// spin_lock_init(&sbi->magic_info->lock);
 	pr_info("[build sm]: ============ start ===========\n");
 	magic_info->magic_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);

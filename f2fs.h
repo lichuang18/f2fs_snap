@@ -37,7 +37,11 @@
 #define TOTAL_MAGIC_BLK 2048 //4M
 #define MAGIC_ENTRY_NR     311296   // 总 entry 数
 
-#define HOP_RANGE 32
+/* Hop range configuration */
+#define HOP_RANGE_INIT		4	/* initial hop_range */
+#define HOP_RANGE_MED		16	/* hop_range at 50% load */
+#define HOP_RANGE_HIGH		32	/* hop_range at 80% load */
+#define HOP_RANGE_ADJUST_INTERVAL	5000	/* check interval in ms */
 
 
 #ifdef CONFIG_F2FS_CHECK_FS
@@ -1060,13 +1064,17 @@ struct f2fs_magic_block {
 
 
 struct f2fs_magic_info {
-	// struct mutex mutex;   
+	// struct mutex mutex;
 	struct rw_semaphore rwsem;
 	block_t magic_blkaddr;		/* start block address of magic area */
 	__le32 segment_count_magic; // 2MB * segment_count_magic
 	block_t mulref_flag_blkaddr;
 	block_t mulref_blkaddr;
 	struct radix_tree_root snap_tree;
+
+	/* dynamic hop_range */
+	u32 hop_range;			/* current hop_range value */
+	atomic_t used_entries;		/* number of used magic entries */
 };
 
 struct curmulref_info {
@@ -1104,6 +1112,13 @@ struct f2fs_mulref_compact_kthread {
 
 	/* state */
 	bool urgent;                      /* urgent mode flag */
+};
+
+/* Hop range adjustment thread */
+struct f2fs_hop_range_kthread {
+	struct task_struct *f2fs_hop_task;
+	wait_queue_head_t hop_wait_queue;
+	unsigned int sleep_time;	/* sleep time in ms */
 };
 
 struct f2fs_sm_info {
@@ -1793,6 +1808,7 @@ struct f2fs_sb_info {
 						 */
 	struct f2fs_gc_kthread	*gc_thread;	/* GC thread */
 	struct f2fs_mulref_compact_kthread *mulref_compact_thread; /* mulref compact thread */
+	struct f2fs_hop_range_kthread *hop_range_thread; /* hop range adjustment thread */
 	struct atgc_management am;		/* atgc management */
 	unsigned int cur_victim_sec;		/* current victim section num */
 	unsigned int gc_mode;			/* current GC state */
