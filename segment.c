@@ -5722,6 +5722,7 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	struct f2fs_sm_info *sm_info;
 	struct f2fs_magic_info *magic_info;
 	int err;
+	int j;
 	block_t blks_per_mulref_flag;
 	sm_info = f2fs_kzalloc(sbi, sizeof(struct f2fs_sm_info), GFP_KERNEL);
 	if (!sm_info)
@@ -5777,11 +5778,41 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	if (!magic_info->redo_info)
 		return -ENOMEM;
 	mutex_init(&magic_info->redo_info->lock);
+		mutex_init(&magic_info->redo_info->alloc_lock);
 	magic_info->redo_info->journal_blkaddr = magic_info->journal_blkaddr;
 	magic_info->redo_info->journal_blocks = magic_info->journal_blocks;
+		magic_info->redo_info->nr_slots = magic_info->journal_blocks;
+		if (magic_info->redo_info->nr_slots < 2)
+			return -EINVAL;
+		magic_info->redo_info->cow_nr_slots = magic_info->redo_info->nr_slots - 1;
+		magic_info->redo_info->overwrite_slot = magic_info->redo_info->nr_slots - 1;
 	magic_info->redo_info->next_txid = 1;
 	magic_info->redo_info->interval_ops = 1;
 	magic_info->redo_info->ops_since_sync = 0;
+	magic_info->redo_info->overwrite_redo_mode = 1;
+	magic_info->redo_info->overwrite_interval_ops = 1;
+	magic_info->redo_info->overwrite_ops_since_sync = 0;
+		magic_info->redo_info->slot_inuse_bitmap = bitmap_zalloc(
+			magic_info->redo_info->nr_slots, GFP_KERNEL);
+		if (!magic_info->redo_info->slot_inuse_bitmap)
+			return -ENOMEM;
+		magic_info->redo_info->slot_gens = kcalloc(
+			magic_info->redo_info->nr_slots,
+			sizeof(u32), GFP_KERNEL);
+		if (!magic_info->redo_info->slot_gens)
+			return -ENOMEM;
+		magic_info->redo_info->slot_tx_seq = kcalloc(
+			magic_info->redo_info->nr_slots,
+			sizeof(u32), GFP_KERNEL);
+		if (!magic_info->redo_info->slot_tx_seq)
+			return -ENOMEM;
+		magic_info->redo_info->slot_locks = kcalloc(
+			magic_info->redo_info->nr_slots,
+			sizeof(struct mutex), GFP_KERNEL);
+		if (!magic_info->redo_info->slot_locks)
+			return -ENOMEM;
+		for (j = 0; j < magic_info->redo_info->nr_slots; j++)
+			mutex_init(&magic_info->redo_info->slot_locks[j]);
 
 	err = rebuild_snap_index(sbi);
 	if(err){
@@ -5967,7 +5998,9 @@ void f2fs_destroy_segment_manager(struct f2fs_sb_info *sbi)
 	destroy_free_segmap(sbi);
 	destroy_sit_info(sbi);
 	if (sbi->magic_info && sbi->magic_info->redo_info) {
-		kfree(sbi->magic_info->redo_info);
+		bitmap_free(sbi->magic_info->redo_info->slot_inuse_bitmap);
+			kfree(sbi->magic_info->redo_info->slot_locks);
+			kfree(sbi->magic_info->redo_info);
 		sbi->magic_info->redo_info = NULL;
 	}
 	sbi->sm_info = NULL;

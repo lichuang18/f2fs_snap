@@ -3663,7 +3663,7 @@ static int f2fs_resume_snapshot_cow(struct file *filp)
 
 	file_start_write(filp);
 	inode_lock(inode);
-	ret = snapfs_resume_cow_from_slot(sbi);
+	ret = snapfs_resume_cow_from_slot(sbi, inode->i_ino);
 	inode_unlock(inode);
 	file_end_write(filp);
 	return ret;

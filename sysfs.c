@@ -323,6 +323,55 @@ static ssize_t f2fs_sbi_show(struct f2fs_attr *a,
 			sbi->magic_info->redo_info->interval_ops);
 	}
 
+	if (!strcmp(a->attr.name, "snap_overwrite_redo_mode")) {
+		if (!sbi->magic_info || !sbi->magic_info->redo_info)
+			return -EINVAL;
+		return sysfs_emit(buf, "%u\n",
+			sbi->magic_info->redo_info->overwrite_redo_mode);
+	}
+
+	if (!strcmp(a->attr.name, "snap_overwrite_redo_interval_ops")) {
+		if (!sbi->magic_info || !sbi->magic_info->redo_info)
+			return -EINVAL;
+		return sysfs_emit(buf, "%u\n",
+			sbi->magic_info->redo_info->overwrite_interval_ops);
+	}
+
+	if (!strcmp(a->attr.name, "snap_cow_redo_commits")) {
+		if (!sbi->magic_info || !sbi->magic_info->redo_info)
+			return -EINVAL;
+		return sysfs_emit(buf, "%llu\n",
+			sbi->magic_info->redo_info->cow_redo_commits);
+	}
+
+	if (!strcmp(a->attr.name, "snap_cow_redo_replays")) {
+		if (!sbi->magic_info || !sbi->magic_info->redo_info)
+			return -EINVAL;
+		return sysfs_emit(buf, "%llu\n",
+			sbi->magic_info->redo_info->cow_redo_replays);
+	}
+
+	if (!strcmp(a->attr.name, "snap_overwrite_redo_commits")) {
+		if (!sbi->magic_info || !sbi->magic_info->redo_info)
+			return -EINVAL;
+		return sysfs_emit(buf, "%llu\n",
+			sbi->magic_info->redo_info->overwrite_redo_commits);
+	}
+
+	if (!strcmp(a->attr.name, "snap_overwrite_redo_replays")) {
+		if (!sbi->magic_info || !sbi->magic_info->redo_info)
+			return -EINVAL;
+		return sysfs_emit(buf, "%llu\n",
+			sbi->magic_info->redo_info->overwrite_redo_replays);
+	}
+
+	if (!strcmp(a->attr.name, "snap_overwrite_redo_conflicts")) {
+		if (!sbi->magic_info || !sbi->magic_info->redo_info)
+			return -EINVAL;
+		return sysfs_emit(buf, "%llu\n",
+			sbi->magic_info->redo_info->overwrite_redo_conflicts);
+	}
+
 	ui = (unsigned int *)(ptr + a->offset);
 
 	return sprintf(buf, "%u\n", *ui);
@@ -421,6 +470,38 @@ out:
 		sbi->magic_info->redo_info->interval_ops = interval;
 		if (sbi->magic_info->redo_info->ops_since_sync >= interval)
 			sbi->magic_info->redo_info->ops_since_sync = 0;
+		return count;
+	}
+
+	if (!strcmp(a->attr.name, "snap_overwrite_redo_mode")) {
+		unsigned int mode;
+
+		ret = kstrtouint(skip_spaces(buf), 0, &mode);
+		if (ret)
+			return ret;
+		if (!sbi->magic_info || !sbi->magic_info->redo_info)
+			return -EINVAL;
+		if (mode > 2)
+			return -EINVAL;
+		sbi->magic_info->redo_info->overwrite_redo_mode = mode;
+		if (sbi->magic_info->redo_info->overwrite_redo_mode)
+			sbi->magic_info->redo_info->overwrite_ops_since_sync = 0;
+		return count;
+	}
+
+	if (!strcmp(a->attr.name, "snap_overwrite_redo_interval_ops")) {
+		unsigned int interval;
+
+		ret = kstrtouint(skip_spaces(buf), 0, &interval);
+		if (ret)
+			return ret;
+		if (!sbi->magic_info || !sbi->magic_info->redo_info)
+			return -EINVAL;
+		if (interval == 0)
+			interval = 1;
+		sbi->magic_info->redo_info->overwrite_interval_ops = interval;
+		if (sbi->magic_info->redo_info->overwrite_ops_since_sync >= interval)
+			sbi->magic_info->redo_info->overwrite_ops_since_sync = 0;
 		return count;
 	}
 
@@ -821,6 +902,57 @@ static struct f2fs_attr f2fs_attr_snap_redo_interval_ops = {
 	.offset = 0,
 };
 
+static struct f2fs_attr f2fs_attr_snap_overwrite_redo_mode = {
+	.attr = {.name = "snap_overwrite_redo_mode", .mode = 0644 },
+	.show = f2fs_sbi_show,
+	.store = f2fs_sbi_store,
+	.struct_type = F2FS_SBI,
+	.offset = 0,
+};
+
+static struct f2fs_attr f2fs_attr_snap_overwrite_redo_interval_ops = {
+	.attr = {.name = "snap_overwrite_redo_interval_ops", .mode = 0644 },
+	.show = f2fs_sbi_show,
+	.store = f2fs_sbi_store,
+	.struct_type = F2FS_SBI,
+	.offset = 0,
+};
+
+static struct f2fs_attr f2fs_attr_snap_cow_redo_commits = {
+	.attr = {.name = "snap_cow_redo_commits", .mode = 0444 },
+	.show = f2fs_sbi_show,
+	.struct_type = F2FS_SBI,
+	.offset = 0,
+};
+
+static struct f2fs_attr f2fs_attr_snap_cow_redo_replays = {
+	.attr = {.name = "snap_cow_redo_replays", .mode = 0444 },
+	.show = f2fs_sbi_show,
+	.struct_type = F2FS_SBI,
+	.offset = 0,
+};
+
+static struct f2fs_attr f2fs_attr_snap_overwrite_redo_commits = {
+	.attr = {.name = "snap_overwrite_redo_commits", .mode = 0444 },
+	.show = f2fs_sbi_show,
+	.struct_type = F2FS_SBI,
+	.offset = 0,
+};
+
+static struct f2fs_attr f2fs_attr_snap_overwrite_redo_replays = {
+	.attr = {.name = "snap_overwrite_redo_replays", .mode = 0444 },
+	.show = f2fs_sbi_show,
+	.struct_type = F2FS_SBI,
+	.offset = 0,
+};
+
+static struct f2fs_attr f2fs_attr_snap_overwrite_redo_conflicts = {
+	.attr = {.name = "snap_overwrite_redo_conflicts", .mode = 0444 },
+	.show = f2fs_sbi_show,
+	.struct_type = F2FS_SBI,
+	.offset = 0,
+};
+
 #define ATTR_LIST(name) (&f2fs_attr_##name.attr)
 static struct attribute *f2fs_attrs[] = {
 	ATTR_LIST(gc_urgent_sleep_time),
@@ -900,6 +1032,13 @@ static struct attribute *f2fs_attrs[] = {
 	ATTR_LIST(gc_segment_mode),
 	ATTR_LIST(gc_reclaimed_segments),
 	ATTR_LIST(snap_redo_interval_ops),
+	ATTR_LIST(snap_overwrite_redo_mode),
+	ATTR_LIST(snap_overwrite_redo_interval_ops),
+	ATTR_LIST(snap_cow_redo_commits),
+	ATTR_LIST(snap_cow_redo_replays),
+	ATTR_LIST(snap_overwrite_redo_commits),
+	ATTR_LIST(snap_overwrite_redo_replays),
+	ATTR_LIST(snap_overwrite_redo_conflicts),
 	NULL,
 };
 ATTRIBUTE_GROUPS(f2fs);

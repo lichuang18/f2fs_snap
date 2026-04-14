@@ -1116,6 +1116,13 @@ enum snapfs_progress_state {
 	SNAPFS_PROGRESS_EMPTY = 0,
 	SNAPFS_PROGRESS_GROUP_IN_PROGRESS = 1,
 	SNAPFS_PROGRESS_BLOCK_TXN_COMMITTED = 2,
+	SNAPFS_OVERWRITE_EMPTY = 3,
+	SNAPFS_OVERWRITE_TXN_COMMITTED = 4,
+};
+
+enum snapfs_redo_record_type {
+	SNAPFS_REDO_REC_COW = 1,
+	SNAPFS_REDO_REC_OVERWRITE = 2,
 };
 
 struct snap_redo_slot {
@@ -1123,6 +1130,9 @@ struct snap_redo_slot {
 	__le16 version;
 	__le16 state;
 	__le64 txid;
+	__le32 slot_id;
+	__le32 slot_gen;
+	__le32 tx_seq;
 
 	__le32 src_ino;
 	__le32 snap_ino;
@@ -1131,27 +1141,49 @@ struct snap_redo_slot {
 	__le16 valid_bits;
 	__u8 bitmap[SNAPFS_PROGRESS_BITMAP_BYTES];
 
-	__u8 has_pending_txn;
+	__u8 pending_valid;
+	__u8 pending_bit;
 	__u8 nr_mulref_ops;
 	__u8 flags;
+	__u8 record_type;
+	__u8 old_sum_ver;
 	__u8 reserved0;
+	__u8 reserved1;
 
 	__le32 op_type;
 	__le32 data_blkaddr;
+	__le32 old_sum_nid;
+	__le16 old_sum_ofs;
 	struct snap_redo_mulref_op mulref_ops[SNAP_REDO_MAX_MULREF_OPS];
 	struct snap_redo_summary_op summary_op;
 	struct snap_redo_sit_op sit_op;
 	__le32 crc;
-	__u8 reserved[4000 - (4 + 2 + 2 + 8 + 4 + 4 + 4 + 2 + 2 + SNAPFS_PROGRESS_BITMAP_BYTES + 1 + 1 + 1 + 1 + 4 + 4) - (SNAP_REDO_MAX_MULREF_OPS * sizeof(struct snap_redo_mulref_op)) - sizeof(struct snap_redo_summary_op) - sizeof(struct snap_redo_sit_op) - 4];
+	__u8 reserved[4000 - (4 + 2 + 2 + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 2 + 2 + SNAPFS_PROGRESS_BITMAP_BYTES + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 4 + 4 + 4 + 2) - (SNAP_REDO_MAX_MULREF_OPS * sizeof(struct snap_redo_mulref_op)) - sizeof(struct snap_redo_summary_op) - sizeof(struct snap_redo_sit_op) - 4];
 } __packed;
 
 struct snap_redo_info {
 	struct mutex lock;
+	struct mutex alloc_lock;
+	struct mutex *slot_locks;
+	unsigned long *slot_inuse_bitmap;
+	u32 *slot_gens;
+	u32 *slot_tx_seq;
 	block_t journal_blkaddr;
 	unsigned int journal_blocks;
+	unsigned int nr_slots;
+	unsigned int cow_nr_slots;
+	unsigned int overwrite_slot;
 	u64 next_txid;
 	unsigned int interval_ops;
 	unsigned int ops_since_sync;
+	unsigned int overwrite_redo_mode;
+	unsigned int overwrite_interval_ops;
+	unsigned int overwrite_ops_since_sync;
+	u64 cow_redo_commits;
+	u64 cow_redo_replays;
+	u64 overwrite_redo_commits;
+	u64 overwrite_redo_replays;
+	u64 overwrite_redo_conflicts;
 };
 
 struct f2fs_magic_info {

@@ -1,0 +1,72 @@
+SnapFS Snapshot COW Redo Journal
+并发与恢复补充设计说明
+目标：在保持 redo payload 极小的前提下，将当前单上下文模型扩展为多文件并发、可恢复、可证明正确的 journal 设计。
+核心结论
+1 slot = 1 活跃上下文；slot 内串行，slot 间并行；恢复必须扫描整个 journal area；tx 身份由 (slot_id, slot_gen, tx_seq) 判定；redo 不猜 pending bit，必须显式记录 pending_bit。
+
+1. 设计约束
+•	redo payload 必须保持为最小元数据重做信息，4KiB slot 必须能完整容纳一个上下文。若放不下，说明设计已退化成预备份/影子拷贝思路。
+•	第一版不做 1 个 slot 内多个上下文打包，也不做同一文件多 pending block 并发；先把正确性边界收紧。
+•	并发的隔离单位不是单条 metadata update，而是活跃 COW 上下文。
+2. 当前问题
+•	若代码路径实际上只写一个固定 journal block，则真实语义仍是单 slot，全局串行才能勉强成立，无法真正支撑多文件并发。
+•	全局 txid 只能表达顺序号，不能表达 slot 是否复用、owner 是否切换、当前记录属于哪一代上下文。
+•	恢复阶段依赖 first incomplete bit 去猜当前 redo 对应块，语义脆弱；一旦存在跳位、重试、slot 复用或后续优化，就会误判。
+3. 目标模型
+•	journal 组织为 slot array：每个 4KiB block 是一个独立 slot。
+•	1 个活跃文件上下文独占 1 个 slot；不同文件占不同 slot 并行推进。
+•	slot 内任意时刻最多只有 1 个 pending block txn。
+•	同一文件内部首次 COW 先串行，后续再评估更细粒度并发。
+4. Slot 头部最小字段
+字段	作用	说明
+slot_id	槽位标识	固定编号，用于定位 slot
+slot_gen	槽位代次	slot 每次重新分配给新 owner 时递增，解决 slot 复用歧义
+tx_seq	slot 内推进序号	仅在当前 owner 代次内单调递增
+src_ino, snap_ino	owner 身份	标识该上下文属于哪个文件/快照对
+node_nid, node_ofs	处理范围	标识当前处理的 node/group 上下文
+progress_bitmap	已完成进度	记录当前范围内已完成 bit
+pending_valid, pending_bit	当前挂起块	显式指出 redo payload 对应哪个 bit
+redo payload	最小重做信息	仅包含当前 pending block 所需的元数据 redo
+crc	完整性校验	用于识别半写入或 torn write
+5. 运行流程
+5.1 分配上下文
+•	查 ctx_map[(src_ino, snap_ino)]；若不存在，则从 free slot 中分配一个 slot。
+•	初始化 slot：写 owner、slot_gen、清空 bitmap，状态置为 GROUP_IN_PROGRESS。
+•	将 ctx 与 slot 绑定，后续该文件所有首次 COW 都进入该 slot。
+5.2 提交一个 pending block
+•	锁住该 slot。
+•	构造当前 bit 的最小 redo payload。
+•	写 slot：pending_valid=1, pending_bit=<bit>, state=BLOCK_TXN_COMMITTED, tx_seq++。
+•	持久化 slot 后，再 apply home metadata。
+•	home metadata 持久化后，更新 bitmap[bit]=1，清 pending_valid，state 回到 GROUP_IN_PROGRESS，tx_seq++。
+•	释放 slot 锁。
+5.3 释放上下文
+•	文件当前 COW 范围全部完成后，将 slot 置 EMPTY。
+•	slot_gen++，表示后续重分配属于新一代 owner。
+•	从 ctx_map 删除映射，slot 回收到 free list。
+6. 恢复规则
+•	挂载恢复必须扫描整个 journal area，而不是只读单个 journal block。
+•	EMPTY：跳过。
+•	GROUP_IN_PROGRESS：根据 owner 与 bitmap 重建上下文，从未完成 bit 继续推进。
+•	BLOCK_TXN_COMMITTED 且 pending_valid=1：按 pending_bit 重放 redo payload 到 home；完成后将该 bit 置已完成，再恢复为 GROUP_IN_PROGRESS。
+•	校验失败（magic/version/crc 异常）时，不应盲目 replay；应进入保守恢复路径。
+7. 设计不变量
+编号	不变量
+I1	任意时刻，一个 slot 只属于一个 owner。
+I2	任意时刻，一个 slot 内最多一个 pending block txn。
+I3	pending_valid=1 时，redo payload 必须完整可校验。
+I4	bitmap 中已完成 bit 必须已经完成 home apply。
+I5	slot 重分配时 slot_gen 必须递增。
+I6	恢复以 (slot_id, slot_gen, tx_seq) 判定上下文身份与先后关系。
+I7	slot 满时只能阻塞或降级串行，不能让不同上下文覆盖同一 slot。
+8. 关于并发数与 slot 容量
+•	“1 segment = 512 个 4KiB block = 512 个 slot”只是在 2MiB segment、4KiB block 假设下的理论上限，不是充分容量保证。
+•	是否够用取决于活跃上下文数量，而不是文件总数；更准确地说，取决于“进入 COW 的上下文到达速率 × 平均持有 slot 时间”。
+•	第一版建议将 slot 数设计为可配置，并允许使用多个 segment 扩展 journal 池；容量问题不应反向推动 slot 语义复杂化。
+9. 实现优先级
+•	先把 journal 从单 block 改成 slot array。
+•	补齐 slot_gen、tx_seq、pending_bit。
+•	恢复逻辑改为全 journal 扫描。
+•	维持“多文件并发、单文件串行、slot 内单 pending block”的边界。
+•	确认 4KiB 内上下文字段布局稳定，再讨论 sub-slot packing 等优化。
+
