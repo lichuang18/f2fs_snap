@@ -316,6 +316,13 @@ static ssize_t f2fs_sbi_show(struct f2fs_attr *a,
 			sbi->gc_reclaimed_segs[sbi->gc_segment_mode]);
 	}
 
+	if (!strcmp(a->attr.name, "snap_redo_interval_ops")) {
+		if (!sbi->magic_info || !sbi->magic_info->redo_info)
+			return -EINVAL;
+		return sysfs_emit(buf, "%u\n",
+			sbi->magic_info->redo_info->interval_ops);
+	}
+
 	ui = (unsigned int *)(ptr + a->offset);
 
 	return sprintf(buf, "%u\n", *ui);
@@ -398,6 +405,22 @@ out:
 				return ret;
 		}
 
+		return count;
+	}
+
+	if (!strcmp(a->attr.name, "snap_redo_interval_ops")) {
+		unsigned int interval;
+
+		ret = kstrtouint(skip_spaces(buf), 0, &interval);
+		if (ret)
+			return ret;
+		if (!sbi->magic_info || !sbi->magic_info->redo_info)
+			return -EINVAL;
+		if (interval == 0)
+			interval = 1;
+		sbi->magic_info->redo_info->interval_ops = interval;
+		if (sbi->magic_info->redo_info->ops_since_sync >= interval)
+			sbi->magic_info->redo_info->ops_since_sync = 0;
 		return count;
 	}
 
@@ -790,6 +813,13 @@ F2FS_RW_ATTR(ATGC_INFO, atgc_management, atgc_age_threshold, age_threshold);
 F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, seq_file_ra_mul, seq_file_ra_mul);
 F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, gc_segment_mode, gc_segment_mode);
 F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, gc_reclaimed_segments, gc_reclaimed_segs);
+static struct f2fs_attr f2fs_attr_snap_redo_interval_ops = {
+	.attr = {.name = "snap_redo_interval_ops", .mode = 0644 },
+	.show = f2fs_sbi_show,
+	.store = f2fs_sbi_store,
+	.struct_type = F2FS_SBI,
+	.offset = 0,
+};
 
 #define ATTR_LIST(name) (&f2fs_attr_##name.attr)
 static struct attribute *f2fs_attrs[] = {
@@ -869,6 +899,7 @@ static struct attribute *f2fs_attrs[] = {
 	ATTR_LIST(seq_file_ra_mul),
 	ATTR_LIST(gc_segment_mode),
 	ATTR_LIST(gc_reclaimed_segments),
+	ATTR_LIST(snap_redo_interval_ops),
 	NULL,
 };
 ATTRIBUTE_GROUPS(f2fs);

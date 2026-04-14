@@ -59,8 +59,12 @@ void update_f2fs_inode(struct f2fs_inode *src_fi,struct f2fs_inode *new_fi);
 void update_f2fs_inode_inline(struct f2fs_inode *src_fi,struct f2fs_inode *new_fi);
 void f2fs_cow_update_inode(struct inode *src_inode,struct inode *snap_inode);
 int f2fs_cow_copy_all_nodes(struct inode *src_inode, struct inode *snap_inode);
+int f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino);
 bool check_sit_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr);
+void update_sit_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr, bool set);
 void f2fs_dump_nonzero_sit_mulref_entries_simple(struct f2fs_sb_info *sbi);
+int snapfs_recover_journal(struct f2fs_sb_info *sbi);
+int snapfs_resume_cow_from_slot(struct f2fs_sb_info *sbi);
 
 /* mulref compact thread */
 int f2fs_start_mulref_compact_thread(struct f2fs_sb_info *sbi);

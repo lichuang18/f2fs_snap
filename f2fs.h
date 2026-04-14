@@ -36,6 +36,10 @@
 
 #define TOTAL_MAGIC_BLK 2048 //4M
 #define MAGIC_ENTRY_NR     311296   // 总 entry 数
+#define SNAP_REDO_RESERVED_SEGS 1
+#define SNAP_REDO_MAGIC 0x534e4150
+#define SNAP_REDO_VERSION 1
+#define SNAP_REDO_MAX_ENTRIES 8
 
 /* Hop range configuration */
 #define HOP_RANGE_INIT		4	/* initial hop_range */
@@ -128,6 +132,7 @@ extern const char *f2fs_fault_name[FAULT_MAX];
 #define F2FS_IOC_SNAPSHOT   _IOW(F2FS_IOCTL_MAGIC, 28, char*[3])
 #define F2FS_IOC_SNAPDUMP   _IOW(F2FS_IOCTL_MAGIC, 29, char*[2])
 #define F2FS_IOC_DELETE_SNAPSHOT _IOW(F2FS_IOCTL_MAGIC, 30, char*)
+#define F2FS_IOC_RESUME_COW _IO(F2FS_IOCTL_MAGIC, 31)
 #define ver_after(a, b)	(typecheck(unsigned long long, a) &&		\
 		typecheck(unsigned long long, b) &&			\
 		((long long)((a) - (b)) > 0))
@@ -1063,14 +1068,103 @@ struct f2fs_magic_block {
 } __packed;
 
 
+enum snap_redo_state {
+	SNAP_REDO_EMPTY = 0,
+	SNAP_REDO_COMMITTED = 1,
+};
+
+enum snap_redo_op_type {
+	SNAP_REDO_NORMAL_TO_MR = 1,
+	SNAP_REDO_APPEND_REF,
+	SNAP_REDO_DROP_HEAD_STILL_MR,
+	SNAP_REDO_DROP_HEAD_TO_SINGLE,
+	SNAP_REDO_DROP_MIDDLE,
+	SNAP_REDO_DROP_TAIL_STILL_MR,
+	SNAP_REDO_DROP_TAIL_TO_SINGLE,
+};
+
+#define SNAP_REDO_BLK_MULREF	1
+#define SNAP_REDO_BLK_SUMMARY	2
+#define SNAP_REDO_BLK_SIT_MULREF	3
+
+#define SNAP_REDO_F_HAS_SUMMARY	(1U << 0)
+#define SNAP_REDO_F_HAS_SIT	(1U << 1)
+#define SNAP_REDO_MAX_MULREF_OPS	6
+#define SNAPFS_PROGRESS_BITMAP_BITS	1018
+#define SNAPFS_PROGRESS_BITMAP_BYTES	((SNAPFS_PROGRESS_BITMAP_BITS + 7) / 8)
+
+struct snap_redo_mulref_op {
+	__le32 mr_blkaddr;
+	__le16 idx;
+	__u8 valid;
+	__u8 reserved;
+	struct f2fs_mulref_entry entry;
+} __packed;
+
+struct snap_redo_summary_op {
+	__le32 data_blkaddr;
+	struct f2fs_summary sum;
+} __packed;
+
+struct snap_redo_sit_op {
+	__le32 data_blkaddr;
+	__u8 set;
+	__u8 reserved[3];
+} __packed;
+
+enum snapfs_progress_state {
+	SNAPFS_PROGRESS_EMPTY = 0,
+	SNAPFS_PROGRESS_GROUP_IN_PROGRESS = 1,
+	SNAPFS_PROGRESS_BLOCK_TXN_COMMITTED = 2,
+};
+
+struct snap_redo_slot {
+	__le32 magic;
+	__le16 version;
+	__le16 state;
+	__le64 txid;
+
+	__le32 src_ino;
+	__le32 snap_ino;
+	__le32 node_nid;
+	__le16 node_ofs;
+	__le16 valid_bits;
+	__u8 bitmap[SNAPFS_PROGRESS_BITMAP_BYTES];
+
+	__u8 has_pending_txn;
+	__u8 nr_mulref_ops;
+	__u8 flags;
+	__u8 reserved0;
+
+	__le32 op_type;
+	__le32 data_blkaddr;
+	struct snap_redo_mulref_op mulref_ops[SNAP_REDO_MAX_MULREF_OPS];
+	struct snap_redo_summary_op summary_op;
+	struct snap_redo_sit_op sit_op;
+	__le32 crc;
+	__u8 reserved[4000 - (4 + 2 + 2 + 8 + 4 + 4 + 4 + 2 + 2 + SNAPFS_PROGRESS_BITMAP_BYTES + 1 + 1 + 1 + 1 + 4 + 4) - (SNAP_REDO_MAX_MULREF_OPS * sizeof(struct snap_redo_mulref_op)) - sizeof(struct snap_redo_summary_op) - sizeof(struct snap_redo_sit_op) - 4];
+} __packed;
+
+struct snap_redo_info {
+	struct mutex lock;
+	block_t journal_blkaddr;
+	unsigned int journal_blocks;
+	u64 next_txid;
+	unsigned int interval_ops;
+	unsigned int ops_since_sync;
+};
+
 struct f2fs_magic_info {
 	// struct mutex mutex;
 	struct rw_semaphore rwsem;
-	block_t magic_blkaddr;		/* start block address of magic area */
+	block_t journal_blkaddr;		/* start block address of redo journal area */
+	unsigned int journal_blocks;
+	block_t magic_blkaddr;		/* start block address of magic entry area */
 	__le32 segment_count_magic; // 2MB * segment_count_magic
 	block_t mulref_flag_blkaddr;
 	block_t mulref_blkaddr;
 	struct radix_tree_root snap_tree;
+	struct snap_redo_info *redo_info;
 
 	/* dynamic hop_range */
 	u32 hop_range;			/* current hop_range value */
@@ -3635,6 +3729,8 @@ bool f2fs_exist_trim_candidates(struct f2fs_sb_info *sbi,
 struct page *f2fs_get_sum_page(struct f2fs_sb_info *sbi, unsigned int segno);
 void f2fs_update_meta_page(struct f2fs_sb_info *sbi, void *src,
 					block_t blk_addr);
+int snapfs_flush_meta_blocks(struct f2fs_sb_info *sbi, block_t start,
+				unsigned int count, enum iostat_type io_type);
 void f2fs_do_write_meta_page(struct f2fs_sb_info *sbi, struct page *page,
 						enum iostat_type io_type);
 void f2fs_do_write_node_page(unsigned int nid, struct f2fs_io_info *fio);

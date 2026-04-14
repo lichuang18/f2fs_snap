@@ -3655,6 +3655,20 @@ static int f2fs_magic_delete_entry(struct f2fs_sb_info *sbi,
 	return 0;
 }
 
+static int f2fs_resume_snapshot_cow(struct file *filp)
+{
+	struct inode *inode = file_inode(filp);
+	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
+	int ret;
+
+	file_start_write(filp);
+	inode_lock(inode);
+	ret = snapfs_resume_cow_from_slot(sbi);
+	inode_unlock(inode);
+	file_end_write(filp);
+	return ret;
+}
+
 static int f2fs_delete_snapshot(struct file *filp, unsigned long arg)
 {
 	char __user *user_path;  // 从用户空间复制的快照路径指针
@@ -4935,6 +4949,8 @@ static long __f2fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return f2fs_read_snap_dump(filp, arg);
 	case F2FS_IOC_DELETE_SNAPSHOT:
 		return f2fs_delete_snapshot(filp, arg);
+	case F2FS_IOC_RESUME_COW:
+		return f2fs_resume_snapshot_cow(filp);
 	default:
 		return -ENOTTY;
 	}

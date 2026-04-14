@@ -3249,6 +3249,12 @@ static inline bool sanity_check_area_boundary(struct f2fs_sb_info *sbi,
 			  segment_count_magic << log_blocks_per_seg);
 		return true;
 	}
+		if (segment_count_magic <= SNAP_REDO_RESERVED_SEGS) {
+			f2fs_info(sbi, "Magic area too small for reserved redo segment, magic_segs(%u)",
+				  segment_count_magic);
+			return true;
+		}
+
 
 	if (ssa_blkaddr + (segment_count_ssa << log_blocks_per_seg) !=
 							main_blkaddr) {
@@ -4245,6 +4251,11 @@ try_onemore:
 	if (err) {
 		f2fs_err(sbi, "Failed to initialize F2FS segment manager (%d)",
 			 err);
+		goto free_sm;
+	}
+	err = snapfs_recover_journal(sbi);
+	if (err) {
+		f2fs_err(sbi, "Failed to recover SnapFS redo journal (%d)", err);
 		goto free_sm;
 	}
 	err = f2fs_build_node_manager(sbi);

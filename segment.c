@@ -2481,6 +2481,24 @@ void f2fs_update_meta_page(struct f2fs_sb_info *sbi,
 	f2fs_put_page(page, 1);
 }
 
+int snapfs_flush_meta_blocks(struct f2fs_sb_info *sbi, block_t start,
+				unsigned int count, enum iostat_type io_type)
+{
+	unsigned int i;
+
+	for (i = 0; i < count; i++) {
+		struct page *page = f2fs_get_meta_page(sbi, start + i);
+
+		if (IS_ERR(page))
+			return PTR_ERR(page);
+		f2fs_put_page(page, 1);
+	}
+
+	f2fs_sync_meta_pages(sbi, META, LONG_MAX, io_type);
+	f2fs_submit_merged_write(sbi, META);
+	return 0;
+}
+
 static void write_sum_page(struct f2fs_sb_info *sbi,
 			struct f2fs_summary_block *sum_blk, block_t blk_addr)
 {
@@ -4643,7 +4661,7 @@ static int build_sit_mulref_info(struct f2fs_sb_info *sbi)
 
 	/* 挂到 sbi（或 sm_info，看你设计） */
 	sbi->sm_info->sit_mr_info = smi;
-	smi->base_addr = le32_to_cpu(raw_super->magic_blkaddr) + 2048;
+	smi->base_addr = sbi->magic_info->mulref_flag_blkaddr;
 	smi->sit_mulref_blocks = SIT_BLK_CNT(sbi);
 	smi->sments_per_block = F2FS_BLKSIZE / sizeof(struct f2fs_sit_mulref_entry);
 	pr_info("[build sit_mulref info]: magic addr %u\n",le32_to_cpu(raw_super->magic_blkaddr));
@@ -5735,27 +5753,47 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 
 	// spin_lock_init(&sbi->magic_info->lock);
 	pr_info("[build sm]: ============ start ===========\n");
-	magic_info->magic_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);
+	magic_info->journal_blkaddr = le32_to_cpu(raw_super->magic_blkaddr);
+	magic_info->journal_blocks = sbi->blocks_per_seg * SNAP_REDO_RESERVED_SEGS;
+	magic_info->magic_blkaddr = magic_info->journal_blkaddr + magic_info->journal_blocks;
 	magic_info->segment_count_magic = le32_to_cpu(raw_super->segment_count_magic);
-	pr_info("[build sm]: mount with magic addr[%u], count[%u]\n",
-		magic_info->magic_blkaddr, magic_info->segment_count_magic);
-	
-	if (TOTAL_MAGIC_BLK >= 512 * magic_info->segment_count_magic)
-		return -EINVAL; 
-	
-	magic_info->mulref_flag_blkaddr = TOTAL_MAGIC_BLK + le32_to_cpu(raw_super->magic_blkaddr);
+	pr_info("[build sm]: mount with raw magic addr[%u], count[%u]\n",
+		le32_to_cpu(raw_super->magic_blkaddr), magic_info->segment_count_magic);
+	pr_info("[build sm]: redo journal addr[%u], blocks[%u]\n",
+		magic_info->journal_blkaddr, magic_info->journal_blocks);
+	pr_info("[build sm]: shifted magic entry addr[%u]\n",
+		magic_info->magic_blkaddr);
+
+	if (magic_info->segment_count_magic <= SNAP_REDO_RESERVED_SEGS)
+		return -EINVAL;
+	if (TOTAL_MAGIC_BLK >= magic_info->journal_blocks *
+			(magic_info->segment_count_magic - SNAP_REDO_RESERVED_SEGS))
+		return -EINVAL;
+
+	magic_info->mulref_flag_blkaddr = TOTAL_MAGIC_BLK + magic_info->magic_blkaddr;
 	blks_per_mulref_flag = SIT_BLK_CNT(sbi);
-	magic_info->mulref_blkaddr = blks_per_mulref_flag + TOTAL_MAGIC_BLK + le32_to_cpu(raw_super->magic_blkaddr);
+	magic_info->mulref_blkaddr = blks_per_mulref_flag + TOTAL_MAGIC_BLK + magic_info->magic_blkaddr;
+	magic_info->redo_info = f2fs_kzalloc(sbi, sizeof(struct snap_redo_info), GFP_KERNEL);
+	if (!magic_info->redo_info)
+		return -ENOMEM;
+	mutex_init(&magic_info->redo_info->lock);
+	magic_info->redo_info->journal_blkaddr = magic_info->journal_blkaddr;
+	magic_info->redo_info->journal_blocks = magic_info->journal_blocks;
+	magic_info->redo_info->next_txid = 1;
+	magic_info->redo_info->interval_ops = 1;
+	magic_info->redo_info->ops_since_sync = 0;
+
 	err = rebuild_snap_index(sbi);
 	if(err){
 		pr_err("rebuild_snap_index failed...\n");
 	}
 	
 	pr_info("[build sm]: ssa_count %u\n",le32_to_cpu(raw_super->segment_count_ssa) );
-	pr_info("[build sm]: magic addr: %u, size %u\n",magic_info->magic_blkaddr, TOTAL_MAGIC_BLK*1);
-	// int sit_blk_cnt = SIT_BLK_CNT(sbi);
+	pr_info("[build sm]: magic entry addr: %u, size %u\n",magic_info->magic_blkaddr, TOTAL_MAGIC_BLK * 1);
 	pr_info("[build sm]: mr sit addr %u, size %u\n",magic_info->mulref_flag_blkaddr, blks_per_mulref_flag);
 	pr_info("[build sm]: mulref addr %u, end %u, size = end - mulref addr\n",magic_info->mulref_blkaddr, sm_info->ssa_blkaddr);
+	if (magic_info->mulref_blkaddr >= sm_info->ssa_blkaddr)
+		return -EINVAL;
 	
 	sm_info->rec_prefree_segments = sm_info->main_segments *
 					DEF_RECLAIM_PREFREE_SEGMENTS / 100;
@@ -5928,6 +5966,10 @@ void f2fs_destroy_segment_manager(struct f2fs_sb_info *sbi)
 	destroy_curseg(sbi);
 	destroy_free_segmap(sbi);
 	destroy_sit_info(sbi);
+	if (sbi->magic_info && sbi->magic_info->redo_info) {
+		kfree(sbi->magic_info->redo_info);
+		sbi->magic_info->redo_info = NULL;
+	}
 	sbi->sm_info = NULL;
 	kfree(sm_info);
 }
