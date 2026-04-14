@@ -4266,7 +4266,12 @@ try_onemore:
 	}
 	// pr_info("fill super tp----\n");
 	// f2fs_dump_nonzero_sit_mulref_entries_simple(sbi);
-	err = adjust_reserved_segment(sbi);
+	err = snapfs_resume_all_cow_slots(sbi);
+		if (err) {
+			f2fs_err(sbi, "Failed to resume SnapFS pending COW slots (%d)", err);
+			goto free_nm;
+		}
+		err = adjust_reserved_segment(sbi);
 	if (err)
 		goto free_nm;
 

@@ -41,7 +41,7 @@ struct snapfs_txn {
 	__le16 valid_bits;
 	__u8 bitmap[SNAPFS_PROGRESS_BITMAP_BYTES];
 	__u8 pending_valid;
-	__u8 pending_bit;
+	u16 pending_bit;
 	__le32 op_type;
 	__le32 data_blkaddr;
 	__le32 old_sum_nid;
@@ -218,7 +218,7 @@ static void snapfs_redo_slot_init(struct snap_redo_slot *slot,
 	slot->valid_bits = txn->valid_bits;
 	memcpy(slot->bitmap, txn->bitmap, sizeof(slot->bitmap));
 	slot->pending_valid = txn->pending_valid;
-	slot->pending_bit = txn->pending_bit;
+	slot->pending_bit = cpu_to_le16(txn->pending_bit);
 	slot->op_type = txn->op_type;
 	slot->data_blkaddr = txn->data_blkaddr;
 	slot->old_sum_nid = txn->old_sum_nid;
@@ -334,33 +334,6 @@ static void snapfs_apply_sit_mulref_change(struct f2fs_sb_info *sbi,
 	update_sit_mulref_entry(sbi, blkaddr, set);
 }
 
-static int snapfs_redo_stage_mulref_pair(struct snapfs_txn *txn,
-				       block_t first_home, void *first_buf,
-				       block_t second_home, void *second_buf)
-{
-	struct f2fs_mulref_block *mr_blk;
-	struct f2fs_mulref_entry entry;
-	u16 idx;
-	int ret = 0;
-
-	mr_blk = (struct f2fs_mulref_block *)first_buf;
-	for (idx = 0; idx < MRENTRY_PER_BLOCK; idx++) {
-		if (!f2fs_test_bit(idx, (char *)mr_blk->multi_bitmap))
-			continue;
-		entry = mr_blk->mrentries[idx];
-		ret = snapfs_redo_stage_mulref_op(txn, first_home, idx, true, &entry);
-	}
-	if (ret || !second_buf)
-		return ret;
-	mr_blk = (struct f2fs_mulref_block *)second_buf;
-	for (idx = 0; idx < MRENTRY_PER_BLOCK; idx++) {
-		if (!f2fs_test_bit(idx, (char *)mr_blk->multi_bitmap))
-			continue;
-		entry = mr_blk->mrentries[idx];
-		ret = snapfs_redo_stage_mulref_op(txn, second_home, idx, true, &entry);
-	}
-	return ret;
-}
 
 static int __maybe_unused snapfs_build_summary_block(struct f2fs_sb_info *sbi, block_t blkaddr,
 				     struct f2fs_summary *new_sum,
@@ -754,8 +727,8 @@ static void snapfs_progress_from_slot(struct snapfs_cow_progress *progress,
 	progress->slot_idx = slot_idx;
 	progress->slot_valid = true;
 	memcpy(progress->bitmap, slot->bitmap, sizeof(progress->bitmap));
-	if (slot->pending_valid && slot->pending_bit < le16_to_cpu(slot->valid_bits))
-		progress->bitmap[slot->pending_bit >> 3] &= ~(1U << (slot->pending_bit & 7));
+	if (slot->pending_valid && le16_to_cpu(slot->pending_bit) < le16_to_cpu(slot->valid_bits))
+		progress->bitmap[le16_to_cpu(slot->pending_bit) >> 3] &= ~(1U << (le16_to_cpu(slot->pending_bit) & 7));
 	progress->active = true;
 }
 
@@ -931,10 +904,10 @@ static int snapfs_replay_slot(struct f2fs_sb_info *sbi,
 		return 0;
 
 	if (keep_progress && le16_to_cpu(slot->state) == SNAPFS_PROGRESS_BLOCK_TXN_COMMITTED) {
-		if (!slot->pending_valid || slot->pending_bit >= le16_to_cpu(slot->valid_bits))
+		if (!slot->pending_valid || le16_to_cpu(slot->pending_bit) >= le16_to_cpu(slot->valid_bits))
 			return -EINVAL;
 		snapfs_progress_from_slot(&progress, slot, slot_idx);
-		pending_bit = slot->pending_bit;
+		pending_bit = le16_to_cpu(slot->pending_bit);
 	}
 
 	for (i = 0; i < nr_ops; i++) {
@@ -4094,20 +4067,13 @@ int f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino)
     return __f2fs_set_mulref_blocks(inode, src_ino, NULL);
 }
 
-int snapfs_resume_cow_from_slot(struct f2fs_sb_info *sbi, u32 snap_ino)
+static int snapfs_resume_cow_slot(struct f2fs_sb_info *sbi, u32 slot_idx)
 {
     struct page *page;
     struct snap_redo_slot *slot;
     struct snapfs_cow_progress progress;
     struct inode *snap_inode = NULL;
-    u32 slot_idx;
     int ret;
-
-    if (!sbi->magic_info || !sbi->magic_info->redo_info)
-        return -EINVAL;
-    ret = snapfs_redo_find_slot_by_snap(sbi, snap_ino, &slot_idx);
-    if (ret)
-        return ret;
 
     page = f2fs_get_meta_page(sbi, snapfs_redo_slot_blkaddr(sbi, slot_idx));
     if (IS_ERR(page))
@@ -4128,10 +4094,17 @@ int snapfs_resume_cow_from_slot(struct f2fs_sb_info *sbi, u32 snap_ino)
             f2fs_put_page(page, 1);
             return ret;
         }
+        f2fs_put_page(page, 1);
         page = f2fs_get_meta_page(sbi, snapfs_redo_slot_blkaddr(sbi, slot_idx));
         if (IS_ERR(page))
             return PTR_ERR(page);
         slot = (struct snap_redo_slot *)page_address(page);
+        if (!snapfs_redo_slot_valid(slot) ||
+            slot->record_type == SNAPFS_REDO_REC_OVERWRITE ||
+            le16_to_cpu(slot->state) != SNAPFS_PROGRESS_GROUP_IN_PROGRESS) {
+            f2fs_put_page(page, 1);
+            return -ENOENT;
+        }
     }
 
     snapfs_progress_from_slot(&progress, slot, slot_idx);
@@ -4141,10 +4114,47 @@ int snapfs_resume_cow_from_slot(struct f2fs_sb_info *sbi, u32 snap_ino)
     if (IS_ERR(snap_inode))
         return PTR_ERR(snap_inode);
 
+    inode_lock(snap_inode);
     ret = __f2fs_set_mulref_blocks(snap_inode,
             le32_to_cpu(progress.src_ino), &progress);
+    inode_unlock(snap_inode);
     iput(snap_inode);
     return ret;
+}
+
+int snapfs_resume_all_cow_slots(struct f2fs_sb_info *sbi)
+{
+    struct snap_redo_info *redo;
+    u32 i;
+    int ret;
+
+    if (!sbi->magic_info || !sbi->magic_info->redo_info)
+        return -EINVAL;
+
+    redo = sbi->magic_info->redo_info;
+    for (i = 0; i < redo->cow_nr_slots; i++) {
+        ret = snapfs_resume_cow_slot(sbi, i);
+        if (ret == -ENOENT)
+            continue;
+        if (ret)
+            return ret;
+    }
+
+    return 0;
+}
+
+int snapfs_resume_cow_from_slot(struct f2fs_sb_info *sbi, u32 snap_ino)
+{
+    u32 slot_idx;
+    int ret;
+
+    if (!sbi->magic_info || !sbi->magic_info->redo_info)
+        return -EINVAL;
+    ret = snapfs_redo_find_slot_by_snap(sbi, snap_ino, &slot_idx);
+    if (ret)
+        return ret;
+
+    return snapfs_resume_cow_slot(sbi, slot_idx);
 }
 
 /*
@@ -5983,10 +5993,15 @@ found_entry:
                 if (ret)
                     goto out;
                 snapfs_txn_bind_overwrite_slot(&txn, &old_sum);
-                ret = snapfs_redo_stage_mulref_pair(&txn,
-                        cur_mr_blkaddr,
-                        page_address(cur_page ? cur_page : head_page),
-                        0, NULL);
+                txn.op_type = cpu_to_le32(SNAP_REDO_DROP_TAIL_TO_SINGLE);
+                txn.data_blkaddr = cpu_to_le32(old_blkaddr);
+                ret = snapfs_redo_stage_mulref_op(&txn,
+                        le32_to_cpu(old_sum.nid),
+                        le16_to_cpu(old_sum.ofs_in_node),
+                        false, NULL);
+                if (!ret)
+                    ret = snapfs_redo_stage_mulref_op(&txn, cur_mr_blkaddr,
+                            cur_eidx, false, NULL);
                 sum_home = GET_SUM_BLOCK(sbi, GET_SEGNO(sbi, old_blkaddr));
                 if (!ret)
                     ret = snapfs_redo_stage_summary_final(&txn, old_blkaddr, &new_sum);
@@ -6002,6 +6017,9 @@ found_entry:
                         ret = snapfs_overwrite_summary_cache(sbi, old_blkaddr, &new_sum);
                 }
                 if (!ret)
+                    ret = snapfs_flush_meta_blocks(sbi,
+                            le32_to_cpu(old_sum.nid), 1, FS_META_IO);
+                if (!ret && cur_mr_blkaddr != le32_to_cpu(old_sum.nid))
                     ret = snapfs_flush_meta_blocks(sbi, cur_mr_blkaddr, 1, FS_META_IO);
                 if (!ret)
                     ret = snapfs_flush_meta_blocks(sbi, sum_home, 1, FS_META_IO);

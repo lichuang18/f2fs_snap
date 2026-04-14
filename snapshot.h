@@ -64,6 +64,7 @@ bool check_sit_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr);
 void update_sit_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr, bool set);
 void f2fs_dump_nonzero_sit_mulref_entries_simple(struct f2fs_sb_info *sbi);
 int snapfs_recover_journal(struct f2fs_sb_info *sbi);
+int snapfs_resume_all_cow_slots(struct f2fs_sb_info *sbi);
 int snapfs_resume_cow_from_slot(struct f2fs_sb_info *sbi, u32 snap_ino);
 
 /* mulref compact thread */

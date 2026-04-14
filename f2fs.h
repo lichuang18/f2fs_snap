@@ -1142,13 +1142,12 @@ struct snap_redo_slot {
 	__u8 bitmap[SNAPFS_PROGRESS_BITMAP_BYTES];
 
 	__u8 pending_valid;
-	__u8 pending_bit;
+	__le16 pending_bit;
 	__u8 nr_mulref_ops;
 	__u8 flags;
 	__u8 record_type;
 	__u8 old_sum_ver;
 	__u8 reserved0;
-	__u8 reserved1;
 
 	__le32 op_type;
 	__le32 data_blkaddr;
@@ -1158,7 +1157,7 @@ struct snap_redo_slot {
 	struct snap_redo_summary_op summary_op;
 	struct snap_redo_sit_op sit_op;
 	__le32 crc;
-	__u8 reserved[4000 - (4 + 2 + 2 + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 2 + 2 + SNAPFS_PROGRESS_BITMAP_BYTES + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 4 + 4 + 4 + 2) - (SNAP_REDO_MAX_MULREF_OPS * sizeof(struct snap_redo_mulref_op)) - sizeof(struct snap_redo_summary_op) - sizeof(struct snap_redo_sit_op) - 4];
+	__u8 reserved[4000 - (4 + 2 + 2 + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 2 + 2 + SNAPFS_PROGRESS_BITMAP_BYTES + 1 + 2 + 1 + 1 + 1 + 1 + 1 + 4 + 4 + 4 + 2) - (SNAP_REDO_MAX_MULREF_OPS * sizeof(struct snap_redo_mulref_op)) - sizeof(struct snap_redo_summary_op) - sizeof(struct snap_redo_sit_op) - 4];
 } __packed;
 
 struct snap_redo_info {
