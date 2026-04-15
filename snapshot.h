@@ -25,6 +25,7 @@ int f2fs_magic_lookup(struct f2fs_sb_info *sbi, u32 src_ino,
 			u32 *ret_entry_id, struct f2fs_magic_entry *ret_entry);
 
 int f2fs_snapshot_cow(struct inode *inode);
+int f2fs_snapshot_cow_nolock(struct inode *inode);
 
 struct inode *snapfs_new_inode(struct inode *dir, umode_t mode);
 void snapfs_set_file_temperature(struct f2fs_sb_info *sbi, struct inode *inode,

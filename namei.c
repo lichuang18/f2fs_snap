@@ -537,10 +537,12 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 	struct f2fs_dir_entry *de;
 	struct page *page;
 	int err;
+	bool snap_locked = false;
+	unsigned int flags;
+	ktime_t start, end;
 
 	// pr_info("f2fs_unlink START:i_count=%d, i_nlink=%d\n",
-    //         atomic_read(&inode->i_count), inode->i_nlink);
-	ktime_t start, end;
+	//         atomic_read(&inode->i_count), inode->i_nlink);
 	// pr_info("f2fs_unlink START: i_state=0x%x\n",inode->i_state);
 
 	/* 检查是否在快照目录下，如果是则禁止 rm 删除 */
@@ -549,20 +551,8 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 		return -EPERM;
 	}
 
-	unsigned int flags = F2FS_I(inode)->i_flags;
-	if (flags & F2FS_COWED_FL){
-		if(SNAPFS_DEBUG) pr_info("[snapfs unlink]: write with O_TRUNC, F2FS_COWED_FL is 1\n");
-	}else{
-		if(SNAPFS_DEBUG) pr_info("[snapfs unlink]: write without O_TRUNC, F2FS_COWED_FL is 0, to do cow\n");
-		start = ktime_get_ns();
-		if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
-			if(SNAPFS_DEBUG) pr_info("[snapfs unlink]: unlink with cow\n");
-			end = ktime_get_ns();
-			pr_info("unlink cow cost = %lld ns\n", end - start);
-		}
-	}
-
 	trace_f2fs_unlink_enter(dir, dentry);
+
 	if (unlikely(f2fs_cp_error(sbi))) {
 		err = -EIO;
 		goto fail;
@@ -575,12 +565,46 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 	if (err)
 		goto fail;
 
+	/*
+	 * 从这里开始拿写锁：
+	 * 1) 等待别的线程正在进行的 old-path 固定结束
+	 * 2) 阻止新的 rename/unlink/rmdir/普通 COW path-fix 进入
+	 * 3) 在同一把写锁内完成 internal COW + delete
+	 */
+	down_write(&sbi->snap_path_sem);
+	snap_locked = true;
+
+	flags = F2FS_I(inode)->i_flags;
+	if (flags & F2FS_COWED_FL) {
+		if (SNAPFS_DEBUG)
+			pr_info("[snapfs unlink]: write with O_TRUNC, F2FS_COWED_FL is 1\n");
+	} else {
+		if (SNAPFS_DEBUG)
+			pr_info("[snapfs unlink]: write without O_TRUNC, F2FS_COWED_FL is 0, to do cow\n");
+
+		start = ktime_get_ns();
+
+		/*
+		 * 这里必须调用 nolock 版。
+		 * 因为当前 unlink 已经持有 snap_path_sem 写锁了。
+		 */
+		if (!f2fs_snapshot_cow_nolock(inode)) { /* 返回0，说明处理了cow */
+			if (SNAPFS_DEBUG)
+				pr_info("[snapfs unlink]: unlink with cow\n");
+			end = ktime_get_ns();
+			pr_info("unlink cow cost = %lld ns\n", end - start);
+		}
+	}
+
 	de = f2fs_find_entry(dir, &dentry->d_name, &page);
 	if (!de) {
 		if (IS_ERR(page))
 			err = PTR_ERR(page);
-		goto fail;
+		else
+			err = -ENOENT;
+		goto out_unlock;
 	}
+
 	f2fs_balance_fs(sbi, true);
 
 	f2fs_lock_op(sbi);
@@ -588,8 +612,9 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 	if (err) {
 		f2fs_unlock_op(sbi);
 		f2fs_put_page(page, 0);
-		goto fail;
+		goto out_unlock;
 	}
+
 	f2fs_delete_entry(de, page, dir, inode);
 #ifdef CONFIG_UNICODE
 	/* VFS negative dentries are incompatible with Encoding and
@@ -602,12 +627,19 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 		d_invalidate(dentry);
 #endif
 	f2fs_unlock_op(sbi);
+
 	if (IS_DIRSYNC(dir))
 		f2fs_sync_fs(sbi->sb, 1);
+
+	err = 0;
+
+out_unlock:
+	if (snap_locked)
+		up_write(&sbi->snap_path_sem);
 fail:
 	trace_f2fs_unlink_exit(inode, err);
 	// pr_info("f2fs_unlink over ~~\n");
-	
+
 	return err;
 }
 
@@ -904,6 +936,7 @@ static int f2fs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	struct f2fs_dir_entry *old_entry;
 	struct f2fs_dir_entry *new_entry;
 	int err;
+	bool snap_locked = false;
 
 	if (unlikely(f2fs_cp_error(sbi)))
 		return -EIO;
@@ -948,6 +981,14 @@ static int f2fs_rename(struct inode *old_dir, struct dentry *old_dentry,
 		if (err)
 			goto out;
 	}
+
+	/*
+	 * 从这里开始保护 namespace：
+	 * 1) 阻止并发的 snapshot old-path 固定
+	 * 2) 如果你后续要在 rename 内部做 preserve/COW，也应该放在这把锁里
+	 */
+	down_write(&sbi->snap_path_sem);
+	snap_locked = true;
 
 	err = -ENOENT;
 	old_entry = f2fs_find_entry(old_dir, &old_dentry->d_name, &old_page);
@@ -1043,6 +1084,7 @@ static int f2fs_rename(struct inode *old_dir, struct dentry *old_dentry,
 		spin_unlock(&whiteout->i_lock);
 
 		iput(whiteout);
+		whiteout = NULL;
 	}
 
 	if (old_dir_entry) {
@@ -1066,7 +1108,8 @@ static int f2fs_rename(struct inode *old_dir, struct dentry *old_dentry,
 		f2fs_sync_fs(sbi->sb, 1);
 
 	f2fs_update_time(sbi, REQ_TIME);
-	return 0;
+	err = 0;
+	goto out;
 
 put_out_dir:
 	f2fs_unlock_op(sbi);
@@ -1077,6 +1120,8 @@ out_dir:
 out_old:
 	f2fs_put_page(old_page, 0);
 out:
+	if (snap_locked)
+		up_write(&sbi->snap_path_sem);
 	if (whiteout)
 		iput(whiteout);
 	return err;

@@ -1817,6 +1817,8 @@ struct f2fs_sb_info {
 	unsigned long s_flag;				/* flags for sbi */
 	struct mutex writepages;		/* mutex for writepages() */
 
+	// path lock
+	struct rw_semaphore snap_path_sem;
 	// snap_thread
 	struct magic_mgr *magic_mgr; 
 	// struct mulref_mgr *mulref_mgr;

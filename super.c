@@ -3670,6 +3670,7 @@ static void init_sb_info(struct f2fs_sb_info *sbi)
 
 	init_rwsem(&sbi->sb_lock);
 	init_rwsem(&sbi->pin_sem);
+	init_rwsem(&sbi->snap_path_sem);
 }
 
 static int init_percpu_info(struct f2fs_sb_info *sbi)
