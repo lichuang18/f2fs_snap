@@ -6,11 +6,16 @@ fio --name=fill \
     --filename=/mnt/test3/testfile \
     --rw=randwrite \
     --bs=4K \
-    --size=5G \
+    --size=10G \
     --direct=1 \
     --ioengine=libaio \
     --numjobs=1 \
-    --iodepth=16
+    --iodepth=16 \
+    --ramp_time=10 \
+    --runtime=100 \
+    --time_based=1
+
+
 
     # --fsync=1 \
 # fio --name=commit_sensitive \
