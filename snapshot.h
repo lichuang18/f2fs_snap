@@ -123,7 +123,20 @@ struct magic_mgr {
 // wake_up(&mgr->wq);
 
 
-// mulref
+/* mulref */
+
+/* 用于 curmulref_alloc_multi 的输出结构 */
+struct curmulref_alloc_info {
+    block_t blkaddr;  /* entry 所在的块地址 */
+    u16 eidx;         /* entry 在块中的索引 */
+};
+
+/*
+ * 原子分配多个 entry（最多 2 个）
+ * 确保所有 entry 来自同一个块
+ */
+int curmulref_alloc_multi(struct f2fs_sb_info *sbi, int count,
+                         struct curmulref_alloc_info *info);
 
 // struct mulref_mgr {
 // 	spinlock_t lock;

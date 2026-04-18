@@ -1,3 +1,4 @@
+umount /mnt
 modprobe f2fs 
 insmod snapfs.ko
 ./f2fs-tools/mkfs/mkfs.f2fs -f /dev/nvme1n1

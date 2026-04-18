@@ -1,18 +1,31 @@
-# mkdir -p /mnt/test3
-# sync
-# echo 3 > /proc/sys/vm/drop_caches
+mkdir -p /mnt/test3
+fio --name=fill \
+    --filename=/mnt/test3/testfile \
+    --rw=read \
+    --bs=1M \
+    --size=20G \
+    --direct=1 \
+    --ioengine=libaio \
+    --numjobs=1 \
+    --fallocate=none \
+    --iodepth=16
+
+sync
+echo 3 > /proc/sys/vm/drop_caches
+./a.out /mnt/test3/ /mnt/ snap
+sync
 
 fio --name=fill \
     --filename=/mnt/test3/testfile \
-    --rw=randwrite \
-    --bs=4K \
+    --rw=write \
+    --bs=1M \
     --size=10G \
     --direct=1 \
     --ioengine=libaio \
     --numjobs=1 \
     --iodepth=16 \
     --ramp_time=10 \
-    --runtime=100 \
+    --runtime=60 \
     --time_based=1
 
 

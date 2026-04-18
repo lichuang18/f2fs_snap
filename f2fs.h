@@ -3764,6 +3764,8 @@ void f2fs_update_meta_page(struct f2fs_sb_info *sbi, void *src,
 					block_t blk_addr);
 int snapfs_flush_meta_blocks(struct f2fs_sb_info *sbi, block_t start,
 				unsigned int count, enum iostat_type io_type);
+int f2fs_sync_meta_page(struct f2fs_sb_info *sbi, struct page *page,
+				enum iostat_type io_type);
 void f2fs_do_write_meta_page(struct f2fs_sb_info *sbi, struct page *page,
 						enum iostat_type io_type);
 void f2fs_do_write_node_page(unsigned int nid, struct f2fs_io_info *fio);

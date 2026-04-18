@@ -2481,21 +2481,54 @@ void f2fs_update_meta_page(struct f2fs_sb_info *sbi,
 	f2fs_put_page(page, 1);
 }
 
+int f2fs_sync_meta_page(struct f2fs_sb_info *sbi, struct page *page,
+				enum iostat_type io_type)
+{
+	struct writeback_control wbc = {
+		.for_reclaim = 0,
+	};
+	int err;
+
+	if (!page)
+		return -EINVAL;
+
+	f2fs_wait_on_page_writeback(page, META, true, true);
+
+	if (!PageDirty(page)) {
+		unlock_page(page);
+		return 0;
+	}
+
+	if (unlikely(!clear_page_dirty_for_io(page))) {
+		unlock_page(page);
+		return 0;
+	}
+
+	f2fs_do_write_meta_page(sbi, page, io_type);
+	dec_page_count(sbi, F2FS_DIRTY_META);
+	unlock_page(page);
+	f2fs_submit_merged_write(sbi, META);
+	f2fs_wait_on_page_writeback(page, META, true, true);
+	return 0;
+}
+
 int snapfs_flush_meta_blocks(struct f2fs_sb_info *sbi, block_t start,
 				unsigned int count, enum iostat_type io_type)
 {
 	unsigned int i;
+	int ret = 0;
 
 	for (i = 0; i < count; i++) {
 		struct page *page = f2fs_get_meta_page(sbi, start + i);
 
 		if (IS_ERR(page))
 			return PTR_ERR(page);
-		f2fs_put_page(page, 1);
+		ret = f2fs_sync_meta_page(sbi, page, io_type);
+		f2fs_put_page(page, 0);
+		if (ret)
+			return ret;
 	}
 
-	f2fs_sync_meta_pages(sbi, META, LONG_MAX, io_type);
-	f2fs_submit_merged_write(sbi, META);
 	return 0;
 }
 

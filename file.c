@@ -5012,10 +5012,10 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			// size_t i_count = iov_iter_count(from);
 			// pr_info("ki_pos: %u, iov_count: %u\n",iocb->ki_pos, i_count);
 		}else{
-			end = ktime_get_ns();
-			pr_info("write check cost = %lld ns\n", end - start);
-			size_t i_count = iov_iter_count(from);
-			pr_info("ki_pos: %u, iov_count: %u\n",iocb->ki_pos, i_count);
+			// end = ktime_get_ns();
+			// pr_info("write check cost = %lld ns\n", end - start);
+			// size_t i_count = iov_iter_count(from);
+			// pr_info("ki_pos: %u, iov_count: %u\n",iocb->ki_pos, i_count);
 		}
 	}
 	

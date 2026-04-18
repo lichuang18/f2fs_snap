@@ -10,9 +10,11 @@ mount -o noautodefrag,noatime,commit=1 /dev/nvme1n1 /mnt
 # mkdir -p /mnt/test3
 sudo btrfs subvolume create /mnt/test3
 sync
+
+mkdir -p /mnt/test3
 fio --name=fill \
     --filename=/mnt/test3/testfile \
-    --rw=write \
+    --rw=read \
     --bs=1M \
     --size=20G \
     --direct=1 \
