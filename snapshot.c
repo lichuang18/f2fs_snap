@@ -605,6 +605,1571 @@ static void snapfs_redo_end(struct snapfs_txn *txn)
 	snapfs_redo_release_txn(txn);
 }
 
+/* === Batch Redo Slot Management === */
+
+/*
+ * 初始化 batch slot info 结构
+ */
+void snapfs_batch_init_slot_info(struct snapfs_batch_slot_info *info, u32 slot_id)
+{
+	if (!info)
+		return;
+	memset(info, 0, sizeof(*info));
+}
+
+/*
+ * 检查槽位状态是否允许被覆盖
+ * 只有 EMPTY 或 APPLIED 状态才允许
+ */
+static bool snapfs_batch_slot_overwritable(struct f2fs_sb_info *sbi, u32 slot_id)
+{
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+	struct page *page;
+	struct snapfs_batch_header *header;
+	bool ret = false;
+	u16 state;
+
+	if (!redo || !redo->batch_mode)
+		return false;
+
+	page = f2fs_get_meta_page(sbi,
+		redo->journal_blkaddr + slot_id * redo->batch_slot_blocks);
+	if (IS_ERR(page)) {
+		pr_info("[snapfs batch] slot %u: get_meta_page failed\n", slot_id);
+		return false;
+	}
+
+	header = (struct snapfs_batch_header *)page_address(page);
+
+	/* 检查 magic 和 version */
+	if (le32_to_cpu(header->magic) != SNAP_REDO_MAGIC ||
+	    le16_to_cpu(header->version) != SNAP_REDO_VERSION) {
+		pr_info("[snapfs batch] slot %u: EMPTY (magic=%x or version=%x mismatch)\n",
+			slot_id, le32_to_cpu(header->magic), le16_to_cpu(header->version));
+		ret = true;  /* 未初始化，视为 EMPTY */
+		goto out;
+	}
+
+	/* 检查状态 */
+	state = le16_to_cpu(header->state);
+	switch (state) {
+	case SNAPFS_BATCH_EMPTY:
+		pr_info("[snapfs batch] slot %u: EMPTY\n", slot_id);
+		ret = true;
+		break;
+	case SNAPFS_BATCH_APPLIED:
+		/*
+		pr_info("[snapfs batch] slot %u: APPLIED\n", slot_id);
+		*/
+		ret = true;
+		break;
+	case SNAPFS_BATCH_PREPARING:
+		pr_info("[snapfs batch] slot %u: PREPARING (in-use, skip)\n", slot_id);
+		ret = false;
+		break;
+	case SNAPFS_BATCH_COMMITTED:
+		pr_info("[snapfs batch] slot %u: COMMITTED (in-use, skip)\n", slot_id);
+		ret = false;
+		break;
+	case SNAPFS_BATCH_APPLYING:
+		pr_info("[snapfs batch] slot %u: APPLYING (in-use, skip)\n", slot_id);
+		ret = false;
+		break;
+	default:
+		pr_info("[snapfs batch] slot %u: UNKNOWN state=%u\n", slot_id, state);
+		ret = false;
+		break;
+	}
+
+out:
+	f2fs_put_page(page, 1);
+	return ret;
+}
+
+/*
+ * 分配一个 batch 文件槽
+ * 如果没有可用槽，调用方会等待
+ *
+ * 返回值:
+ *   0: 成功分配
+ *   -ENOSPC: 没有可用槽（不应该发生，调用方应该等待）
+ *   -EINVAL: 参数无效或 batch 模式未启用
+ */
+/**
+ * snapfs_batch_find_free_slot - 查找可覆盖的槽位
+ * @sbi: 文件系统信息
+ * 返回: 槽位索引或 -1 表示没有可用槽位
+ */
+static int snapfs_batch_find_free_slot(struct f2fs_sb_info *sbi)
+{
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+	unsigned long idx;
+	int checked = 0;
+
+	/* 使用 find_first_zero_bit 查找未分配的槽位（bit=0）
+	 * EMPTY 和 APPLIED 状态的槽位 bit 都是 0（未分配）
+	 * IN-USE 状态的槽位 bit 是 1（已分配）
+	 */
+	idx = find_first_zero_bit(redo->batch_slot_inuse_bitmap, redo->batch_nr_slots);
+	while (idx < redo->batch_nr_slots) {
+		checked++;
+		if (snapfs_batch_slot_overwritable(sbi, idx)) {
+		/*
+		pr_info("[snapfs batch] find_free_slot: found slot %lu (checked %d)\n",
+			idx, checked);
+		*/
+		return idx;
+		}
+		idx = find_next_zero_bit(redo->batch_slot_inuse_bitmap,
+		                   redo->batch_nr_slots, idx + 1);
+	}
+	pr_info("[snapfs batch] find_free_slot: no slot available (checked %d slots)\n", checked);
+	return -1;
+}
+
+/**
+ * snapfs_batch_slot_available - 检查是否有可用的槽位
+ * @sbi: 文件系统信息
+ * 返回: true 表示有可用槽位
+ */
+static bool snapfs_batch_slot_available(struct f2fs_sb_info *sbi)
+{
+	return snapfs_batch_find_free_slot(sbi) >= 0;
+}
+
+/**
+ * snapfs_batch_alloc_slot - 分配一个 batch 文件槽
+ *
+ * 规则 3：如果拿不到完整的空闲日志块组，新的文件不能开始处理，必须等待
+ *
+ * 返回值:
+ *   0: 成功分配槽位
+ *   -EINVAL: 参数无效或 batch 模式未启用
+ *   -ENOMEM: 内存分配失败
+ *   -ERESTARTSYS: 等待被信号中断
+ */
+int snapfs_batch_alloc_slot(struct f2fs_sb_info *sbi, u32 src_ino, u32 snap_ino,
+                            u32 node_nid, u16 node_ofs, u16 valid_bits,
+                            u32 *ret_slot_id, struct snapfs_batch_context **ret_ctx)
+{
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+	struct snapfs_batch_context *ctx;
+	int ret = 0;
+	int max_wait_loops = 100;  /* 最多等待 100 次，约 100 秒 */
+	int wait_loops = 0;
+	DEFINE_WAIT(wait);
+
+	if (!redo || !redo->batch_mode) {
+		pr_err("[snapfs batch] batch mode not enabled\n");
+		return -EINVAL;
+	}
+
+	if (!ret_slot_id || !ret_ctx)
+		return -EINVAL;
+
+	ctx = kzalloc(sizeof(*ctx), GFP_NOFS);
+	if (!ctx)
+		return -ENOMEM;
+
+	ctx->sbi = sbi;
+	ctx->src_ino = src_ino;
+	ctx->snap_ino = snap_ino;
+	ctx->node_nid = node_nid;
+	ctx->node_ofs = node_ofs;
+	ctx->valid_bits = valid_bits;
+	ctx->entry_count = 0;
+	ctx->entry_capacity = SNAPFS_PROGRESS_BITMAP_BITS;
+	ctx->current_bit = 0;
+	ctx->state = SNAPFS_BATCH_EMPTY;
+
+	/* 初始化 bitmap 为 0 */
+	memset(ctx->bitmap, 0, sizeof(ctx->bitmap));
+
+alloc_slot:
+	mutex_lock(&redo->alloc_lock);
+
+	/* 查找 EMPTY 或 APPLIED 的槽位 */
+	ret = snapfs_batch_find_free_slot(sbi);
+	if (ret >= 0) {
+		/* 找到可用槽位，分配它 */
+		u32 idx = (u32)ret;
+		__set_bit(idx, redo->batch_slot_inuse_bitmap);
+		redo->batch_slot_gens[idx]++;
+
+		ctx->slot_id = idx;
+		ctx->batch_id = redo->batch_slot_gens[idx];
+
+		mutex_unlock(&redo->alloc_lock);
+
+		*ret_slot_id = idx;
+		*ret_ctx = ctx;
+
+		/*
+		pr_info("[snapfs batch] ALLOC SUCCESS: slot %u for src_ino=%u snap_ino=%u node_nid=%u\n",
+		         idx, src_ino, snap_ino, node_nid);
+		*/
+		return 0;
+	}
+
+	mutex_unlock(&redo->alloc_lock);
+
+	/* 没有可用槽位，必须等待 */
+	pr_info("[snapfs batch] NO SLOT: waiting... (loop %d, waiting_count=%d)\n",
+		wait_loops, atomic_read(&redo->batch_waiting_count));
+
+	/* 增加等待计数 */
+	atomic_inc(&redo->batch_waiting_count);
+
+	/* 使用内核 wait_event 等待有可用槽 */
+	ret = wait_event_interruptible(redo->batch_slot_wq,
+		snapfs_batch_slot_available(sbi));
+
+	atomic_dec(&redo->batch_waiting_count);
+
+	if (ret) {
+		/* 被信号打断，释放上下文并返回 */
+		pr_info("[snapfs batch] INTERRUPTED: wait interrupted\n");
+		kfree(ctx);
+		return -ERESTARTSYS;
+	}
+
+	/* 增加等待循环计数，防止无限等待 */
+	wait_loops++;
+	if (wait_loops >= max_wait_loops) {
+		pr_err("[snapfs batch] TIMEOUT: wait timeout after %d loops\n", wait_loops);
+		kfree(ctx);
+		return -EBUSY;
+	}
+
+	pr_info("[snapfs batch] WAKEUP: slot became available, retrying (loop %d)\n", wait_loops);
+	goto alloc_slot;
+}
+
+/*
+ * 释放一个 batch 文件槽
+ */
+void snapfs_batch_free_slot(struct f2fs_sb_info *sbi, u32 slot_id)
+{
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+
+	if (!redo || !redo->batch_mode)
+		return;
+
+	if (slot_id >= redo->batch_nr_slots)
+		return;
+
+	mutex_lock(&redo->alloc_lock);
+	__clear_bit(slot_id, redo->batch_slot_inuse_bitmap);
+	redo->batch_slot_gens[slot_id]++;
+	mutex_unlock(&redo->alloc_lock);
+
+	/* 唤醒等待槽的进程 */
+	wake_up_all(&redo->batch_slot_wq);
+
+	/*
+	pr_info("[snapfs batch] FREE SLOT: slot %u freed, wake up waiters\n", slot_id);
+	*/
+}
+
+/*
+ * 等待直到有可用槽
+ */
+/*
+ * 等待有可用槽
+ * 返回值:
+ *   0: 成功（有可用槽）
+ *   -EINVAL: batch 模式未启用
+ *   -ERESTARTSYS: 等待被信号中断
+ */
+int snapfs_batch_wait_for_slot(struct f2fs_sb_info *sbi)
+{
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+
+	if (!redo || !redo->batch_mode)
+		return -EINVAL;
+
+	/* 如果已经有可用槽，直接返回 */
+	if (snapfs_batch_slot_available(sbi))
+		return 0;
+
+	atomic_inc(&redo->batch_waiting_count);
+
+	/* 等待有可用槽 */
+	wait_event_interruptible(redo->batch_slot_wq,
+		snapfs_batch_slot_available(sbi));
+
+	atomic_dec(&redo->batch_waiting_count);
+
+	return 0;
+}
+
+/* === Batch Redo State Machine === */
+
+/*
+ * 初始化 batch，开始 PREPARING 阶段
+ * 写入 batch header（prepared=0），然后开始收集 redo 项
+ */
+int snapfs_batch_begin(struct f2fs_sb_info *sbi, u32 slot_id,
+                       struct snapfs_batch_context *ctx)
+{
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+	struct page *page;
+	struct snapfs_batch_header *header;
+	block_t blkaddr;
+	u32 crc;
+
+	if (!redo || !redo->batch_mode)
+		return -EINVAL;
+
+	if (slot_id >= redo->batch_nr_slots)
+		return -EINVAL;
+
+	ctx->slot_id = slot_id;
+	ctx->state = SNAPFS_BATCH_PREPARING;
+
+	/* 写入 batch header（prepared=0 表示未完成） */
+	blkaddr = redo->journal_blkaddr + slot_id * redo->batch_slot_blocks;
+	page = f2fs_get_meta_page(sbi, blkaddr);
+	if (IS_ERR(page))
+		return PTR_ERR(page);
+
+	header = (struct snapfs_batch_header *)page_address(page);
+	memset(header, 0, sizeof(*header));
+
+	header->magic = cpu_to_le32(SNAP_REDO_MAGIC);
+	header->version = cpu_to_le16(SNAP_REDO_VERSION);
+	header->state = cpu_to_le16(SNAPFS_BATCH_PREPARING);
+	header->batch_id = cpu_to_le32(ctx->batch_id);
+	header->src_ino = cpu_to_le32(ctx->src_ino);
+	header->snap_ino = cpu_to_le32(ctx->snap_ino);
+	header->node_nid = cpu_to_le32(ctx->node_nid);
+	header->node_ofs = cpu_to_le16(ctx->node_ofs);
+	header->valid_bits = cpu_to_le16(ctx->valid_bits);
+	header->prepared = 0;  /* PREPARING 阶段，prepared=0 */
+
+	/* 初始化 bitmap 为 0 */
+	memset(header->bitmap, 0, sizeof(header->bitmap));
+
+	/* 计算 CRC */
+	crc = crc32(~0, (unsigned char *)header + offsetof(struct snapfs_batch_header, version),
+	             sizeof(*header) - offsetof(struct snapfs_batch_header, version) -
+	             sizeof(header->crc));
+	header->crc = cpu_to_le32(crc);
+
+	set_page_dirty(page);
+
+	f2fs_put_page(page, 1);
+
+	pr_debug("[snapfs batch] slot %u: PREPARING started, batch_id=%u, valid_bits=%u\n",
+	         slot_id, ctx->batch_id, ctx->valid_bits);
+
+	return 0;
+}
+
+/*
+ * 向 batch 添加一个 redo 项
+ * 不实际写入磁盘，只是收集到 ctx->entries 中
+ */
+int snapfs_batch_stage_redo(struct snapfs_batch_context *ctx,
+                            block_t mr_blkaddr, u16 mr_idx,
+                            bool valid, struct f2fs_mulref_entry *entry)
+{
+	struct snap_redo_mulref_op *op;
+
+	if (!ctx)
+		return -EINVAL;
+
+	if (ctx->entry_count >= ctx->entry_capacity)
+		return -ENOSPC;
+
+	op = &ctx->entries[ctx->entry_count++].mulref;
+	op->mr_blkaddr = cpu_to_le32(mr_blkaddr);
+	op->idx = cpu_to_le16(mr_idx);
+	op->valid = valid ? 1 : 0;
+	if (entry)
+		op->entry = *entry;
+	else
+		memset(&op->entry, 0, sizeof(op->entry));
+
+	return 0;
+}
+
+/*
+ * 暂存 summary 操作到 batch context
+ *
+ * 注意：batch entry 中的 sum 字段只存储新的 summary 值
+ * replay 时会读取当前 summary 进行验证
+ */
+int snapfs_batch_stage_summary(struct snapfs_batch_context *ctx,
+                              block_t data_blkaddr,
+                              struct f2fs_summary *new_sum)
+{
+	struct snapfs_batch_entry *entry;
+
+	if (!ctx || !new_sum)
+		return -EINVAL;
+
+	if (ctx->entry_count >= ctx->entry_capacity)
+		return -ENOSPC;
+
+	entry = &ctx->entries[ctx->entry_count];
+	entry->flags |= SNAPFS_BATCH_ENTRY_HAS_SUMMARY;
+	entry->data_blkaddr = cpu_to_le32(data_blkaddr);
+
+	/* 使用 batch entry 中的 sum 字段存储新的 summary 值 */
+	entry->sum.sum = *new_sum;
+
+	return 0;
+}
+
+/*
+ * 暂存 SIT 操作到 batch context
+ */
+int snapfs_batch_stage_sit(struct snapfs_batch_context *ctx,
+                           block_t data_blkaddr,
+                           block_t sit_blkaddr,
+                           bool set_mulref)
+{
+	struct snapfs_batch_entry *entry;
+
+	if (!ctx)
+		return -EINVAL;
+
+	if (ctx->entry_count >= ctx->entry_capacity)
+		return -ENOSPC;
+
+	entry = &ctx->entries[ctx->entry_count];
+	entry->flags |= SNAPFS_BATCH_ENTRY_HAS_SIT;
+	entry->data_blkaddr = cpu_to_le32(data_blkaddr);
+	entry->sit_blkaddr = cpu_to_le32(sit_blkaddr);
+	entry->sit_set = set_mulref ? 1 : 0;
+
+	return 0;
+}
+
+/*
+ * 将 batch 标记为 APPLIED
+ * 写入状态为 APPLIED，允许未来覆盖
+ */
+int snapfs_batch_mark_applied(struct f2fs_sb_info *sbi, struct snapfs_batch_context *ctx)
+{
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+	struct page *page;
+	struct snapfs_batch_header *header;
+	block_t blkaddr;
+	u32 crc;
+	int ret = 0;
+
+	if (!redo || !redo->batch_mode)
+		return -EINVAL;
+
+	blkaddr = redo->journal_blkaddr + ctx->slot_id * redo->batch_slot_blocks;
+	page = f2fs_get_meta_page(sbi, blkaddr);
+	if (IS_ERR(page))
+		return PTR_ERR(page);
+
+	header = (struct snapfs_batch_header *)page_address(page);
+
+	/* 更新状态为 APPLIED */
+	header->state = cpu_to_le16(SNAPFS_BATCH_APPLIED);
+	header->prepared = 1;
+
+	/* 复制最终的 bitmap */
+	memcpy(header->bitmap, ctx->bitmap, sizeof(header->bitmap));
+
+	/* 计算 CRC */
+	crc = crc32(~0, (unsigned char *)header + offsetof(struct snapfs_batch_header, version),
+	             sizeof(*header) - offsetof(struct snapfs_batch_header, version) -
+	             sizeof(header->crc));
+	header->crc = cpu_to_le32(crc);
+
+	set_page_dirty(page);
+	ret = snapfs_flush_locked_meta_page(sbi, page);
+	/* snapfs_flush_locked_meta_page unlocks the page but doesn't release it */
+	f2fs_put_page(page, 0);
+
+	if (!ret)
+		ctx->state = SNAPFS_BATCH_APPLIED;
+
+	pr_debug("[snapfs batch] slot %u: marked APPLIED\n", ctx->slot_id);
+
+	return ret;
+}
+
+/*
+ * durable 一个 batch slot 的所有 redo blocks
+ * 确保所有 43 个块都持久化到磁盘
+ *
+ * 返回值:
+ *   0: 成功
+ *   <0: 错误
+ */
+static int snapfs_batch_durable_all_pages(struct f2fs_sb_info *sbi,
+                                          struct snapfs_batch_context *ctx)
+{
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+	struct page *page;
+	block_t blkaddr;
+	u16 seq_no;
+	int ret = 0;
+	int sync_ret;
+
+	/* durable 所有 43 个块 */
+	for (seq_no = 0; seq_no < SNAPFS_BATCH_SLOT_BLOCKS; seq_no++) {
+		blkaddr = redo->journal_blkaddr +
+		          ctx->slot_id * redo->batch_slot_blocks + seq_no;
+		page = f2fs_get_meta_page(sbi, blkaddr);
+		if (IS_ERR(page)) {
+			ret = PTR_ERR(page);
+			pr_err("[snapfs batch] slot %u: failed to get page %u for durable\n",
+			       ctx->slot_id, seq_no);
+			continue;
+		}
+
+		/* 跳过未使用的块（保持为 EMPTY） */
+		if (!PageDirty(page)) {
+			f2fs_put_page(page, 1);
+			continue;
+		}
+
+		sync_ret = snapfs_flush_locked_meta_page(sbi, page);
+		if (sync_ret) {
+			pr_err("[snapfs batch] slot %u: failed to sync page %u, ret=%d\n",
+			       ctx->slot_id, seq_no, sync_ret);
+			ret = sync_ret;
+			/* page already unlocked by snapfs_flush_locked_meta_page */
+			f2fs_put_page(page, 0);
+			continue;
+		}
+		/* snapfs_flush_locked_meta_page already unlocked the page */
+		f2fs_put_page(page, 0);
+	}
+
+	return ret;
+}
+
+/*
+ * 写入一个 batch 的所有 redo 项
+ * 将收集的 redo 项写入 43 个 redo blocks，然后 durable
+ *
+ * 格式:
+ * - block 0: batch header + 前 23 个 redo 项
+ * - block 1-42: continuation blocks，每个 24 个 redo 项
+ *
+ * 关键：必须遵循以下顺序
+ * 1. 先写所有块（header + continuation blocks）
+ * 2. durable 所有块
+ * 3. 然后设置 header 状态为 COMMITTED
+ * 4. durable header（带 COMMITTED 状态）
+ *
+ * 这样确保：只有在所有 redo 数据块都 durable 之后，
+ * 才把状态设为 COMMITTED，恢复时才认为 redo 完整可用。
+ */
+int snapfs_batch_commit(struct f2fs_sb_info *sbi, struct snapfs_batch_context *ctx)
+{
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+	struct page *page;
+	struct snapfs_batch_header *header;
+	struct snapfs_batch_continuation *cont;
+	block_t blkaddr;
+	u16 seq_no;
+	u16 entry_idx;
+	u16 entries_per_block;
+	u16 entries_first_block;
+	u16 remaining;
+	u16 blocks_written = 0;
+	u32 crc;
+	int ret = 0;
+	int i;
+
+	if (!redo || !redo->batch_mode)
+		return -EINVAL;
+
+	if (ctx->state != SNAPFS_BATCH_PREPARING)
+		return -EINVAL;
+
+	pr_debug("[snapfs batch] slot %u: committing %u entries\n",
+	         ctx->slot_id, ctx->entry_count);
+
+	entries_first_block = SNAPFS_BATCH_ENTRIES_FIRST;
+	entries_per_block = SNAPFS_BATCH_ENTRIES_REST;
+
+	/* === 步骤 1: 写所有块（使用 PREPARING 状态）=== */
+
+	/* 写入 batch header (block 0)，使用 PREPARING 状态 */
+	blkaddr = redo->journal_blkaddr + ctx->slot_id * redo->batch_slot_blocks;
+	page = f2fs_get_meta_page(sbi, blkaddr);
+	if (IS_ERR(page))
+		return PTR_ERR(page);
+
+	header = (struct snapfs_batch_header *)page_address(page);
+	memset(header, 0, sizeof(*header));
+
+	header->magic = cpu_to_le32(SNAP_REDO_MAGIC);
+	header->version = cpu_to_le16(SNAP_REDO_VERSION);
+	header->state = cpu_to_le16(SNAPFS_BATCH_PREPARING);  /* 先用 PREPARING */
+	header->batch_id = cpu_to_le32(ctx->batch_id);
+	header->src_ino = cpu_to_le32(ctx->src_ino);
+	header->snap_ino = cpu_to_le32(ctx->snap_ino);
+	header->node_nid = cpu_to_le32(ctx->node_nid);
+	header->node_ofs = cpu_to_le16(ctx->node_ofs);
+	header->valid_bits = cpu_to_le16(ctx->valid_bits);
+	header->prepared = 0;  /* 还未完整写入，prepared=0 */
+
+	/* 复制 bitmap */
+	memcpy(header->bitmap, ctx->bitmap, sizeof(header->bitmap));
+
+	/* 复制 redo 项到 header */
+	entry_idx = 0;
+	for (i = 0; i < entries_first_block && entry_idx < ctx->entry_count; i++, entry_idx++)
+		header->entries[i] = ctx->entries[entry_idx];
+
+	/* 计算 CRC */
+	crc = crc32(~0, (unsigned char *)header + offsetof(struct snapfs_batch_header, version),
+	             sizeof(*header) - offsetof(struct snapfs_batch_header, version) -
+	             sizeof(header->crc));
+	header->crc = cpu_to_le32(crc);
+
+	set_page_dirty(page);
+	blocks_written++;
+	f2fs_put_page(page, 1);  /* 写回但不等待 */
+
+	/* 写入 continuation blocks (block 1-42) */
+	remaining = ctx->entry_count - entry_idx;
+	seq_no = 1;
+
+	while (remaining > 0 && seq_no < SNAPFS_BATCH_SLOT_BLOCKS) {
+		blkaddr = redo->journal_blkaddr + ctx->slot_id * redo->batch_slot_blocks + seq_no;
+		page = f2fs_get_meta_page(sbi, blkaddr);
+		if (IS_ERR(page)) {
+			ret = PTR_ERR(page);
+			break;
+		}
+
+		cont = (struct snapfs_batch_continuation *)page_address(page);
+		memset(cont, 0, sizeof(*cont));
+
+		cont->magic = cpu_to_le32(SNAP_REDO_MAGIC);
+		cont->version = cpu_to_le16(SNAP_REDO_VERSION);
+		cont->state = SNAPFS_BATCH_PREPARING;  /* 使用 PREPARING */
+		cont->batch_id = cpu_to_le32(ctx->batch_id);
+		cont->slot_id = cpu_to_le32(ctx->slot_id);
+		cont->seq_no = cpu_to_le16(seq_no);
+		cont->entry_count = cpu_to_le16(min(remaining, entries_per_block));
+
+		/* 复制 redo 项 */
+		for (i = 0; i < cont->entry_count && entry_idx < ctx->entry_count; i++, entry_idx++)
+			cont->entries[i] = ctx->entries[entry_idx];
+
+		/* 计算 CRC */
+		crc = crc32(~0, (unsigned char *)cont + offsetof(struct snapfs_batch_continuation, version),
+		             sizeof(*cont) - offsetof(struct snapfs_batch_continuation, version) -
+		             sizeof(cont->crc));
+		cont->crc = cpu_to_le32(crc);
+
+		set_page_dirty(page);
+		blocks_written++;
+		f2fs_put_page(page, 1);  /* 写回但不等待 */
+
+		remaining -= cont->entry_count;
+		seq_no++;
+	}
+
+	if (ret) {
+		pr_err("[snapfs batch] slot %u: failed to write blocks, ret=%d\n",
+		       ctx->slot_id, ret);
+		return ret;
+	}
+
+	/* === 步骤 2: durable 所有块 === */
+	ret = snapfs_batch_durable_all_pages(sbi, ctx);
+	if (ret) {
+		pr_err("[snapfs batch] slot %u: failed to durable all pages, ret=%d\n",
+		       ctx->slot_id, ret);
+		return ret;
+	}
+
+	/* === 步骤 3: 设置 header 状态为 COMMITTED === */
+	blkaddr = redo->journal_blkaddr + ctx->slot_id * redo->batch_slot_blocks;
+	page = f2fs_get_meta_page(sbi, blkaddr);
+	if (IS_ERR(page))
+		return PTR_ERR(page);
+
+	header = (struct snapfs_batch_header *)page_address(page);
+	header->state = cpu_to_le16(SNAPFS_BATCH_COMMITTED);
+	header->prepared = 1;  /* 所有块已 durable，标记 prepared=1 */
+
+	/* 重新计算 CRC */
+	crc = crc32(~0, (unsigned char *)header + offsetof(struct snapfs_batch_header, version),
+	             sizeof(*header) - offsetof(struct snapfs_batch_header, version) -
+	             sizeof(header->crc));
+	header->crc = cpu_to_le32(crc);
+
+	set_page_dirty(page);
+
+	/* === 步骤 4: durable header（带 COMMITTED 状态）=== */
+	ret = snapfs_flush_locked_meta_page(sbi, page);
+	if (ret) {
+		pr_err("[snapfs batch] slot %u: failed to sync committed header, ret=%d\n",
+		       ctx->slot_id, ret);
+		/* 即使 sync 失败，也认为 commit 完成，因为 redo 数据已经在步骤 2 durable 了 */
+	}
+	/* snapfs_flush_locked_meta_page already unlocked the page */
+	f2fs_put_page(page, 0);
+
+	ctx->state = SNAPFS_BATCH_COMMITTED;
+	pr_debug("[snapfs batch] slot %u: COMMITTED, %u redo blocks durable\n",
+	         ctx->slot_id, blocks_written);
+
+	return ret;
+}
+
+/*
+ * 从 batch slot 读取 redo 项
+ * 用于恢复时重新加载 batch 内容
+ * 同时验证所有块的 CRC 完整性
+ */
+static int snapfs_batch_read_redo(struct f2fs_sb_info *sbi, u32 slot_id,
+                                  struct snapfs_batch_context *ctx)
+{
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+	struct page *page;
+	struct snapfs_batch_header *header;
+	struct snapfs_batch_continuation *cont;
+	block_t blkaddr;
+	u16 seq_no;
+	u16 entry_idx;
+	u16 entries_first_block;
+	u16 count;
+	u32 stored_crc;
+	u32 calc_crc;
+	int ret = 0;
+	int i;
+
+	if (!redo || !redo->batch_mode)
+		return -EINVAL;
+
+	entries_first_block = SNAPFS_BATCH_ENTRIES_FIRST;
+
+	/* 读取 batch header (block 0) */
+	blkaddr = redo->journal_blkaddr + slot_id * redo->batch_slot_blocks;
+	page = f2fs_get_meta_page(sbi, blkaddr);
+	if (IS_ERR(page))
+		return PTR_ERR(page);
+
+	header = (struct snapfs_batch_header *)page_address(page);
+
+	/* 验证 header */
+	if (le32_to_cpu(header->magic) != SNAP_REDO_MAGIC ||
+	    le16_to_cpu(header->version) != SNAP_REDO_VERSION) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	/* 验证 header CRC */
+	stored_crc = le32_to_cpu(header->crc);
+	calc_crc = crc32(~0,
+		(unsigned char *)header + offsetof(struct snapfs_batch_header, version),
+		sizeof(*header) - offsetof(struct snapfs_batch_header, version) -
+		sizeof(header->crc));
+	if (stored_crc != calc_crc) {
+		pr_err("[snapfs batch] slot %u: header CRC mismatch (stored=%u, calc=%u)\n",
+		       slot_id, stored_crc, calc_crc);
+		ret = -EINVAL;
+		goto out;
+	}
+
+	ctx->batch_id = le32_to_cpu(header->batch_id);
+	ctx->src_ino = le32_to_cpu(header->src_ino);
+	ctx->snap_ino = le32_to_cpu(header->snap_ino);
+	ctx->node_nid = le32_to_cpu(header->node_nid);
+	ctx->node_ofs = le16_to_cpu(header->node_ofs);
+	ctx->valid_bits = le16_to_cpu(header->valid_bits);
+	ctx->state = le16_to_cpu(header->state);
+
+	/* 复制 bitmap */
+	memcpy(ctx->bitmap, header->bitmap, sizeof(ctx->bitmap));
+
+	/* 读取 header 中的 redo 项 */
+	entry_idx = 0;
+	for (i = 0; i < entries_first_block && entry_idx < SNAPFS_PROGRESS_BITMAP_BITS; i++) {
+		if (header->entries[i].mulref.mr_blkaddr == 0 && header->entries[i].mulref.idx == 0)
+			continue;
+		ctx->entries[entry_idx++] = header->entries[i];
+	}
+
+out:
+	f2fs_put_page(page, 1);
+
+	if (ret)
+		return ret;
+
+	/* 读取 continuation blocks，验证每个块的 CRC */
+	seq_no = 1;
+	while (seq_no < SNAPFS_BATCH_SLOT_BLOCKS) {
+		blkaddr = redo->journal_blkaddr + slot_id * redo->batch_slot_blocks + seq_no;
+		page = f2fs_get_meta_page(sbi, blkaddr);
+		if (IS_ERR(page))
+			break;
+
+		cont = (struct snapfs_batch_continuation *)page_address(page);
+
+		if (le32_to_cpu(cont->magic) != SNAP_REDO_MAGIC)
+			goto next_cont;
+
+		/* 验证 continuation block CRC */
+		stored_crc = le32_to_cpu(cont->crc);
+		calc_crc = crc32(~0,
+			(unsigned char *)cont + offsetof(struct snapfs_batch_continuation, version),
+			sizeof(*cont) - offsetof(struct snapfs_batch_continuation, version) -
+			sizeof(cont->crc));
+		if (stored_crc != calc_crc) {
+			pr_warn("[snapfs batch] slot %u: cont block %u CRC mismatch, skipping\n",
+			        slot_id, seq_no);
+			/* CRC 不匹配，跳过这个块但不标记为错误 */
+			goto next_cont;
+		}
+
+		count = le16_to_cpu(cont->entry_count);
+		for (i = 0; i < count && entry_idx < SNAPFS_PROGRESS_BITMAP_BITS; i++)
+			ctx->entries[entry_idx++] = cont->entries[i];
+
+next_cont:
+		f2fs_put_page(page, 1);
+		seq_no++;
+	}
+
+	ctx->entry_count = entry_idx;
+
+	return 0;
+}
+
+/*
+ * 恢复一个 batch slot
+ * 根据状态机执行恢复操作
+ *
+ * 返回值:
+ *   0: 恢复完成（可能完成也可能需要继续）
+ *   >0: 需要继续处理
+ *   <0: 错误
+ */
+int snapfs_batch_recover_slot(struct f2fs_sb_info *sbi, u32 slot_id)
+{
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+	struct page *page;
+	struct snapfs_batch_header *header;
+	block_t blkaddr;
+	u16 state;
+	u16 first_zero_bit;
+	int ret = 0;
+
+	if (!redo || !redo->batch_mode)
+		return -EINVAL;
+
+	if (slot_id >= redo->batch_nr_slots)
+		return -EINVAL;
+
+	pr_debug("[snapfs batch] recovering slot %u\n", slot_id);
+
+	/* 读取 slot header */
+	blkaddr = redo->journal_blkaddr + slot_id * redo->batch_slot_blocks;
+	page = f2fs_get_meta_page(sbi, blkaddr);
+	if (IS_ERR(page))
+		return PTR_ERR(page);
+
+	header = (struct snapfs_batch_header *)page_address(page);
+
+	/* 验证 header */
+	if (le32_to_cpu(header->magic) != SNAP_REDO_MAGIC ||
+	    le16_to_cpu(header->version) != SNAP_REDO_VERSION) {
+		/* 无效 slot，视为 EMPTY */
+		f2fs_put_page(page, 1);
+		pr_debug("[snapfs batch] slot %u: invalid magic/version, treating as EMPTY\n", slot_id);
+		return 0;
+	}
+
+	state = le16_to_cpu(header->state);
+	f2fs_put_page(page, 1);
+
+	switch (state) {
+	case SNAPFS_BATCH_EMPTY:
+	case SNAPFS_BATCH_APPLIED:
+		/* 槽已完整结束，无需恢复 */
+		pr_debug("[snapfs batch] slot %u: state=%u, no recovery needed\n", slot_id, state);
+		ret = 0;
+		break;
+
+	case SNAPFS_BATCH_PREPARING: {
+		/*
+		 * PREPARING 期间崩溃
+		 * 检查 prepared 标志：
+		 *   - prepared=0：批量写入未完成，丢弃
+		 *   - prepared=1：批量写入已完成，视为 COMMITTED 继续恢复
+		 * 设计文档 Section 8.2 要求检查 prepared 标志判断完整性
+		 */
+		struct page *header_page;
+		struct snapfs_batch_header *header;
+		block_t header_blkaddr;
+		u8 prepared;
+
+		header_blkaddr = redo->journal_blkaddr + slot_id * SNAPFS_BATCH_SLOT_BLOCKS;
+		header_page = f2fs_get_meta_page(sbi, header_blkaddr);
+		if (IS_ERR(header_page)) {
+			pr_warn("[snapfs batch] slot %u: failed to get header page, treating as incomplete\n",
+			         slot_id);
+			/* header 无法读取，视为不完整，清理槽位 */
+			goto preparing_discard;
+		}
+
+		header = (struct snapfs_batch_header *)page_address(header_page);
+		prepared = header->prepared;
+		f2fs_put_page(header_page, 1);
+
+		if (prepared == 0) {
+			/* prepared=0：批量写入未完成，需要清理槽位 */
+			pr_debug("[snapfs batch] slot %u: PREPARING crash, prepared=0, discarding\n",
+			         slot_id);
+			goto preparing_discard;
+		}
+
+		/*
+		 * prepared=1：批量写入已完成，redo 数据已 durable
+		 * 视为 COMMITTED 状态，继续恢复
+		 * 跳转到 COMMITTED/APPLYING 处理逻辑
+		 */
+		pr_info("[snapfs batch] slot %u: PREPARING crash but prepared=1, treating as COMMITTED\n",
+		        slot_id);
+		goto batch_resume_from_bitmap;
+	}
+
+preparing_discard:
+		{
+			u32 slot_start_blk;
+			u32 i;
+			block_t start_blkaddr = redo->journal_blkaddr;
+
+			/* 计算当前槽位对应的起始块地址 */
+			slot_start_blk = start_blkaddr + slot_id * SNAPFS_BATCH_SLOT_BLOCKS;
+
+			/* 清理所有 SNAPFS_BATCH_SLOT_BLOCKS 个块 */
+			for (i = 0; i < SNAPFS_BATCH_SLOT_BLOCKS; i++) {
+				block_t blkaddr = slot_start_blk + i;
+				struct page *p = f2fs_get_meta_page(sbi, blkaddr);
+				if (IS_ERR(p)) {
+					pr_warn("[snapfs batch] slot %u block %u: get page failed\n",
+					        slot_id, i);
+					continue;
+				}
+
+				/* 清空块内容并设置为 EMPTY 状态 */
+				memset(page_address(p), 0, PAGE_SIZE);
+				if (i == 0) {
+					/* block 0 是 header block */
+					struct snapfs_batch_header *h = page_address(p);
+					h->magic = cpu_to_le32(SNAP_REDO_MAGIC);
+					h->version = cpu_to_le16(SNAP_REDO_VERSION);
+					h->state = cpu_to_le16(SNAPFS_BATCH_EMPTY);
+				} else {
+					/* 其他块是 continuation block */
+					struct snapfs_batch_continuation *c = page_address(p);
+					c->magic = cpu_to_le32(SNAP_REDO_MAGIC);
+					c->version = cpu_to_le16(SNAP_REDO_VERSION);
+				}
+				set_page_dirty(p);
+				snapfs_flush_locked_meta_page(sbi, p);
+				/* snapfs_flush_locked_meta_page unlocks but doesn't release */
+				f2fs_put_page(p, 0);
+			}
+			pr_debug("[snapfs batch] slot %u: cleaned all %d blocks\n",
+			         slot_id, SNAPFS_BATCH_SLOT_BLOCKS);
+		}
+		ret = 0;
+		break;
+
+	case SNAPFS_BATCH_COMMITTED:
+	case SNAPFS_BATCH_APPLYING:
+batch_resume_from_bitmap: {
+		/*
+		 * 比对式恢复（基于 redo）：
+		 * 1. 遍历所有 entries
+		 * 2. 对每个 entry，读取当前状态并与 redo 比对
+		 * 3. 如果不一致，按 redo 恢复
+		 * 4. 收集 dirty pages 后统一 flush
+		 * 5. 标记为 APPLIED
+		 */
+		u16 i;
+		struct snapfs_batch_context *ctx_ptr;
+		u16 restore_count = 0;
+
+		pr_debug("[snapfs batch] slot %u: COMMITTED/APPLYING, comparison-based recovery\n", slot_id);
+
+		/* 使用动态分配避免大帧栈 */
+		ctx_ptr = kzalloc(sizeof(*ctx_ptr), GFP_KERNEL);
+		if (!ctx_ptr) {
+			pr_err("[snapfs batch] slot %u: failed to allocate context\n", slot_id);
+			ret = -ENOMEM;
+			break;
+		}
+
+		ctx_ptr->sbi = sbi;
+		ctx_ptr->slot_id = slot_id;
+		ctx_ptr->entry_capacity = SNAPFS_PROGRESS_BITMAP_BITS;
+		ctx_ptr->current_bit = 0;
+
+		/* 读取 batch 内容 */
+		ret = snapfs_batch_read_redo(sbi, slot_id, ctx_ptr);
+		if (ret) {
+			pr_err("[snapfs batch] slot %u: failed to read redo\n", slot_id);
+			/* BUG FIX: 需要释放 slot */
+			__clear_bit(slot_id, redo->batch_slot_inuse_bitmap);
+			snapfs_batch_free_slot(sbi, slot_id);
+			kfree(ctx_ptr);
+			break;
+		}
+
+		/*
+		 * 比对式恢复：遍历所有 entries，逐个比对当前状态与 redo
+		 * - 如果一致，跳过
+		 * - 如果不一致，按 redo 恢复
+		 */
+		pr_info("[snapfs batch] slot %u: checking %u entries for comparison recovery\n",
+		        slot_id, ctx_ptr->valid_bits);
+
+		/* 设置 slot 为 in-use（防止其他操作覆盖） */
+		__set_bit(slot_id, redo->batch_slot_inuse_bitmap);
+		ctx_ptr->state = SNAPFS_BATCH_APPLYING;
+
+		/* 循环遍历所有 entries，进行比对和恢复 */
+		for (i = 0; i < ctx_ptr->valid_bits; i++) {
+			struct snapfs_batch_entry *entry = &ctx_ptr->entries[i];
+			struct page *mr_page = NULL;
+			struct f2fs_mulref_block *mr_blk;
+			u16 mr_idx;
+			bool need_restore = false;
+			block_t data_blkaddr;
+			unsigned int segno;
+			unsigned int blkoff;
+			block_t sit_blkaddr;
+			struct page *sum_page = NULL;
+			struct f2fs_summary_block *sum_blk;
+			struct page *sit_page = NULL;
+			struct f2fs_sit_mulref_block *sit_blk;
+			unsigned int sit_off;
+			bool sum_match = true;
+			bool sit_match = true;
+
+			/* 1. 检查 mulref 状态 */
+			mr_page = f2fs_get_meta_page(sbi, le32_to_cpu(entry->mulref.mr_blkaddr));
+			if (IS_ERR(mr_page)) {
+				ret = PTR_ERR(mr_page);
+				mr_page = NULL;
+				goto recovery_error;
+			}
+			mr_blk = page_address(mr_page);
+			mr_idx = le16_to_cpu(entry->mulref.idx);
+
+			/* 比较 multi_bitmap */
+			if (entry->mulref.valid) {
+				if (!f2fs_test_bit(mr_idx, (char *)mr_blk->multi_bitmap))
+					need_restore = true;
+				/* 比较 mrentries 内容 */
+				else if (memcmp(&mr_blk->mrentries[mr_idx], &entry->mulref.entry,
+						sizeof(entry->mulref.entry)) != 0)
+					need_restore = true;
+			} else {
+				if (f2fs_test_bit(mr_idx, (char *)mr_blk->multi_bitmap))
+					need_restore = true;
+			}
+
+			/* 2. 检查 summary 状态 */
+			if (entry->data_blkaddr != 0 && !need_restore) {
+				data_blkaddr = le32_to_cpu(entry->data_blkaddr);
+				segno = GET_SEGNO(sbi, data_blkaddr);
+				blkoff = GET_BLKOFF_FROM_SEG0(sbi, data_blkaddr);
+
+				/* 使用 f2fs_get_meta_page 避免阻塞等待 I/O */
+				sum_page = f2fs_get_meta_page(sbi, GET_SUM_BLOCK(sbi, segno));
+				if (IS_ERR(sum_page)) {
+					ret = PTR_ERR(sum_page);
+					sum_page = NULL;
+					f2fs_put_page(mr_page, 1);
+					goto recovery_error;
+				}
+				sum_blk = page_address(sum_page);
+
+				/* 比较 summary entry */
+				if (memcmp(&sum_blk->entries[blkoff], &entry->sum.sum,
+					   sizeof(entry->sum.sum)) != 0)
+					sum_match = false;
+			}
+
+			/* 3. 检查 SIT 状态 */
+			if (entry->data_blkaddr != 0 && !need_restore && !sum_match) {
+				data_blkaddr = le32_to_cpu(entry->data_blkaddr);
+				sit_blkaddr = SIT_MR_I(sbi)->base_addr +
+					(GET_SEGNO(sbi, data_blkaddr) / SIT_MR_I(sbi)->sments_per_block);
+
+				sit_page = f2fs_get_meta_page(sbi, sit_blkaddr);
+				if (IS_ERR(sit_page)) {
+					ret = PTR_ERR(sit_page);
+					sit_page = NULL;
+					f2fs_put_page(sum_page, 1);
+					f2fs_put_page(mr_page, 1);
+					goto recovery_error;
+				}
+				sit_blk = page_address(sit_page);
+				sit_off = GET_SEGNO(sbi, data_blkaddr) % SIT_MR_I(sbi)->sments_per_block;
+
+				/* 比较 SIT mvalid_map */
+				if (entry->sit_set) {
+					if (!f2fs_test_bit(blkoff, (char *)sit_blk->entries[sit_off].mvalid_map))
+						sit_match = false;
+				} else {
+					if (f2fs_test_bit(blkoff, (char *)sit_blk->entries[sit_off].mvalid_map))
+						sit_match = false;
+				}
+			}
+
+			/* 判断是否需要恢复 */
+			need_restore = need_restore || !sum_match || !sit_match;
+
+			/* 释放用于比对的 pages */
+			if (sit_page) f2fs_put_page(sit_page, 1);
+			if (sum_page) f2fs_put_page(sum_page, 1);
+			f2fs_put_page(mr_page, 1);
+
+			if (!need_restore) {
+				pr_debug("[snapfs batch] slot %u: entry %u matches redo, skipping\n",
+				         slot_id, i);
+				continue;
+			}
+
+			/* 需要恢复，调用 apply_one 收集 dirty pages */
+			pr_debug("[snapfs batch] slot %u: entry %u inconsistent, restoring\n",
+			         slot_id, i);
+
+			ret = snapfs_batch_apply_one(sbi, ctx_ptr, i);
+			if (ret) {
+				pr_err("[snapfs batch] slot %u: apply bit %u failed: %d\n",
+				       slot_id, i, ret);
+				goto recovery_error;
+			}
+			restore_count++;
+			pr_debug("[snapfs batch] slot %u: applied entry %u/%u\n",
+			         slot_id, i + 1, ctx_ptr->valid_bits);
+		}
+
+		if (restore_count == 0) {
+			/* 所有 entries 都一致，无需恢复，标记为 APPLIED */
+			pr_info("[snapfs batch] slot %u: all %u entries match redo, no restore needed\n",
+			        slot_id, ctx_ptr->valid_bits);
+			ret = snapfs_batch_mark_applied(sbi, ctx_ptr);
+			__clear_bit(slot_id, redo->batch_slot_inuse_bitmap);
+			snapfs_batch_free_slot(sbi, slot_id);
+			kfree(ctx_ptr);
+			break;
+		}
+
+		pr_info("[snapfs batch] slot %u: restored %u/%u entries\n",
+		        slot_id, restore_count, ctx_ptr->valid_bits);
+
+recovery_error:
+		/* 清理收集的 dirty pages */
+		if (ctx_ptr->dirty_mr_page) {
+			f2fs_put_page(ctx_ptr->dirty_mr_page, 1);
+			ctx_ptr->dirty_mr_page = NULL;
+		}
+		for (i = 0; i < ctx_ptr->dirty_sum_count; i++) {
+			if (ctx_ptr->dirty_sum_pages[i]) {
+				f2fs_put_page(ctx_ptr->dirty_sum_pages[i], 1);
+				ctx_ptr->dirty_sum_pages[i] = NULL;
+			}
+		}
+		ctx_ptr->dirty_sum_count = 0;
+		for (i = 0; i < ctx_ptr->dirty_sit_count; i++) {
+			if (ctx_ptr->dirty_sit_pages[i]) {
+				f2fs_put_page(ctx_ptr->dirty_sit_pages[i], 1);
+				ctx_ptr->dirty_sit_pages[i] = NULL;
+			}
+		}
+		ctx_ptr->dirty_sit_count = 0;
+
+		/* 批量 flush 所有收集的 dirty pages */
+		ret = snapfs_batch_flush_all(sbi, ctx_ptr);
+		if (ret) {
+			pr_err("[snapfs batch] slot %u: flush all failed: %d\n",
+			       slot_id, ret);
+			snapfs_batch_mark_applied(sbi, ctx_ptr);
+			__clear_bit(slot_id, redo->batch_slot_inuse_bitmap);
+			snapfs_batch_free_slot(sbi, slot_id);
+			kfree(ctx_ptr);
+			return ret;
+		}
+
+		/* 更新 bitmap（标记所有 entry 已完成） */
+		for (i = 0; i < ctx_ptr->valid_bits; i++)
+			f2fs_set_bit(i, ctx_ptr->bitmap);
+
+		/* 所有 bits 都已 apply，标记为 APPLIED */
+		pr_info("[snapfs batch] slot %u: all %u bits applied and flushed, marking APPLIED\n",
+		        slot_id, ctx_ptr->valid_bits);
+		ret = snapfs_batch_mark_applied(sbi, ctx_ptr);
+
+		/* 释放 slot */
+		__clear_bit(slot_id, redo->batch_slot_inuse_bitmap);
+		snapfs_batch_free_slot(sbi, slot_id);
+
+		kfree(ctx_ptr);
+		ret = 0;
+		break;
+	}
+
+	default:
+		pr_warn("[snapfs batch] slot %u: unknown state %u\n", slot_id, state);
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+/*
+ * 对 batch 中指定 bit 执行 apply（收集 dirty pages，不立即 flush）
+ * 从 ctx->entries 中找到对应的 redo 项并执行
+ *
+ * 优化后不再逐块 flush，而是收集到 ctx 的 dirty page 列表中
+ * 收集后立即释放 lock，避免阻塞其他线程
+ * 统一的 flush 在 snapfs_batch_flush_all() 中进行
+ *
+ * 返回值：
+ *   0: 成功
+ *   <0: 错误
+ */
+int snapfs_batch_apply_one(struct f2fs_sb_info *sbi, struct snapfs_batch_context *ctx,
+                           u16 bitno)
+{
+    struct snapfs_batch_entry *entry = NULL;
+    struct page *sum_page = NULL;
+    struct page *sit_page = NULL;
+    struct f2fs_mulref_block *mulref_blk = NULL;
+    struct f2fs_summary_block *sum_blk = NULL;
+    struct f2fs_sit_mulref_block *sit_blk = NULL;
+    u16 mulref_idx;
+    block_t data_blkaddr;
+    unsigned int segno;
+    unsigned int blkoff;
+    unsigned int sit_off;
+    block_t sit_blkaddr;
+    bool need_sum_page = false;
+    bool need_sit_page = false;
+    u16 i;
+    int ret = 0;
+
+    if (!sbi || !ctx)
+        return -EINVAL;
+
+    if (bitno >= ctx->valid_bits)
+        return -EINVAL;
+
+    /* 在 entries 中查找 bitno 对应的项 */
+    for (i = 0; i < ctx->entry_count; i++) {
+        if (i == bitno) {
+            entry = &ctx->entries[i];
+            break;
+        }
+    }
+
+    if (!entry) {
+        pr_warn("[snapfs batch] slot %u: no redo entry for bit %u\n",
+                ctx->slot_id, bitno);
+        return 0;  /* 没有 redo 项，跳过 */
+    }
+
+    pr_debug("[snapfs batch] slot %u: applying bit %u, mr_blkaddr=%u\n",
+             ctx->slot_id, bitno, le32_to_cpu(entry->mulref.mr_blkaddr));
+
+    /* 1. 执行 mulref 更新（去重：整个 batch 共享一个 dirty_mr_page） */
+    if (!ctx->dirty_mr_page) {
+        ctx->dirty_mr_page = f2fs_get_meta_page(sbi,
+            le32_to_cpu(entry->mulref.mr_blkaddr));
+        if (IS_ERR(ctx->dirty_mr_page)) {
+            ret = PTR_ERR(ctx->dirty_mr_page);
+            ctx->dirty_mr_page = NULL;
+            return ret;
+        }
+    }
+    mulref_blk = (struct f2fs_mulref_block *)page_address(ctx->dirty_mr_page);
+    mulref_idx = le16_to_cpu(entry->mulref.idx);
+
+    if (entry->mulref.valid) {
+        bool was_valid = f2fs_test_bit(mulref_idx, (char *)mulref_blk->multi_bitmap);
+        if (!was_valid) {
+            f2fs_set_bit(mulref_idx, (char *)mulref_blk->multi_bitmap);
+            mulref_blk->v_mrentrys = cpu_to_le16(
+                le16_to_cpu(mulref_blk->v_mrentrys) + 1);
+        }
+        mulref_blk->mrentries[mulref_idx] = entry->mulref.entry;
+    } else {
+        mulref_mark_invalid(mulref_blk, mulref_idx);
+        memset(&mulref_blk->mrentries[mulref_idx], 0,
+               sizeof(struct f2fs_mulref_entry));
+    }
+    set_page_dirty(ctx->dirty_mr_page);
+
+    /* 2. 处理 summary 和 SIT（检查是否需要获取新 page） */
+    if (entry->data_blkaddr != 0) {
+        data_blkaddr = le32_to_cpu(entry->data_blkaddr);
+        segno = GET_SEGNO(sbi, data_blkaddr);
+        blkoff = GET_BLKOFF_FROM_SEG0(sbi, data_blkaddr);
+        sit_blkaddr = SIT_MR_I(sbi)->base_addr +
+            (GET_SEGNO(sbi, data_blkaddr) / SIT_MR_I(sbi)->sments_per_block);
+
+        /* 检查 summary page 是否已在 dirty list 中（按 segno 去重） */
+        for (i = 0; i < ctx->dirty_sum_count; i++) {
+            if (ctx->dirty_sum_segno[i] == segno) {
+                /* 已存在，使用该 page */
+                break;
+            }
+        }
+        if (i >= ctx->dirty_sum_count) {
+            /* 需要获取新的 sum page */
+            need_sum_page = true;
+        }
+
+        /* 检查 SIT page 是否已在 dirty list 中（按 sit_blkaddr 去重） */
+        for (i = 0; i < ctx->dirty_sit_count; i++) {
+            if (ctx->dirty_sit_blkaddr[i] == sit_blkaddr) {
+                /* 已存在，使用该 page */
+                break;
+            }
+        }
+        if (i >= ctx->dirty_sit_count) {
+            /* 需要获取新的 sit page */
+            need_sit_page = true;
+        }
+
+        /* 获取 sum page（如果需要） */
+        if (need_sum_page && ctx->dirty_sum_count < 512) {
+            sum_page = f2fs_get_meta_page(sbi, GET_SUM_BLOCK(sbi, segno));
+            if (IS_ERR(sum_page)) {
+                ret = PTR_ERR(sum_page);
+                pr_err("[snapfs batch] slot %u: get sum page failed: %d\n",
+                       ctx->slot_id, ret);
+                /* 清理已获取的 pages */
+                if (ctx->dirty_mr_page && PageLocked(ctx->dirty_mr_page))
+                    unlock_page(ctx->dirty_mr_page);
+                goto out;
+            }
+            ctx->dirty_sum_pages[ctx->dirty_sum_count] = sum_page;
+            ctx->dirty_sum_segno[ctx->dirty_sum_count] = segno;
+            ctx->dirty_sum_count++;
+        }
+
+        /* 获取 SIT page（如果需要） */
+        if (need_sit_page && ctx->dirty_sit_count < 256) {
+            sit_page = f2fs_get_meta_page(sbi, sit_blkaddr);
+            if (IS_ERR(sit_page)) {
+                ret = PTR_ERR(sit_page);
+                pr_err("[snapfs batch] slot %u: get sit page failed: %d\n",
+                       ctx->slot_id, ret);
+                /* 清理已获取的 pages */
+                if (ctx->dirty_mr_page && PageLocked(ctx->dirty_mr_page))
+                    unlock_page(ctx->dirty_mr_page);
+                if (sum_page && PageLocked(sum_page))
+                    unlock_page(sum_page);
+                goto out;
+            }
+            ctx->dirty_sit_pages[ctx->dirty_sit_count] = sit_page;
+            ctx->dirty_sit_blkaddr[ctx->dirty_sit_count] = sit_blkaddr;
+            ctx->dirty_sit_count++;
+        }
+    }
+
+out:
+    /* 释放 pages 的 lock */
+    if (ctx->dirty_mr_page && PageLocked(ctx->dirty_mr_page))
+        unlock_page(ctx->dirty_mr_page);
+    for (i = 0; i < ctx->dirty_sum_count; i++) {
+        if (ctx->dirty_sum_pages[i] && PageLocked(ctx->dirty_sum_pages[i]))
+            unlock_page(ctx->dirty_sum_pages[i]);
+    }
+    for (i = 0; i < ctx->dirty_sit_count; i++) {
+        if (ctx->dirty_sit_pages[i] && PageLocked(ctx->dirty_sit_pages[i]))
+            unlock_page(ctx->dirty_sit_pages[i]);
+    }
+
+    if (ret)
+        return ret;
+
+    /* 3. 执行 summary 和 SIT 的修改（对所有已收集的 dirty pages） */
+    /* Summary 修改 */
+    for (i = 0; i < ctx->dirty_sum_count; i++) {
+        if (ctx->dirty_sum_segno[i] == segno) {
+            sum_blk = (struct f2fs_summary_block *)
+                page_address(ctx->dirty_sum_pages[i]);
+            sum_blk->entries[blkoff] = entry->sum.sum;
+            set_page_dirty(ctx->dirty_sum_pages[i]);
+            break;
+        }
+    }
+
+    /* SIT 修改 */
+    for (i = 0; i < ctx->dirty_sit_count; i++) {
+        if (ctx->dirty_sit_blkaddr[i] == sit_blkaddr) {
+            sit_blk = (struct f2fs_sit_mulref_block *)
+                page_address(ctx->dirty_sit_pages[i]);
+            sit_off = GET_SEGNO(sbi, data_blkaddr) %
+                SIT_MR_I(sbi)->sments_per_block;
+
+            if (entry->sit_set) {
+                f2fs_set_bit(blkoff,
+                    (char *)sit_blk->entries[sit_off].mvalid_map);
+                sit_blk->entries[sit_off].mblocks = cpu_to_le16(
+                    le16_to_cpu(sit_blk->entries[sit_off].mblocks) + 1);
+            } else {
+                f2fs_clear_bit(blkoff,
+                    (char *)sit_blk->entries[sit_off].mvalid_map);
+                if (le16_to_cpu(sit_blk->entries[sit_off].mblocks) > 0)
+                    sit_blk->entries[sit_off].mblocks = cpu_to_le16(
+                        le16_to_cpu(sit_blk->entries[sit_off].mblocks) - 1);
+            }
+            set_page_dirty(ctx->dirty_sit_pages[i]);
+            break;
+        }
+    }
+
+    pr_debug("[snapfs batch] slot %u: bit %u collected, dirty_mr=%p, dirty_sum=%u, dirty_sit=%u\n",
+             ctx->slot_id, bitno, ctx->dirty_mr_page,
+             ctx->dirty_sum_count, ctx->dirty_sit_count);
+
+    return 0;
+}
+
+/*
+ * 批量 flush 所有 dirty pages
+ * 在 snapfs_batch_apply_one 收集完所有 dirty pages 后调用
+ *
+ * 返回值：
+ *   0: 成功
+ *   <0: 错误
+ */
+int snapfs_batch_flush_all(struct f2fs_sb_info *sbi, struct snapfs_batch_context *ctx)
+{
+    int ret = 0;
+    int i;
+
+    if (!sbi || !ctx)
+        return -EINVAL;
+
+#if 0
+    pr_info("[snapfs batch] slot %u: flushing (mr=%p, sum=%u, sit=%u)\n",
+            ctx->slot_id,
+            ctx->dirty_mr_page, ctx->dirty_sum_count, ctx->dirty_sit_count);
+#endif
+
+    /* 1. Flush mulref page */
+    if (ctx->dirty_mr_page) {
+        struct page *page = ctx->dirty_mr_page;
+
+#if 0
+        /* DEBUG: 打印 mr page 状态 */
+        pr_info("[snapfs batch] flush mr: page=%p, refcount=%d, mapcount=%d, dirty=%d, locked=%d\n",
+                page, page_ref_count(page), page_mapcount(page),
+                PageDirty(page), PageLocked(page));
+#endif
+
+        /* 确保 page 被锁定（page_mkclean 要求 page 必须锁定） */
+        if (!PageLocked(page)) {
+            lock_page(page);
+#if 0
+            pr_info("[snapfs batch] slot %u: mr page was unlocked, re-locked\n",
+                    ctx->slot_id);
+#endif
+        }
+
+        ret = snapfs_flush_locked_meta_page(sbi, page);
+        if (ret) {
+            pr_err("[snapfs batch] slot %u: flush mr page failed: %d\n",
+                   ctx->slot_id, ret);
+            return ret;
+        }
+        f2fs_put_page(page, 0);
+        ctx->dirty_mr_page = NULL;
+    }
+
+    /* 2. Flush sum pages */
+    for (i = 0; i < ctx->dirty_sum_count; i++) {
+        if (ctx->dirty_sum_pages[i]) {
+            struct page *page = ctx->dirty_sum_pages[i];
+
+#if 0
+            /* DEBUG: 打印每个 sum page 状态 */
+            pr_info("[snapfs batch] flush sum[%d]: page=%p, refcount=%d, mapcount=%d, dirty=%d, locked=%d\n",
+                    i, page, page_ref_count(page),
+                    page_mapcount(page), PageDirty(page), PageLocked(page));
+#endif
+
+            /* 确保 page 被锁定 */
+            if (!PageLocked(page)) {
+                lock_page(page);
+#if 0
+                pr_info("[snapfs batch] slot %u: sum page[%d] was unlocked, re-locked\n",
+                        ctx->slot_id, i);
+#endif
+            }
+
+            ret = snapfs_flush_locked_meta_page(sbi, page);
+            if (ret) {
+                pr_err("[snapfs batch] slot %u: flush sum page %u failed: %d\n",
+                       ctx->slot_id, i, ret);
+                /* 继续 flush 其他 pages */
+            }
+            f2fs_put_page(page, 0);
+            ctx->dirty_sum_pages[i] = NULL;
+        }
+    }
+    ctx->dirty_sum_count = 0;
+
+    /* 3. Flush SIT pages */
+    for (i = 0; i < ctx->dirty_sit_count; i++) {
+        if (ctx->dirty_sit_pages[i]) {
+            struct page *page = ctx->dirty_sit_pages[i];
+
+#if 0
+            /* DEBUG: 打印每个 SIT page 状态 */
+            pr_info("[snapfs batch] flush sit[%d]: page=%p, refcount=%d, mapcount=%d, dirty=%d, locked=%d\n",
+                    i, page, page_ref_count(page),
+                    page_mapcount(page), PageDirty(page), PageLocked(page));
+#endif
+
+            /* 确保 page 被锁定 */
+            if (!PageLocked(page)) {
+                lock_page(page);
+#if 0
+                pr_info("[snapfs batch] slot %u: sit page[%d] was unlocked, re-locked\n",
+                        ctx->slot_id, i);
+#endif
+            }
+
+            ret = snapfs_flush_locked_meta_page(sbi, page);
+            if (ret) {
+                pr_err("[snapfs batch] slot %u: flush sit page %u failed: %d\n",
+                       ctx->slot_id, i, ret);
+                /* 继续 flush 其他 pages */
+            }
+            f2fs_put_page(page, 0);
+            ctx->dirty_sit_pages[i] = NULL;
+        }
+    }
+    ctx->dirty_sit_count = 0;
+
+#if 0
+    pr_info("[snapfs batch] slot %u: all dirty pages flushed\n", ctx->slot_id);
+#endif
+
+    return 0;
+}
+
 static int snapfs_apply_mulref_op(struct f2fs_sb_info *sbi,
 				 struct snap_redo_mulref_op *op)
 {
@@ -1179,6 +2744,33 @@ int snapfs_recover_journal(struct f2fs_sb_info *sbi)
 	if (!sbi->magic_info || !sbi->magic_info->redo_info)
 		return 0;
 	redo = sbi->magic_info->redo_info;
+
+	/* === Batch Redo Recovery === */
+	if (redo->batch_mode) {
+		pr_info("[snapfs batch] starting batch redo recovery\n");
+
+		/* 初始化 batch slot 位图 */
+		bitmap_zero(redo->batch_slot_inuse_bitmap, redo->batch_nr_slots);
+
+		/* 扫描所有 batch 文件槽并恢复 */
+		for (i = 0; i < redo->batch_nr_slots; i++) {
+			ret = snapfs_batch_recover_slot(sbi, i);
+			if (ret > 0) {
+				/* 有未完成的 batch，需要继续 apply */
+				pr_info("[snapfs batch] slot %u: %d bits remaining\n", i, ret);
+				__set_bit(i, redo->batch_slot_inuse_bitmap);
+			} else if (ret < 0) {
+				pr_err("[snapfs batch] slot %u: recovery error %d\n", i, ret);
+				return ret;
+			}
+		}
+
+		pr_info("[snapfs batch] batch redo recovery completed\n");
+		/* 仍然处理 overwrite slot */
+		goto recover_overwrite;
+	}
+
+	/* === Legacy Slot-based Recovery === */
 	bitmap_zero(redo->slot_inuse_bitmap, redo->nr_slots);
 	memset(redo->slot_tx_seq, 0, sizeof(*redo->slot_tx_seq) * redo->nr_slots);
 	for (i = 0; i < redo->cow_nr_slots; i++) {
@@ -1207,6 +2799,8 @@ int snapfs_recover_journal(struct f2fs_sb_info *sbi)
 			return ret;
 	}
 
+recover_overwrite:
+	/* 处理 overwrite slot（batch 和 legacy 模式都使用） */
 	page = f2fs_get_meta_page(sbi, snapfs_redo_slot_blkaddr(sbi, redo->overwrite_slot));
 	if (IS_ERR(page))
 		return PTR_ERR(page);
@@ -1471,10 +3065,34 @@ static nid_t f2fs_cow_copy_indirect_node(struct f2fs_sb_info *sbi,
 		return 0;
 	}
 	src_rn = F2FS_NODE(src_page);
-	/* 复制所有子 nid 到临时数组 */
+	/* 复制所有子 nid 到临时数组，同时检查有效性 */
 	for (i = 0; i < NIDS_PER_BLOCK; i++) {
-		child_nids[i] = le32_to_cpu(src_rn->in.nid[i]);
+		nid_t nid_to_check = le32_to_cpu(src_rn->in.nid[i]);
+		/* 检查 nid 是否在有效范围内（防止损坏的源数据） */
+		if (nid_to_check != 0 && nid_to_check >= NM_I(sbi)->max_nid) {
+			pr_err("[snapfs cow_node] COPY WARNING: indirect_node %u, invalid child nid %u at index %d (max_nid=%u), skipping\n",
+			       src_nid, nid_to_check, i, NM_I(sbi)->max_nid);
+			child_nids[i] = 0;  /* 将无效 nid 视为 0（空节点） */
+		} else {
+			child_nids[i] = nid_to_check;
+		}
 	}
+	/* 调试日志：打印所有复制的 child nids（前几个和后几个） */
+#if 0
+	if (SNAPFS_DEBUG || child_nids[0] != 0) {
+		pr_info("[snapfs cow_node] COPY: indirect_node src_nid=%u, new_nid=%u, copying %d child nids:\n",
+			src_nid, new_nid, NIDS_PER_BLOCK);
+		for (i = 0; i < 5 && i < NIDS_PER_BLOCK; i++) {
+			pr_info("  [%d] = %u\n", i, child_nids[i]);
+		}
+		if (NIDS_PER_BLOCK > 10) {
+			pr_info("  ... (%d total, last 5):\n", NIDS_PER_BLOCK);
+			for (i = NIDS_PER_BLOCK - 5; i < NIDS_PER_BLOCK; i++) {
+				pr_info("  [%d] = %u\n", i, child_nids[i]);
+			}
+		}
+	}
+#endif
 	f2fs_put_page(src_page, 1);
 	src_page = NULL;
 
@@ -1620,9 +3238,17 @@ static nid_t f2fs_cow_copy_double_indirect_node(struct f2fs_sb_info *sbi,
 		return 0;
 	}
 	src_rn = F2FS_NODE(src_page);
-	/* 复制所有子 nid 到临时数组 */
+	/* 复制所有子 nid 到临时数组，同时检查有效性 */
 	for (i = 0; i < NIDS_PER_BLOCK; i++) {
-		child_nids[i] = le32_to_cpu(src_rn->in.nid[i]);
+		nid_t nid_to_check = le32_to_cpu(src_rn->in.nid[i]);
+		/* 检查 nid 是否在有效范围内（防止损坏的源数据） */
+		if (nid_to_check != 0 && nid_to_check >= NM_I(sbi)->max_nid) {
+			pr_err("[snapfs cow_node]: WARNING: invalid child nid %u at index %d (max_nid=%u), skipping\n",
+			       nid_to_check, i, NM_I(sbi)->max_nid);
+			child_nids[i] = 0;  /* 将无效 nid 视为 0（空节点） */
+		} else {
+			child_nids[i] = nid_to_check;
+		}
 	}
 	f2fs_put_page(src_page, 1);
 	src_page = NULL;
@@ -1765,6 +3391,11 @@ int f2fs_cow_copy_all_nodes(struct inode *src_inode, struct inode *snap_inode)
 	/* 处理 i_nid[0]: direct_node, offset = 1 */
 	if (src_nids[0] != 0) {
 		new_nids[0] = f2fs_cow_copy_direct_node(sbi, src_nids[0], snap_inode, NODE_OFS_DIRECT_0);
+		if (new_nids[0] == 0) {
+			pr_err("[snapfs cow_node]: failed to copy direct_node i_nid[0]\n");
+			ret = -ENOMEM;
+			goto out_copy_failed;
+		}
 		if (SNAPFS_DEBUG)
 			pr_info("[snapfs cow_node]: i_nid[0]: %u -> %u\n", src_nids[0], new_nids[0]);
 	}
@@ -1772,6 +3403,11 @@ int f2fs_cow_copy_all_nodes(struct inode *src_inode, struct inode *snap_inode)
 	/* 处理 i_nid[1]: direct_node, offset = 2 */
 	if (src_nids[1] != 0) {
 		new_nids[1] = f2fs_cow_copy_direct_node(sbi, src_nids[1], snap_inode, NODE_OFS_DIRECT_1);
+		if (new_nids[1] == 0) {
+			pr_err("[snapfs cow_node]: failed to copy direct_node i_nid[1]\n");
+			ret = -ENOMEM;
+			goto out_copy_failed;
+		}
 		if (SNAPFS_DEBUG)
 			pr_info("[snapfs cow_node]: i_nid[1]: %u -> %u\n", src_nids[1], new_nids[1]);
 	}
@@ -1780,6 +3416,11 @@ int f2fs_cow_copy_all_nodes(struct inode *src_inode, struct inode *snap_inode)
 	if (src_nids[2] != 0) {
 		new_nids[2] = f2fs_cow_copy_indirect_node(sbi, src_nids[2], snap_inode,
 		                                           NODE_OFS_INDIRECT_0, 4);
+		if (new_nids[2] == 0) {
+			pr_err("[snapfs cow_node]: failed to copy indirect_node i_nid[2]\n");
+			ret = -ENOMEM;
+			goto out_copy_failed;
+		}
 		if (SNAPFS_DEBUG)
 			pr_info("[snapfs cow_node]: i_nid[2]: %u -> %u\n", src_nids[2], new_nids[2]);
 	}
@@ -1789,6 +3430,11 @@ int f2fs_cow_copy_all_nodes(struct inode *src_inode, struct inode *snap_inode)
 		new_nids[3] = f2fs_cow_copy_indirect_node(sbi, src_nids[3], snap_inode,
 		                                           NODE_OFS_INDIRECT_1,
 		                                           5 + NIDS_PER_BLOCK);
+		if (new_nids[3] == 0) {
+			pr_err("[snapfs cow_node]: failed to copy indirect_node i_nid[3]\n");
+			ret = -ENOMEM;
+			goto out_copy_failed;
+		}
 		if (SNAPFS_DEBUG)
 			pr_info("[snapfs cow_node]: i_nid[3]: %u -> %u\n", src_nids[3], new_nids[3]);
 	}
@@ -1796,10 +3442,16 @@ int f2fs_cow_copy_all_nodes(struct inode *src_inode, struct inode *snap_inode)
 	/* 处理 i_nid[4]: double_indirect_node, offset = 5+2N */
 	if (src_nids[4] != 0) {
 		new_nids[4] = f2fs_cow_copy_double_indirect_node(sbi, src_nids[4], snap_inode);
+		if (new_nids[4] == 0) {
+			pr_err("[snapfs cow_node]: failed to copy double_indirect_node i_nid[4]\n");
+			ret = -ENOMEM;
+			goto out_copy_failed;
+		}
 		if (SNAPFS_DEBUG)
 			pr_info("[snapfs cow_node]: i_nid[4]: %u -> %u\n", src_nids[4], new_nids[4]);
 	}
 
+out_copy_failed:
 	/* 阶段3：获取快照 inode page 锁，更新 i_nid */
 	snap_ipage = f2fs_get_node_page(sbi, snap_inode->i_ino);
 	if (IS_ERR(snap_ipage)) {
@@ -2582,6 +4234,247 @@ static inline void mulref_mark_invalid(struct f2fs_mulref_block *blk, u16 idx)
 		blk->v_mrentrys--;
 }
 
+// mulref batch - 按 node block 处理批量 redo
+// 用于 SnapFS Batch Redo 设计
+
+/*
+ * 处理一个 node block 中所有数据块的 mulref 设置
+ * 使用 batch redo 机制：先暂存所有 redo，再统一 commit，最后 apply
+ *
+ * 简化实现：每个数据块对应一个 batch entry
+ * entry_count == nr_data_blks == valid_bits
+ *
+ * 注意：对于"普通块首次转 mulref"场景，暂存第一个 mulref entry 的 redo
+ * 第二个 mulref entry 在 apply 阶段分配
+ *
+ * @inode: 源文件 inode
+ * @src_ino: 源文件 inode 号
+ * @node_nid: 当前 node block 的 nid
+ * @node_ofs: node block 的 offset
+ * @data_blks: 数据块地址数组
+ * @nr_data_blks: 数据块数量
+ * @lblks: 对应的逻辑块号数组
+ *
+ * 返回值：0 成功，非 0 失败
+ */
+static int f2fs_cow_node_block_batch(struct inode *inode, u32 src_ino,
+				     nid_t node_nid, u16 node_ofs,
+				     block_t *data_blks, int nr_data_blks,
+				     u16 *lblks)
+{
+	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
+	struct f2fs_sm_info *sm = SM_I(sbi);
+	struct snapfs_batch_context *batch_ctx = NULL;
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+	struct curmulref_info *cmr = &sm->curmulref_blk;
+	u32 slot_id;
+	int ret = 0;
+	int i;
+	block_t old_blkaddr;
+	bool is_mulref;
+	u16 eidx;
+	block_t blkaddr;
+	struct f2fs_summary old_sum, new_sum;
+	struct f2fs_mulref_entry *entry;
+	unsigned int segno;
+	block_t sit_blkaddr;
+	int entry_idx;
+
+	if (!data_blks || nr_data_blks <= 0) {
+		pr_debug("[snapfs batch] no data blocks to process\n");
+		return 0;
+	}
+
+	/* 检查 batch mode 是否启用 */
+	if (!redo || !redo->batch_mode) {
+		pr_err("[snapfs batch] batch mode not enabled\n");
+		return -EINVAL;
+	}
+
+	/* 分配 batch slot（规则 3：必须等待） */
+	ret = snapfs_batch_alloc_slot(sbi, src_ino, inode->i_ino,
+				     node_nid, node_ofs, nr_data_blks,
+				     &slot_id, &batch_ctx);
+	if (ret) {
+		pr_err("[snapfs batch] failed to allocate slot: %d\n", ret);
+		return ret;
+	}
+
+	/* 检查 curmulref 是否初始化 */
+	if (!cmr->inited) {
+		pr_err("[snapfs batch] curmulref not initialized\n");
+		ret = -EINVAL;
+		goto out_free_slot;
+	}
+
+	/* 步骤 2：遍历所有数据块并暂存 redo 到 batch_ctx->entries
+	 * 简化：每个数据块对应一个 batch entry
+	 * 对于普通块转 mulref 场景，暂存第一个 mulref entry
+	 * 第二个 entry 在 apply 阶段分配
+	 */
+	for (i = 0; i < nr_data_blks; i++) {
+		old_blkaddr = data_blks[i];
+
+		if (!__is_valid_data_blkaddr(old_blkaddr))
+			continue;
+
+		/* 获取 old summary */
+		ret = f2fs_get_summary_by_addr(sbi, old_blkaddr, &old_sum);
+		if (ret) {
+			pr_err("[snapfs batch] get old summary failed, blkaddr=%u\n",
+			       old_blkaddr);
+			goto out_free_slot;
+		}
+
+		is_mulref = check_sit_mulref_entry(sbi, old_blkaddr);
+		segno = GET_SEGNO(sbi, old_blkaddr);
+		sit_blkaddr = SIT_MR_I(sbi)->base_addr +
+			(segno / SIT_MR_I(sbi)->sments_per_block);
+
+		entry_idx = batch_ctx->entry_count;
+
+		if (entry_idx >= batch_ctx->entry_capacity) {
+			pr_err("[snapfs batch] entry capacity exceeded\n");
+			ret = -ENOSPC;
+			goto out_free_slot;
+		}
+
+		/* 设置 batch entry 基本信息 */
+		batch_ctx->entries[entry_idx].bitno = lblks[i];
+		batch_ctx->entries[entry_idx].data_blkaddr = cpu_to_le32(old_blkaddr);
+		batch_ctx->entries[entry_idx].flags = 0;
+
+		if (!is_mulref) {
+			/* 普通块首次转 mulref：分配第一个 entry
+			 * 第二个 entry 在 apply 阶段分配
+			 */
+			block_t blkaddr1;
+
+			ret = curmulref_alloc_entry(sbi, &eidx);
+			if (ret) {
+				pr_err("[snapfs batch] alloc entry failed\n");
+				goto out_free_slot;
+			}
+			blkaddr1 = cmr->blkaddr;
+
+			/* 构建第一个 mulref entry（原始块引用 + 指向第二个 entry） */
+			/* 注意：第二个 entry 尚未分配，next 指针暂时为 0
+			 * 在 apply 阶段分配第二个 entry 后会更新
+			 */
+			entry = &batch_ctx->entries[entry_idx].mulref.entry;
+			entry->m_nid = old_sum.nid;
+			entry->m_ofs = old_sum.ofs_in_node;
+			entry->m_ver = old_sum.version;
+			entry->m_count = 2;  /* 稍后更新为实际值 */
+			entry->next = 0;     /* 暂时为 0，apply 阶段更新 */
+
+			batch_ctx->entries[entry_idx].mulref.mr_blkaddr = cpu_to_le32(blkaddr1);
+			batch_ctx->entries[entry_idx].mulref.idx = cpu_to_le16(eidx);
+			batch_ctx->entries[entry_idx].mulref.valid = 1;
+			batch_ctx->entries[entry_idx].flags |= SNAPFS_BATCH_ENTRY_HAS_MULREF |
+							     SNAPFS_BATCH_ENTRY_NEED_SECOND_ALLOC;
+
+			/* 构建 summary op - 指向第一个 mulref entry */
+			new_sum.nid = cpu_to_le16(blkaddr1);
+			new_sum.ofs_in_node = eidx;
+			new_sum.version = old_sum.version;
+
+			batch_ctx->entries[entry_idx].sum.data_blkaddr = cpu_to_le32(old_blkaddr);
+			batch_ctx->entries[entry_idx].sum.sum = new_sum;
+			batch_ctx->entries[entry_idx].flags |= SNAPFS_BATCH_ENTRY_HAS_SUMMARY;
+
+			/* 暂存 SIT op (set mulref) */
+			batch_ctx->entries[entry_idx].sit_blkaddr = cpu_to_le32(sit_blkaddr);
+			batch_ctx->entries[entry_idx].sit_set = 1;
+			batch_ctx->entries[entry_idx].flags |= SNAPFS_BATCH_ENTRY_HAS_SIT;
+
+		} else {
+			/* 已经是 mulref：追加引用，分配 1 个 entry */
+			ret = curmulref_alloc_entry(sbi, &eidx);
+			if (ret) {
+				pr_err("[snapfs batch] alloc entry failed for mulref\n");
+				goto out_free_slot;
+			}
+			blkaddr = cmr->blkaddr;
+
+			/* 构建 mulref entry */
+			entry = &batch_ctx->entries[entry_idx].mulref.entry;
+			entry->m_nid = inode->i_ino;
+			entry->m_ofs = cpu_to_le16(lblks[i]);
+			entry->m_ver = old_sum.version;
+			entry->m_count = 1;
+			entry->next = 0;
+
+			batch_ctx->entries[entry_idx].mulref.mr_blkaddr = cpu_to_le32(blkaddr);
+			batch_ctx->entries[entry_idx].mulref.idx = cpu_to_le16(eidx);
+			batch_ctx->entries[entry_idx].mulref.valid = 1;
+			batch_ctx->entries[entry_idx].flags |= SNAPFS_BATCH_ENTRY_HAS_MULREF;
+
+			/* 暂存 summary op */
+			new_sum.nid = cpu_to_le16(blkaddr);
+			new_sum.ofs_in_node = eidx;
+			new_sum.version = old_sum.version;
+
+			batch_ctx->entries[entry_idx].sum.data_blkaddr = cpu_to_le32(old_blkaddr);
+			batch_ctx->entries[entry_idx].sum.sum = new_sum;
+			batch_ctx->entries[entry_idx].flags |= SNAPFS_BATCH_ENTRY_HAS_SUMMARY;
+
+			/* 已经是 mulref，不需要更新 SIT */
+		}
+
+		batch_ctx->entry_count++;
+	}
+
+	/* 步骤 3：写入 batch header，进入 PREPARING 状态 */
+	ret = snapfs_batch_begin(sbi, batch_ctx->slot_id, batch_ctx);
+	if (ret) {
+		pr_err("[snapfs batch] begin failed: %d\n", ret);
+		goto out_free_slot;
+	}
+
+	/* 步骤 4：提交 batch（COMMITTED + durable）*/
+	ret = snapfs_batch_commit(sbi, batch_ctx);
+	if (ret) {
+		pr_err("[snapfs batch] commit failed: %d\n", ret);
+		goto out_free_slot;
+	}
+
+	/* 步骤 5：按 batch entry 逐个 apply（收集 dirty pages） */
+	for (i = 0; i < batch_ctx->entry_count; i++) {
+		ret = snapfs_batch_apply_one(sbi, batch_ctx, i);
+		if (ret) {
+			pr_err("[snapfs batch] apply entry %d failed: %d\n", i, ret);
+			goto out_free_slot;
+		}
+	}
+
+	/* 步骤 5b：批量 flush 所有收集的 dirty pages */
+	ret = snapfs_batch_flush_all(sbi, batch_ctx);
+	if (ret) {
+		pr_err("[snapfs batch] flush all failed: %d\n", ret);
+		goto out_free_slot;
+	}
+
+	/* 步骤 5c：更新 bitmap（标记所有 entry 已完成） */
+	for (i = 0; i < batch_ctx->entry_count; i++)
+		f2fs_set_bit(i, batch_ctx->bitmap);
+
+	/* 步骤 6：标记 batch 为 APPLIED */
+	ret = snapfs_batch_mark_applied(sbi, batch_ctx);
+	if (ret) {
+		pr_err("[snapfs batch] mark applied failed: %d\n", ret);
+		goto out_free_slot;
+	}
+
+	/*
+	pr_info("[snapfs batch] node block (%u,%u): %d entries applied, batch completed\n",
+		node_nid, node_ofs, batch_ctx->entry_count);
+	*/
+
+out_free_slot:
+	snapfs_batch_free_slot(sbi, batch_ctx->slot_id);
+	return ret;
+}
 
 // mulref
 int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
@@ -2592,8 +4485,8 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
     struct f2fs_sm_info *sm = SM_I(sbi);
 	// struct curmulref_info *cmr = NULL;
 	int ret;
-    struct f2fs_summary sum;
     struct f2fs_summary old_sum;
+    struct f2fs_summary sum;
     struct page *mulref_page = NULL;
     struct page *mulref_page2 = NULL;
     struct page *mulref_page3 = NULL;
@@ -4022,9 +5915,169 @@ bool f2fs_is_empty_file(struct f2fs_sb_info *sbi,
     return false; // 需要cow处理
 }
 
+/*
+ * 处理一个 direct node 中所有有效数据块（使用批量 redo）
+ *
+ * @inode: 源文件 inode
+ * @src_ino: 源文件 inode 号
+ * @node_nid: direct node 的 nid
+ * @node_ofs: node block 的 offset（在文件树中的位置）
+ *
+ * 返回值：0 成功，非 0 失败
+ */
+/*
+ * 处理一个 direct node 中的指定范围数据块（使用批量 redo）
+ *
+ * @inode: 源文件 inode
+ * @src_ino: 源文件 inode 号
+ * @node_nid: direct node 的 nid
+ * @node_ofs: node block 的 offset（用于标识）
+ * @start: 数据块在 direct node 中的起始偏移
+ * @len: 要处理的数据块数量
+ *
+ * 返回值：0 成功，非 0 失败
+ */
+static int __f2fs_cow_direct_node_batch(struct inode *inode, u32 src_ino,
+					nid_t node_nid, u16 node_ofs,
+					long start, long len)
+{
+	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
+	struct page *dn_ipage;
+	struct direct_node *dn;
+	block_t *data_blks;
+	u16 *lblks;
+	int ret = 0;
+	int i;
+
+	if (len <= 0)
+		return 0;
+
+	/* 防御性检查：验证 direct node nid 范围 */
+	if (node_nid >= NM_I(sbi)->max_nid) {
+		pr_err("[snapfs batch] __f2fs_cow_direct_node_batch: invalid node_nid=%u (max_nid=%u)\n",
+		       node_nid, NM_I(sbi)->max_nid);
+		return -EINVAL;
+	}
+
+	/* 分配临时数组 */
+	data_blks = kcalloc(len, sizeof(block_t), GFP_NOFS);
+	lblks = kcalloc(len, sizeof(u16), GFP_NOFS);
+	if (!data_blks || !lblks) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	/* 获取 direct node */
+	dn_ipage = f2fs_get_node_page(sbi, node_nid);
+	if (IS_ERR(dn_ipage)) {
+		ret = PTR_ERR(dn_ipage);
+		goto out;
+	}
+	dn = (struct direct_node *)page_address(dn_ipage);
+
+	/* 收集指定范围内的有效数据块 */
+	for (i = 0; i < len; i++) {
+		block_t blkaddr = le32_to_cpu(dn->addr[start + i]);
+		if (__is_valid_data_blkaddr(blkaddr)) {
+			data_blks[i] = blkaddr;
+			lblks[i] = (u16)(start + i);
+		} else {
+			data_blks[i] = 0;
+			lblks[i] = (u16)(start + i);
+		}
+	}
+
+	f2fs_put_page(dn_ipage, 1);
+
+	/* 调用批量 redo 函数处理该 node block */
+	ret = f2fs_cow_node_block_batch(inode, src_ino, node_nid, node_ofs,
+					data_blks, len, lblks);
+	if (ret) {
+		pr_err("[snapfs batch] failed to cow direct node %u: %d\n",
+		       node_nid, ret);
+	}
+
+out:
+	kfree(data_blks);
+	kfree(lblks);
+	return ret;
+}
+
+/*
+ * 处理 inode 直接地址区中的指定范围有效数据块（使用批量 redo）
+ *
+ * @inode: 源文件 inode
+ * @src_ino: 源文件 inode 号
+ * @i_addr: inode 的数据块地址数组
+ * @start: 起始逻辑块号
+ * @end: 结束逻辑块号（不包含）
+ *
+ * 返回值：0 成功，非 0 失败
+ */
+static int __f2fs_cow_inode_direct_batch(struct inode *inode, u32 src_ino,
+					 block_t *i_addr, long start, long end)
+{
+	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
+	block_t *data_blks;
+	u16 *lblks;
+	long len = end - start;
+	int nr_data_blks = 0;
+	int ret = 0;
+	long i;
+
+	if (len <= 0)
+		return 0;
+
+	/* 分配临时数组 */
+	data_blks = kcalloc(len, sizeof(block_t), GFP_NOFS);
+	lblks = kcalloc(len, sizeof(u16), GFP_NOFS);
+	if (!data_blks || !lblks) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	/* 收集指定范围内的有效数据块 */
+	for (i = 0; i < len; i++) {
+		block_t blkaddr = le32_to_cpu(i_addr[start + i]);
+		if (__is_valid_data_blkaddr(blkaddr)) {
+			data_blks[nr_data_blks] = blkaddr;
+			lblks[nr_data_blks] = (u16)(start + i);
+			nr_data_blks++;
+		}
+	}
+
+	if (nr_data_blks == 0) {
+		pr_debug("[snapfs batch] inode direct [%ld-%ld]: no valid data blocks\n",
+			 start, end);
+		goto out;
+	}
+
+	/* 调用批量 redo 函数处理 inode 直接地址区 */
+	ret = f2fs_cow_node_block_batch(inode, src_ino, 0, 0,
+					data_blks, nr_data_blks, lblks);
+	if (ret) {
+		pr_err("[snapfs batch] failed to cow inode direct [%ld-%ld]: %d\n",
+		       start, end, ret);
+	}
+
+out:
+	kfree(data_blks);
+	kfree(lblks);
+	return ret;
+}
+
 static int __f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino,
 					 struct snapfs_cow_progress *resume_progress)
 {
+	/* 调试日志：跟踪 __f2fs_set_mulref_blocks 调用 */
+#if 0
+	pr_err("[snapfs mulref] ====== __f2fs_set_mulref_blocks ENTER ======\n");
+	pr_err("[snapfs mulref] inode=%u, src_ino=%u, i_size=%llu, i_blocks=%lu\n",
+	       inode->i_ino, src_ino, inode->i_size, inode->i_blocks);
+	pr_err("[snapfs mulref] resume_progress=%s\n",
+	       (resume_progress && resume_progress->active) ? "active" : "NULL");
+#endif
+
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	struct snapfs_cow_progress progress;
 	loff_t isize;
@@ -4048,7 +6101,15 @@ static int __f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino,
     long off_in_dn = 0;
     long off_in_dn2 = 0;
 
+    block_t *i_addr = NULL;
+    bool batch_mode = false;
+
     int ret = 0;
+
+    /* 打印 max_nid 用于调试 */
+#if 0
+    pr_err("[snapfs mulref] max_nid=%u\n", NM_I(sbi)->max_nid);
+#endif
 
     if (resume_progress && resume_progress->active) {
         progress = *resume_progress;
@@ -4073,42 +6134,684 @@ static int __f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino,
     // 923 + 1018 + 1018 + 1018*1018+ 1018*1018 + 1018*1018*1018
 
     const long double_dir_blk = direct_blks * direct_blks;
-    
-    // pr_info("direct_index [%ld],direct_blks [%ld]\n",direct_index,direct_blks);
-    // pr_info("level1_blks[%ld],level2_blks [%ld]\n",level1_blks,level2_blks);
-    // pr_info("level3_blks[%ld],level4_blks [%ld]\n",level3_blks,level4_blks);
-    // pr_info("level5_blks[%ld]\n",level5_blks);
-    
-    
-	// isize = i_size_read(inode);
-	if (f2fs_is_empty_file(sbi, inode)) {
-		return 1;
-	}
+
+    /* 获取 inode page 并设置必要变量 */
     ipage = f2fs_get_node_page(sbi, inode->i_ino);
     if (IS_ERR(ipage)) {
-        pr_err("[snapfs cow22]: debug setmulref get src_page[%lu] failed\n", inode->i_ino);
-        return 1;
+        ret = PTR_ERR(ipage);
+        pr_err("[snapfs cow22]: debug get page failed[%lu]\n", inode->i_ino);
+        goto out;
     }
     fi = F2FS_INODE(ipage);
-    isize  = le64_to_cpu(fi->i_size);
+    isize = le64_to_cpu(fi->i_size);
     blkbits = inode->i_blkbits;
-	max_lblk = (isize + (1ULL << blkbits) - 1) >> blkbits;
+    max_lblk = (isize + (1ULL << blkbits) - 1) >> blkbits;
+
     i_nid[0] = le32_to_cpu(fi->i_nid[0]);
     i_nid[1] = le32_to_cpu(fi->i_nid[1]);
     i_nid[2] = le32_to_cpu(fi->i_nid[2]);
     i_nid[3] = le32_to_cpu(fi->i_nid[3]);
     i_nid[4] = le32_to_cpu(fi->i_nid[4]);
 
-    // 保存 i_addr 数组到栈上，避免后续 ipage 释放后的 use-after-free
-    const long addr_count = ADDRS_PER_INODE(inode);
-    block_t *i_addr = kmalloc(addr_count * sizeof(block_t), GFP_NOFS);
-    if (!i_addr) {
-        f2fs_put_page(ipage, 1);
-        return -ENOMEM;
+    /* 调试日志：打印读取到的 i_nid */
+#if 0
+    pr_err("[snapfs mulref] i_nid[0]=%u, i_nid[1]=%u, i_nid[2]=%u, i_nid[3]=%u, i_nid[4]=%u\n",
+           i_nid[0], i_nid[1], i_nid[2], i_nid[3], i_nid[4]);
+    pr_err("[snapfs mulref] i_nid[0-4] validity: [%s,%s,%s,%s,%s]\n",
+           (i_nid[0] < NM_I(sbi)->max_nid) ? "valid" : "INVALID",
+           (i_nid[1] < NM_I(sbi)->max_nid) ? "valid" : "INVALID",
+           (i_nid[2] < NM_I(sbi)->max_nid) ? "valid" : "INVALID",
+           (i_nid[3] < NM_I(sbi)->max_nid) ? "valid" : "INVALID",
+           (i_nid[4] < NM_I(sbi)->max_nid) ? "valid" : "INVALID");
+#endif
+
+    /* 从 inode 复制 direct address 数组 */
+    {
+        int max_addrs = ADDRS_PER_INODE(inode);
+        block_t *src_addr = (block_t *)fi->i_addr;
+        block_t *local_i_addr = kmalloc(max_addrs * sizeof(block_t), GFP_NOFS);
+        if (!local_i_addr) {
+            ret = -ENOMEM;
+            goto out_skip_progress;
+        }
+        memcpy(local_i_addr, src_addr, max_addrs * sizeof(block_t));
+        /* 保存到 i_addr 指针变量中 */
+        i_addr = local_i_addr;
     }
-    memcpy(i_addr, fi->i_addr, addr_count * sizeof(block_t));
 
+    /* 检查 batch redo 模式（在获取 inode page 之后设置） */
+    batch_mode = (sbi->magic_info->redo_info &&
+                  sbi->magic_info->redo_info->batch_mode);
 
+    /*
+     * Batch Redo 模式：按 node block 批量处理
+     * 以下变量在 batch mode 下使用
+     */
+    if (batch_mode) {
+        long batch_in_dn_idx;
+        long batch_in_dn2_idx;
+        long batch_in_dn3_idx;
+        long batch_dn_offset_start;
+        long batch_this_start;
+        long batch_this_end;
+        long batch_this_len;
+        long batch_start_in_dn;
+        long batch_end_in_dn;
+        long batch_level_start;
+        long batch_level_end;
+        struct page *batch_indirect_page = NULL;
+        struct page *batch_indirect2_page = NULL;
+        struct page *batch_dn_ipage = NULL;
+        struct indirect_node *batch_indirect = NULL;
+        struct indirect_node *batch_indirect2 = NULL;
+        struct direct_node *batch_dn = NULL;
+        nid_t batch_direct_nid;
+        nid_t batch_indirect2_nid;
+        block_t *batch_data_blks = NULL;
+        u16 *batch_lblks = NULL;
+
+        /*
+         * 步骤 1: 处理 Level 0 (inode 直接地址区)
+         */
+        batch_level_start = start_lblk;
+        batch_level_end = (max_lblk < direct_index) ? max_lblk : direct_index;
+        if (batch_level_start < batch_level_end) {
+            ret = __f2fs_cow_inode_direct_batch(inode, src_ino, i_addr,
+                                                batch_level_start, batch_level_end);
+            if (ret) {
+                pr_err("[snapfs batch] level0 batch failed: %d\n", ret);
+                goto batch_out;
+            }
+        }
+
+        /*
+         * 步骤 2: 处理 Level 1 (direct nodes from i_nid[0])
+         */
+        if (max_lblk > direct_index && i_nid[0] != 0) {
+            batch_level_start = (start_lblk > direct_index) ? start_lblk : direct_index;
+            batch_level_end = (max_lblk < level1_blks) ? max_lblk : level1_blks;
+            if (batch_level_start < batch_level_end) {
+                ret = __f2fs_cow_direct_node_batch(inode, src_ino, i_nid[0],
+                                                    1, batch_level_start - direct_index,
+                                                    batch_level_end - batch_level_start);
+                if (ret) {
+                    pr_err("[snapfs batch] level1 batch failed: %d\n", ret);
+                    goto batch_out;
+                }
+            }
+        }
+
+        /*
+         * 步骤 3: 处理 Level 2 (direct nodes from i_nid[1])
+         */
+        if (max_lblk > level1_blks && i_nid[1] != 0) {
+            batch_level_start = (start_lblk > level1_blks) ? start_lblk : level1_blks;
+            batch_level_end = (max_lblk < level2_blks) ? max_lblk : level2_blks;
+            if (batch_level_start < batch_level_end) {
+                ret = __f2fs_cow_direct_node_batch(inode, src_ino, i_nid[1],
+                                                    2, batch_level_start - level1_blks,
+                                                    batch_level_end - batch_level_start);
+                if (ret) {
+                    pr_err("[snapfs batch] level2 batch failed: %d\n", ret);
+                    goto batch_out;
+                }
+            }
+        }
+
+        /*
+         * 步骤 4: 处理 Level 3 (indirect nodes from i_nid[2])
+         */
+        if (max_lblk > level2_blks && i_nid[2] != 0) {
+            /* 防御性检查：验证 i_nid[2] 范围 */
+            if (i_nid[2] >= NM_I(sbi)->max_nid) {
+#if 0
+                pr_info("[snapfs batch] level3 invalid i_nid[2]=%u (max_nid=%u), skipping\n",
+                       i_nid[2], NM_I(sbi)->max_nid);
+#endif
+            } else {
+            batch_level_start = (start_lblk > level2_blks) ? start_lblk : level2_blks;
+            batch_level_end = (max_lblk < level3_blks) ? max_lblk : level3_blks;
+
+            batch_indirect_page = f2fs_get_node_page(sbi, i_nid[2]);
+            if (IS_ERR(batch_indirect_page)) {
+                ret = PTR_ERR(batch_indirect_page);
+                pr_err("[snapfs batch] level3 get indirect_page failed\n");
+                goto batch_out;
+            }
+            batch_indirect = (struct indirect_node *)page_address(batch_indirect_page);
+
+            batch_start_in_dn = (batch_level_start - level2_blks) / direct_blks;
+            batch_end_in_dn = ((batch_level_end - 1 - level2_blks) / direct_blks) + 1;
+
+            for (batch_in_dn_idx = batch_start_in_dn;
+                 batch_in_dn_idx < batch_end_in_dn && batch_in_dn_idx < direct_blks;
+                 batch_in_dn_idx++) {
+                batch_direct_nid = le32_to_cpu(batch_indirect->nid[batch_in_dn_idx]);
+                if (batch_direct_nid == 0)
+                    continue;
+                /* 防御性检查：验证从 batch indirect node 读取的 nid */
+                if (batch_direct_nid >= NM_I(sbi)->max_nid) {
+#if 0
+                    pr_info("[snapfs batch] level3 invalid batch_direct_nid=%u (max_nid=%u), skipping\n",
+                           batch_direct_nid, NM_I(sbi)->max_nid);
+#endif
+                    continue;
+                }
+
+                batch_dn_ipage = f2fs_get_node_page(sbi, batch_direct_nid);
+                if (IS_ERR(batch_dn_ipage)) {
+                    ret = PTR_ERR(batch_dn_ipage);
+                    pr_err("[snapfs batch] level3 get batch_dn_ipage failed: nid=%u, ret=%d\n",
+                           batch_direct_nid, ret);
+                    f2fs_put_page(batch_indirect_page, 1);
+                    batch_indirect_page = NULL;
+                    goto batch_out;
+                }
+                batch_dn = (struct direct_node *)page_address(batch_dn_ipage);
+
+                batch_this_start = level2_blks + batch_in_dn_idx * direct_blks;
+                batch_this_end = batch_this_start + direct_blks;
+                if (batch_level_start > batch_this_start)
+                    batch_this_start = batch_level_start;
+                if (batch_level_end < batch_this_end)
+                    batch_this_end = batch_level_end;
+                batch_this_len = batch_this_end - batch_this_start;
+
+                if (batch_this_len > 0) {
+                    batch_data_blks = kmalloc(batch_this_len * sizeof(block_t), GFP_NOFS);
+                    batch_lblks = kmalloc(batch_this_len * sizeof(u16), GFP_NOFS);
+                    if (!batch_data_blks || !batch_lblks) {
+                        ret = -ENOMEM;
+                        kfree(batch_data_blks);
+                        kfree(batch_lblks);
+                        batch_data_blks = NULL;
+                        batch_lblks = NULL;
+                        f2fs_put_page(batch_dn_ipage, 1);
+                        f2fs_put_page(batch_indirect_page, 1);
+                        batch_dn_ipage = NULL;
+                        batch_indirect_page = NULL;
+                        goto batch_out;
+                    }
+
+                    batch_dn_offset_start = batch_this_start - (level2_blks + batch_in_dn_idx * direct_blks);
+                    for (batch_in_dn3_idx = 0; batch_in_dn3_idx < batch_this_len; batch_in_dn3_idx++) {
+                        batch_data_blks[batch_in_dn3_idx] =
+                            le32_to_cpu(batch_dn->addr[batch_dn_offset_start + batch_in_dn3_idx]);
+                        batch_lblks[batch_in_dn3_idx] =
+                            (u16)(batch_dn_offset_start + batch_in_dn3_idx);
+                    }
+
+                    ret = f2fs_cow_node_block_batch(inode, src_ino, batch_direct_nid,
+                                                    (u16)(3 + batch_in_dn_idx),
+                                                    batch_data_blks, batch_this_len, batch_lblks);
+                    kfree(batch_data_blks);
+                    kfree(batch_lblks);
+                    batch_data_blks = NULL;
+                    batch_lblks = NULL;
+                    if (ret) {
+                        pr_err("[snapfs batch] f2fs_cow_node_block_batch failed: ret=%d, batch_direct_nid=%u, batch_this_len=%ld\n",
+                               ret, batch_direct_nid, batch_this_len);
+                        kfree(batch_data_blks);
+                        kfree(batch_lblks);
+                        batch_data_blks = NULL;
+                        batch_lblks = NULL;
+                        f2fs_put_page(batch_dn_ipage, 1);
+                        f2fs_put_page(batch_indirect_page, 1);
+                        batch_dn_ipage = NULL;
+                        batch_indirect_page = NULL;
+                        goto batch_out;
+                    }
+                }
+
+                f2fs_put_page(batch_dn_ipage, 1);
+                batch_dn_ipage = NULL;
+            }
+
+            f2fs_put_page(batch_indirect_page, 1);
+            batch_indirect_page = NULL;
+            }  /* 关闭 else 块 (i_nid[2] >= max_nid 检查) */
+        }
+
+        /*
+         * 步骤 5: 处理 Level 4 (indirect nodes from i_nid[3])
+         */
+        if (max_lblk > level3_blks && i_nid[3] != 0) {
+            /* 防御性检查：验证 i_nid[3] 范围 */
+            if (i_nid[3] >= NM_I(sbi)->max_nid) {
+#if 0
+                pr_info("[snapfs batch] level4 invalid i_nid[3]=%u (max_nid=%u), skipping\n",
+                       i_nid[3], NM_I(sbi)->max_nid);
+#endif
+            } else {
+            batch_level_start = (start_lblk > level3_blks) ? start_lblk : level3_blks;
+            batch_level_end = (max_lblk < level4_blks) ? max_lblk : level4_blks;
+
+            /* DEBUG: 打印 level4 的边界信息 */
+#if 0
+            pr_info("[snapfs batch] level4 DEBUG: i_nid[3]=%u, batch_level_start=%ld, batch_level_end=%ld, "
+                    "batch_start_in_dn=%ld, batch_end_in_dn=%ld, max_lblk=%lu\n",
+                    i_nid[3], batch_level_start, batch_level_end,
+                    (batch_level_start - level3_blks) / direct_blks,
+                    ((batch_level_end - 1 - level3_blks) / direct_blks) + 1,
+                    (unsigned long)max_lblk);
+#endif
+
+            batch_indirect_page = f2fs_get_node_page(sbi, i_nid[3]);
+            if (IS_ERR(batch_indirect_page)) {
+                ret = PTR_ERR(batch_indirect_page);
+                pr_err("[snapfs batch] level4 get indirect_page failed\n");
+                goto batch_out;
+            }
+            batch_indirect = (struct indirect_node *)page_address(batch_indirect_page);
+#if 0
+            /* 调试日志：打印 level4 indirect_node 的 i_nid[3] 和部分 child nids */
+            {
+                int dbg_i;
+                int invalid_count = 0;
+                pr_info("[snapfs batch] level4 indirect_node scan: total %d nids, checking invalid (>= max_nid=%u):\n",
+                        NIDS_PER_BLOCK, NM_I(sbi)->max_nid);
+                for (dbg_i = 0; dbg_i < NIDS_PER_BLOCK; dbg_i++) {
+                    nid_t dbg_nid = le32_to_cpu(batch_indirect->nid[dbg_i]);
+                    if (dbg_nid >= NM_I(sbi)->max_nid || (dbg_nid != 0 && dbg_nid < F2FS_ROOT_INO(sbi))) {
+                        pr_info("    [%d] = %u (INVALID!)\n", dbg_i, dbg_nid);
+                        invalid_count++;
+                    }
+                }
+                pr_info("  Total invalid indirect2_nids in level4 indirect_node: %d\n", invalid_count);
+                pr_info("  level4 indirect_node child nids (first 5):\n");
+                for (dbg_i = 0; dbg_i < 5 && dbg_i < NIDS_PER_BLOCK; dbg_i++) {
+                    nid_t dbg_nid = le32_to_cpu(batch_indirect->nid[dbg_i]);
+                    pr_info("    [%d] = %u\n", dbg_i, dbg_nid);
+                }
+                pr_info("  level4 indirect_node child nids (last 5):\n");
+                for (dbg_i = NIDS_PER_BLOCK - 5; dbg_i < NIDS_PER_BLOCK; dbg_i++) {
+                    nid_t dbg_nid = le32_to_cpu(batch_indirect->nid[dbg_i]);
+                    pr_info("    [%d] = %u\n", dbg_i, dbg_nid);
+                }
+            }
+#endif
+
+            batch_start_in_dn = (batch_level_start - level3_blks) / direct_blks;
+            batch_end_in_dn = ((batch_level_end - 1 - level3_blks) / direct_blks) + 1;
+            /*
+            pr_info("[snapfs batch] level4 loop bounds: batch_level_start=%ld, batch_level_end=%ld, "
+                    "batch_start_in_dn=%ld, batch_end_in_dn=%ld, snap_inode i_size=%llu, max_lblk=%lu\n",
+                    batch_level_start, batch_level_end, batch_start_in_dn, batch_end_in_dn,
+                    inode->i_size, (unsigned long)max_lblk);
+            */
+
+            for (batch_in_dn_idx = batch_start_in_dn;
+                 batch_in_dn_idx < batch_end_in_dn && batch_in_dn_idx < direct_blks;
+                 batch_in_dn_idx++) {
+                batch_indirect2_nid = le32_to_cpu(batch_indirect->nid[batch_in_dn_idx]);
+                /*
+                pr_info("[snapfs batch] level4: reading batch_indirect->nid[%ld] = %u\n",
+                        batch_in_dn_idx, batch_indirect2_nid);
+                */
+                if (batch_indirect2_nid == 0)
+                    continue;
+                if (batch_indirect2_nid >= NM_I(sbi)->max_nid) {
+#if 0
+                    pr_info("[snapfs batch] level4: invalid indirect2_nid=%u at idx=%ld, skipping (max_nid=%u)\n",
+                           batch_indirect2_nid, batch_in_dn_idx, NM_I(sbi)->max_nid);
+#endif
+                    continue;
+                }
+
+                batch_indirect2_page = f2fs_get_node_page(sbi, batch_indirect2_nid);
+                if (IS_ERR(batch_indirect2_page)) {
+                    ret = PTR_ERR(batch_indirect2_page);
+                    pr_err("[snapfs batch] level4 get batch_indirect2_page failed: nid=%u, ret=%d\n",
+                           batch_indirect2_nid, ret);
+                    f2fs_put_page(batch_indirect_page, 1);
+                    batch_indirect_page = NULL;
+                    batch_indirect2_page = NULL;
+                    goto batch_out;
+                }
+                batch_indirect2 = (struct indirect_node *)page_address(batch_indirect2_page);
+
+                /*
+                pr_info("[snapfs batch] level4: indirect2_node at idx=%ld, nids[0..4]=[%u,%u,%u,%u,%u]\n",
+                        batch_in_dn_idx,
+                        le32_to_cpu(batch_indirect2->nid[0]),
+                        le32_to_cpu(batch_indirect2->nid[1]),
+                        le32_to_cpu(batch_indirect2->nid[2]),
+                        le32_to_cpu(batch_indirect2->nid[3]),
+                        le32_to_cpu(batch_indirect2->nid[4]));
+                */
+
+                for (batch_in_dn2_idx = 0; batch_in_dn2_idx < direct_blks; batch_in_dn2_idx++) {
+                    batch_direct_nid = le32_to_cpu(batch_indirect2->nid[batch_in_dn2_idx]);
+                    /*
+                    pr_info("[snapfs batch] level4: reading indirect2->nid[%ld][%ld] = %u\n",
+                            batch_in_dn_idx, batch_in_dn2_idx, batch_direct_nid);
+                    */
+                    if (batch_direct_nid == 0)
+                        continue;
+                    if (batch_direct_nid >= NM_I(sbi)->max_nid) {
+                        /* DEBUG: 打印无效 nid 的详细信息 */
+                        // pr_info("[snapfs batch] level4: invalid batch_direct_nid=%u at indirect2[%ld][%ld], skipping (max_nid=%u)\n",
+                        //        batch_direct_nid, batch_in_dn_idx, batch_in_dn2_idx, NM_I(sbi)->max_nid);
+                        continue;
+                    }
+
+                    batch_this_start = level3_blks +
+                        (batch_in_dn_idx * direct_blks + batch_in_dn2_idx) * direct_blks;
+                    batch_this_end = batch_this_start + direct_blks;
+
+                    if (batch_this_end <= batch_level_start ||
+                        batch_this_start >= batch_level_end)
+                        continue;
+
+                    batch_dn_ipage = f2fs_get_node_page(sbi, batch_direct_nid);
+                    if (IS_ERR(batch_dn_ipage)) {
+                        ret = PTR_ERR(batch_dn_ipage);
+                        pr_err("[snapfs batch] level4 get batch_dn_ipage failed: nid=%u, ret=%d\n",
+                               batch_direct_nid, ret);
+                        f2fs_put_page(batch_indirect2_page, 1);
+                        f2fs_put_page(batch_indirect_page, 1);
+                        batch_indirect2_page = NULL;
+                        batch_indirect_page = NULL;
+                        goto batch_out;
+                    }
+                    batch_dn = (struct direct_node *)page_address(batch_dn_ipage);
+
+                    if (batch_level_start > batch_this_start)
+                        batch_this_start = batch_level_start;
+                    if (batch_level_end < batch_this_end)
+                        batch_this_end = batch_level_end;
+                    batch_this_len = batch_this_end - batch_this_start;
+
+                    if (batch_this_len > 0) {
+                        batch_data_blks = kmalloc(batch_this_len * sizeof(block_t), GFP_NOFS);
+                        batch_lblks = kmalloc(batch_this_len * sizeof(u16), GFP_NOFS);
+                        if (!batch_data_blks || !batch_lblks) {
+                            ret = -ENOMEM;
+                            kfree(batch_data_blks);
+                            kfree(batch_lblks);
+                            batch_data_blks = NULL;
+                            batch_lblks = NULL;
+                            f2fs_put_page(batch_dn_ipage, 1);
+                            f2fs_put_page(batch_indirect2_page, 1);
+                            f2fs_put_page(batch_indirect_page, 1);
+                            batch_dn_ipage = NULL;
+                            batch_indirect2_page = NULL;
+                            batch_indirect_page = NULL;
+                            goto batch_out;
+                        }
+
+                        batch_dn_offset_start = batch_this_start -
+                            (level3_blks + (batch_in_dn_idx * direct_blks + batch_in_dn2_idx) * direct_blks);
+                        for (batch_in_dn3_idx = 0; batch_in_dn3_idx < batch_this_len; batch_in_dn3_idx++) {
+                            batch_data_blks[batch_in_dn3_idx] =
+                                le32_to_cpu(batch_dn->addr[batch_dn_offset_start + batch_in_dn3_idx]);
+                            batch_lblks[batch_in_dn3_idx] =
+                                (u16)(batch_dn_offset_start + batch_in_dn3_idx);
+                        }
+
+                        ret = f2fs_cow_node_block_batch(inode, src_ino, batch_direct_nid,
+                                                        (u16)(1022 + batch_in_dn_idx * direct_blks + batch_in_dn2_idx),
+                                                        batch_data_blks, batch_this_len, batch_lblks);
+                        kfree(batch_data_blks);
+                        kfree(batch_lblks);
+                        batch_data_blks = NULL;
+                        batch_lblks = NULL;
+                        if (ret) {
+                            pr_err("[snapfs batch] level4 f2fs_cow_node_block_batch failed: ret=%d\n", ret);
+                            kfree(batch_data_blks);
+                            kfree(batch_lblks);
+                            batch_data_blks = NULL;
+                            batch_lblks = NULL;
+                            f2fs_put_page(batch_dn_ipage, 1);
+                            f2fs_put_page(batch_indirect2_page, 1);
+                            f2fs_put_page(batch_indirect_page, 1);
+                            batch_dn_ipage = NULL;
+                            batch_indirect2_page = NULL;
+                            batch_indirect_page = NULL;
+                            goto batch_out;
+                        }
+                    }
+
+                    f2fs_put_page(batch_dn_ipage, 1);
+                    batch_dn_ipage = NULL;
+                }
+
+                f2fs_put_page(batch_indirect2_page, 1);
+                batch_indirect2_page = NULL;
+            }
+
+            f2fs_put_page(batch_indirect_page, 1);
+            batch_indirect_page = NULL;
+            }  /* 关闭 else 块 (i_nid[3] >= max_nid 检查) */
+        }
+
+        /*
+         * 步骤 6: 处理 Level 5 (double indirect nodes from i_nid[4])
+         * i_nid[4] -> indirect node -> indirect nodes -> direct nodes -> data blocks
+         */
+        if (max_lblk > level4_blks && i_nid[4] != 0) {
+            /* 防御性检查：验证 i_nid[4] 范围 */
+            if (i_nid[4] >= NM_I(sbi)->max_nid) {
+#if 0
+                pr_info("[snapfs batch] level5 invalid i_nid[4]=%u (max_nid=%u), skipping\n",
+                       i_nid[4], NM_I(sbi)->max_nid);
+#endif
+            } else {
+            struct page *indirect3_page = NULL;
+            struct indirect_node *indirect3 = NULL;
+            struct page *indirect2_page = NULL;
+            struct indirect_node *indirect2 = NULL;
+
+            batch_level_start = (start_lblk > level4_blks) ? start_lblk : level4_blks;
+            batch_level_end = max_lblk;
+
+            pr_debug("[snapfs batch] level5: processing double indirect, lblk %ld to %ld\n",
+                     batch_level_start, batch_level_end);
+
+            /* 获取第3级 indirect node (i_nid[4]) */
+            indirect3_page = f2fs_get_node_page(sbi, i_nid[4]);
+            if (IS_ERR(indirect3_page)) {
+                ret = PTR_ERR(indirect3_page);
+                pr_err("[snapfs batch] level5 get indirect3_page failed\n");
+                goto batch_out;
+            }
+            indirect3 = (struct indirect_node *)page_address(indirect3_page);
+#if 0
+            /* 调试日志：打印 level5 indirect3 (i_nid[4]) 的部分 child nids */
+            pr_info("[snapfs batch] level5: i_nid[4]=%u, indirect3 at %p\n",
+                    i_nid[4], indirect3);
+            {
+                int dbg_i;
+                pr_info("  level5 indirect3 child nids (first 5):\n");
+                for (dbg_i = 0; dbg_i < 5 && dbg_i < NIDS_PER_BLOCK; dbg_i++) {
+                    nid_t dbg_nid = le32_to_cpu(indirect3->nid[dbg_i]);
+                    pr_info("    [%d] = %u\n", dbg_i, dbg_nid);
+                }
+                pr_info("  level5 indirect3 child nids (last 5):\n");
+                for (dbg_i = NIDS_PER_BLOCK - 5; dbg_i < NIDS_PER_BLOCK; dbg_i++) {
+                    nid_t dbg_nid = le32_to_cpu(indirect3->nid[dbg_i]);
+                    pr_info("    [%d] = %u\n", dbg_i, dbg_nid);
+                }
+            }
+#endif
+
+            /* 计算涉及的第2级 indirect node 范围 */
+            {
+                unsigned long dn_idx_start, dn_idx_end;
+                unsigned long lblk_in_double_indirect;
+                unsigned long indirect2_idx_start, indirect2_idx_end;
+
+                lblk_in_double_indirect = batch_level_start - level4_blks;
+
+                /* 每个 i_nid[4] 的 entry 覆盖 direct_blks * direct_blks 个块 */
+                indirect2_idx_start = lblk_in_double_indirect / (direct_blks * direct_blks);
+                lblk_in_double_indirect = batch_level_end - 1 - level4_blks;
+                indirect2_idx_end = (lblk_in_double_indirect / (direct_blks * direct_blks)) + 1;
+
+                dn_idx_start = 0;
+                dn_idx_end = direct_blks;
+
+                pr_debug("[snapfs batch] level5: indirect2_idx %lu to %lu\n",
+                         indirect2_idx_start, indirect2_idx_end);
+
+                for (batch_in_dn_idx = indirect2_idx_start;
+                     batch_in_dn_idx < indirect2_idx_end && batch_in_dn_idx < direct_blks;
+                     batch_in_dn_idx++) {
+                    nid_t indirect2_nid = le32_to_cpu(indirect3->nid[batch_in_dn_idx]);
+                    if (indirect2_nid == 0)
+                        continue;
+
+                    /* 获取第2级 indirect node */
+                    indirect2_page = f2fs_get_node_page(sbi, indirect2_nid);
+                    if (IS_ERR(indirect2_page)) {
+                        ret = PTR_ERR(indirect2_page);
+                        pr_err("[snapfs batch] level5 get indirect2_page %u failed: ret=%d\n",
+                               indirect2_nid, ret);
+                        f2fs_put_page(indirect3_page, 1);
+                        indirect3_page = NULL;
+                        indirect2_page = NULL;
+                        goto batch_out;
+                    }
+                    indirect2 = (struct indirect_node *)page_address(indirect2_page);
+
+                    for (batch_in_dn2_idx = dn_idx_start;
+                         batch_in_dn2_idx < dn_idx_end && batch_in_dn2_idx < NIDS_PER_BLOCK;
+                         batch_in_dn2_idx++) {
+                        nid_t direct_nid = le32_to_cpu(indirect2->nid[batch_in_dn2_idx]);
+                        if (direct_nid == 0)
+                            continue;
+                        /* DEBUG: 检查 direct_nid 是否有效 */
+                        if (direct_nid >= NM_I(sbi)->max_nid) {
+#if 0
+                            pr_info("[snapfs batch] level5: invalid direct_nid=%u at indirect3[%ld]->indirect2[%ld][%ld], skipping (max_nid=%u)\n",
+                                   direct_nid, batch_in_dn_idx, batch_in_dn2_idx, NM_I(sbi)->max_nid);
+#endif
+                            continue;
+                        }
+
+                        /* 计算这个 direct node 覆盖的逻辑块范围 */
+                        batch_this_start = level4_blks +
+                            (batch_in_dn_idx * direct_blks + batch_in_dn2_idx) * direct_blks;
+                        batch_this_end = batch_this_start + direct_blks;
+
+                        /* 检查是否与目标范围有交集 */
+                        if (batch_this_end <= batch_level_start ||
+                            batch_this_start >= batch_level_end)
+                            continue;
+
+                        batch_dn_ipage = f2fs_get_node_page(sbi, direct_nid);
+                        if (IS_ERR(batch_dn_ipage)) {
+                            ret = PTR_ERR(batch_dn_ipage);
+                            pr_err("[snapfs batch] level5 get dn_page %u failed: ret=%d\n",
+                                   direct_nid, ret);
+                            f2fs_put_page(indirect2_page, 1);
+                            f2fs_put_page(indirect3_page, 1);
+                            indirect2_page = NULL;
+                            indirect3_page = NULL;
+                            batch_dn_ipage = NULL;
+                            goto batch_out;
+                        }
+                        batch_dn = (struct direct_node *)page_address(batch_dn_ipage);
+
+                        /* 计算实际需要处理的块范围 */
+                        if (batch_level_start > batch_this_start)
+                            batch_this_start = batch_level_start;
+                        if (batch_level_end < batch_this_end)
+                            batch_this_end = batch_level_end;
+                        batch_this_len = batch_this_end - batch_this_start;
+
+                        if (batch_this_len > 0) {
+                            batch_data_blks = kmalloc(batch_this_len * sizeof(block_t), GFP_NOFS);
+                            batch_lblks = kmalloc(batch_this_len * sizeof(u16), GFP_NOFS);
+                            if (!batch_data_blks || !batch_lblks) {
+                                ret = -ENOMEM;
+                                kfree(batch_data_blks);
+                                kfree(batch_lblks);
+                                batch_data_blks = NULL;
+                                batch_lblks = NULL;
+                                f2fs_put_page(batch_dn_ipage, 1);
+                                f2fs_put_page(indirect2_page, 1);
+                                f2fs_put_page(indirect3_page, 1);
+                                batch_dn_ipage = NULL;
+                                indirect2_page = NULL;
+                                indirect3_page = NULL;
+                                goto batch_out;
+                            }
+
+                            /* 计算 direct node 中的偏移 */
+                            batch_dn_offset_start = batch_this_start -
+                                (level4_blks + (batch_in_dn_idx * direct_blks + batch_in_dn2_idx) * direct_blks);
+
+                            for (batch_in_dn3_idx = 0; batch_in_dn3_idx < batch_this_len; batch_in_dn3_idx++) {
+                                batch_data_blks[batch_in_dn3_idx] =
+                                    le32_to_cpu(batch_dn->addr[batch_dn_offset_start + batch_in_dn3_idx]);
+                                batch_lblks[batch_in_dn3_idx] =
+                                    (u16)(batch_dn_offset_start + batch_in_dn3_idx);
+                            }
+
+                            /* node_ofs = 2041 + idx1 * direct_blks + idx2 */
+                            ret = f2fs_cow_node_block_batch(inode, src_ino, direct_nid,
+                                    (u16)(2041 + batch_in_dn_idx * direct_blks + batch_in_dn2_idx),
+                                    batch_data_blks, batch_this_len, batch_lblks);
+                            kfree(batch_data_blks);
+                            kfree(batch_lblks);
+                            batch_data_blks = NULL;
+                            batch_lblks = NULL;
+                            if (ret) {
+                                pr_err("[snapfs batch] level5 f2fs_cow_node_block_batch failed: ret=%d\n", ret);
+                                kfree(batch_data_blks);
+                                kfree(batch_lblks);
+                                batch_data_blks = NULL;
+                                batch_lblks = NULL;
+                                f2fs_put_page(batch_dn_ipage, 1);
+                                f2fs_put_page(indirect2_page, 1);
+                                f2fs_put_page(indirect3_page, 1);
+                                batch_dn_ipage = NULL;
+                                indirect2_page = NULL;
+                                indirect3_page = NULL;
+                                goto batch_out;
+                            }
+                        }
+
+                        f2fs_put_page(batch_dn_ipage, 1);
+                        batch_dn_ipage = NULL;
+                    }
+
+                    f2fs_put_page(indirect2_page, 1);
+                    indirect2_page = NULL;
+                }
+            }
+
+            f2fs_put_page(indirect3_page, 1);
+            indirect3_page = NULL;
+            }  /* 关闭 else 块 (i_nid[4] >= max_nid 检查) */
+        }
+
+batch_out:
+        /* 清理 batch 模式下可能残留的页面 */
+        pr_debug("[snapfs batch] batch_out: cleaning up, batch_dn_ipage=%p, batch_indirect2_page=%p, batch_indirect_page=%p\n",
+                 batch_dn_ipage, batch_indirect2_page, batch_indirect_page);
+        if (batch_dn_ipage) {
+            f2fs_put_page(batch_dn_ipage, 1);
+            batch_dn_ipage = NULL;
+        }
+        if (batch_indirect2_page) {
+            f2fs_put_page(batch_indirect2_page, 1);
+            batch_indirect2_page = NULL;
+        }
+        if (batch_indirect_page) {
+            f2fs_put_page(batch_indirect_page, 1);
+            batch_indirect_page = NULL;
+        }
+        kfree(batch_data_blks);
+        kfree(batch_lblks);
+
+batch_out_no_resume:
+        /* Batch 模式下不更新 progress */
+        goto out_skip_progress;
+    }
+
+    /* 以下是原有的逐块处理逻辑（batch mode 禁用时使用） */
 	for (lblk = start_lblk; lblk < max_lblk; lblk++) {
 
         if(lblk < direct_index){//873
@@ -4151,9 +6854,15 @@ static int __f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino,
             }
             // nid = le32_to_cpu(fi->i_nid[0]);
             nid = i_nid[0];
+            /* 防御性检查：验证 direct_node nid 范围 */
+            if (nid >= NM_I(sbi)->max_nid) {
+                pr_err("[snapfs cow22]: level1 invalid nid=%u (max_nid=%u), skipping lblk=%lu\n",
+                       nid, NM_I(sbi)->max_nid, (unsigned long)lblk);
+                continue;
+            }
             if(nid == 0) {
                 pr_info("level1_blks lblk %u node id is 0\n",lblk);
-                continue; 
+                continue;
             }
             // if(SNAPFS_DEBUG) pr_info("------------------level1_blks------------------\n");
             dn_ipage = f2fs_get_node_page(sbi, nid);
@@ -4197,10 +6906,16 @@ static int __f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino,
         }else if(lblk < (pgoff_t)level2_blks){// 2909
             // nid = le32_to_cpu(fi->i_nid[1]);
             nid = i_nid[1];
+            /* 防御性检查：验证 direct_node nid 范围 */
+            if (nid >= NM_I(sbi)->max_nid) {
+                pr_err("[snapfs cow22]: level2 invalid nid=%u (max_nid=%u), skipping lblk=%lu\n",
+                       nid, NM_I(sbi)->max_nid, (unsigned long)lblk);
+                continue;
+            }
             // pr_err("level1_blks lblk %u node id is ?[%u]\n",lblk,nid);
             if(nid == 0) {
                 pr_info("level2_blks lblk %u node id is 0\n",lblk);
-                continue; 
+                continue;
             }
             // if(SNAPFS_DEBUG) pr_info("------------------level2_blks------------------\n");
             dn_ipage = f2fs_get_node_page(sbi, nid);
@@ -4246,9 +6961,15 @@ static int __f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino,
         }else if(lblk < level3_blks){//1039233
             // nid = le32_to_cpu(fi->i_nid[2]);
             nid = i_nid[2];
+            /* 防御性检查：验证 indirect node nid 范围 */
+            if (nid >= NM_I(sbi)->max_nid) {
+                pr_err("[snapfs cow22]: level3 invalid indirect nid=%u (max_nid=%u), skipping lblk=%lu\n",
+                       nid, NM_I(sbi)->max_nid, (unsigned long)lblk);
+                continue;
+            }
             if(nid == 0) {
                 pr_info("level3_blks lblk %u node id is 0\n",lblk);
-                continue; 
+                continue;
             }
             // if(SNAPFS_DEBUG) pr_info("------------------level3_blks------------------\n");
             indirect_page = f2fs_get_node_page(sbi, nid);
@@ -4261,17 +6982,27 @@ static int __f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino,
             in_dn = (lblk - level2_blks) / direct_blks;
             off_in_dn = (lblk - level2_blks) % direct_blks;
             indirect = (struct indirect_node *)page_address(indirect_page);
-            // pr_info("level3_blks indirect lblk %u node id %u addr %u\n",lblk,nid,le32_to_cpu(indirect->nid[in_dn]));
             nid = le32_to_cpu(indirect->nid[in_dn]);
+            /* DEBUG: 打印读取到的 child nid */
+            pr_err("[snapfs cow22]: level3_blks lblk=%lu, indirect_nid=%u, child_nid=%u, max_nid=%u\n",
+                   (unsigned long)lblk, i_nid[2], nid, NM_I(sbi)->max_nid);
             if(nid == 0){
                 f2fs_put_page(indirect_page, 1);
                 indirect_page = NULL;
-                continue; 
+                continue;
             }
             // pr_info("nid[%u],indirect[%u], in_dn[%u],off_in_dn[%u]\n ",nid,indirect,in_dn,off_in_dn);
+            /* 防御性检查：在调用 f2fs_get_node_page 之前验证 nid */
+            if (nid >= NM_I(sbi)->max_nid) {
+                pr_err("[snapfs cow22]: level3 invalid child nid=%u (max_nid=%u), skipping\n",
+                       nid, NM_I(sbi)->max_nid);
+                f2fs_put_page(indirect_page, 1);
+                indirect_page = NULL;
+                continue;
+            }
             dn_ipage = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(dn_ipage)) {
-                pr_err("[snapfs cow22]: debug setmulref get dn_ipage failed[%d < level3_blks]\n", lblk);
+                pr_err("[snapfs cow22]: debug setmulref get dn_ipage failed[%d < level3_blks], nid=%u\n", lblk, nid);
                 f2fs_put_page(indirect_page, 1);
                 goto out;
             }
@@ -4317,6 +7048,12 @@ static int __f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino,
         }else if(lblk < level4_blks){
             // nid = le32_to_cpu(fi->i_nid[3]);
             nid = i_nid[3];
+            /* 防御性检查：验证 indirect node nid 范围 */
+            if (nid >= NM_I(sbi)->max_nid) {
+                pr_err("[snapfs cow22]: level4 invalid indirect nid=%u (max_nid=%u), skipping lblk=%lu\n",
+                       nid, NM_I(sbi)->max_nid, (unsigned long)lblk);
+                continue;
+            }
             if(nid == 0) continue; 
             // if(SNAPFS_DEBUG) pr_info("------------------level4_blks------------------\n");
             indirect_page = f2fs_get_node_page(sbi, nid);
@@ -4331,10 +7068,13 @@ static int __f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino,
             indirect = (struct indirect_node *)page_address(indirect_page);
             // pr_info("level4_blks indirect lblk %u node id %u addr %u\n",lblk,nid,le32_to_cpu(indirect->nid[in_dn]));
             nid = le32_to_cpu(indirect->nid[in_dn]);
-            if(nid == 0){
+            /* 防御性检查：在调用 f2fs_get_node_page 之前验证 nid */
+            if (nid >= NM_I(sbi)->max_nid) {
+                pr_err("[snapfs cow22]: level4 invalid child nid=%u (max_nid=%u), skipping\n",
+                       nid, NM_I(sbi)->max_nid);
                 f2fs_put_page(indirect_page, 1);
                 indirect_page = NULL;
-                continue; 
+                continue;
             }
             dn_ipage = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(dn_ipage)) {
@@ -4384,7 +7124,13 @@ static int __f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino,
         }else if(lblk < level5_blks){
             // nid = le32_to_cpu(fi->i_nid[4]);
             nid = i_nid[4];
-            if(nid == 0) continue; 
+            /* 防御性检查：验证 double indirect node nid 范围 */
+            if (nid >= NM_I(sbi)->max_nid) {
+                pr_err("[snapfs cow22]: level5 invalid indirect nid=%u (max_nid=%u), skipping lblk=%lu\n",
+                       nid, NM_I(sbi)->max_nid, (unsigned long)lblk);
+                continue;
+            }
+            if(nid == 0) continue;
             if(SNAPFS_DEBUG) pr_info("----level5_blks--nid %u-lblk %u-\n",nid,lblk);
             indirect_page = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(indirect_page)){
@@ -4398,9 +7144,15 @@ static int __f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino,
             nid = le32_to_cpu(indirect->nid[in_dn]);
             f2fs_put_page(indirect_page, 1);
             indirect_page = NULL;
-            if(nid == 0){
+            /* 防御性检查：验证从 indirect node 读取的 nid */
+            if (nid == 0) {
                 // indirect_page 已经释放，不要重复释放
-                continue; 
+                continue;
+            }
+            if (nid >= NM_I(sbi)->max_nid) {
+                pr_err("[snapfs cow22]: level5 invalid indirect nid=%u (max_nid=%u), skipping\n",
+                       nid, NM_I(sbi)->max_nid);
+                continue;
             }
             indirect_page2 = f2fs_get_node_page(sbi, nid);
             if (IS_ERR(indirect_page2)){
@@ -4415,9 +7167,15 @@ static int __f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino,
             nid = le32_to_cpu(indirect2->nid[in_dn2]);
             f2fs_put_page(indirect_page2, 1);
             indirect_page2 = NULL;
-            if(nid == 0){
+            /* 防御性检查：验证从 indirect2 node 读取的 child nid */
+            if (nid == 0) {
                 // indirect_page2 已经释放，不要重复释放
-                continue; 
+                continue;
+            }
+            if (nid >= NM_I(sbi)->max_nid) {
+                pr_err("[snapfs cow22]: level5 invalid child nid=%u (max_nid=%u), skipping\n",
+                       nid, NM_I(sbi)->max_nid);
+                continue;
             }
             // pr_info("Tp 3 indirect2 [%u]\n",indirect2);
             dn_ipage = f2fs_get_node_page(sbi, nid);
@@ -4459,6 +7217,16 @@ static int __f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino,
         }
     }
     // pr_info("lblk final: %u, max_lblk %u\n",lblk,max_lblk);
+out_skip_progress:
+    if(ipage){
+        f2fs_put_page(ipage, 1);
+        ipage = NULL;
+    }
+    if(i_addr){
+        kfree(i_addr);
+    }
+    return ret;
+
 out:
     // f2fs_put_page(ipage, 1);
     if(ipage){
@@ -5250,6 +8018,15 @@ int f2fs_cow(struct inode *pra_inode,
              const char *old_name,
              unsigned int old_name_len,
              struct inode **new_inode){
+    /* 调试日志：跟踪 f2fs_cow 调用 */
+#if 0
+    pr_err("[snapfs cow] ====== f2fs_cow ENTER ======\n");
+    pr_err("[snapfs cow] pra_inode: ino=%u, snap_inode: ino=%u, son_inode: ino=%u, name=%.*s\n",
+           pra_inode->i_ino, snap_inode->i_ino, son_inode->i_ino, old_name_len, old_name);
+    pr_err("[snapfs cow] son_inode i_size=%llu, i_blocks=%lu\n",
+           son_inode->i_size, son_inode->i_blocks);
+#endif
+
     // 判断name of son_inode是否已经存在snap_inode下
     // struct dentry *snap_dentry = NULL, *son_dentry = NULL, *new_dentry = NULL;
     struct dentry *snap_dentry = NULL, *new_dentry = NULL;
@@ -5789,6 +8566,21 @@ static int snapfs_replay_one_snapshot(struct super_block *sb,
                                       int snap_idx,
                                       struct inode *snap_inode)
 {
+    /* 调试日志：跟踪 snapfs_replay_one_snapshot 调用 */
+#if 0
+    pr_err("[snapfs replay] ====== snapfs_replay_one_snapshot ENTER ======\n");
+    pr_err("[snapfs replay] snap_idx=%d, snap_inode=%u\n", snap_idx, snap_inode->i_ino);
+    pr_err("[snapfs replay] path entries:\n");
+    {
+        int j;
+        for (j = 0; j <= snap_idx; j++) {
+            pr_err("  [%d] ino=%u, name_len=%u, name=%.*s\n",
+                   j, path->ents[j].ino, path->ents[j].name_len,
+                   path->ents[j].name_len, path->ents[j].old_name);
+        }
+    }
+#endif
+
     struct inode *pra_inode = NULL;
     struct inode *son_inode = NULL;
     struct inode *cur_snap = snap_inode;
@@ -5810,6 +8602,28 @@ static int snapfs_replay_one_snapshot(struct super_block *sb,
             son_inode = NULL;
             goto out;
         }
+
+#if 0
+        /* 调试日志：在调用 f2fs_cow 之前 */
+        pr_err("[snapfs replay] calling f2fs_cow: pra_inode=%u, cur_snap=%u, son_inode=%u\n",
+               pra_inode->i_ino, cur_snap->i_ino, son_inode->i_ino);
+        {
+            struct f2fs_sb_info *sbi = F2FS_I_SB(son_inode);
+            struct page *son_ipage = f2fs_get_node_page(sbi, son_inode->i_ino);
+            if (!IS_ERR(son_ipage)) {
+                struct f2fs_inode *son_fi = F2FS_INODE(son_ipage);
+                pr_err("[snapfs replay] son_inode i_size=%llu, i_blocks=%lu, i_nid[0-4]=[%u,%u,%u,%u,%u]\n",
+                       son_inode->i_size, son_inode->i_blocks,
+                       le32_to_cpu(son_fi->i_nid[0]), le32_to_cpu(son_fi->i_nid[1]),
+                       le32_to_cpu(son_fi->i_nid[2]), le32_to_cpu(son_fi->i_nid[3]),
+                       le32_to_cpu(son_fi->i_nid[4]));
+                f2fs_put_page(son_ipage, 1);
+            } else {
+                pr_err("[snapfs replay] son_inode i_size=%llu, i_blocks=%lu, i_nid=get_node_page FAILED\n",
+                       son_inode->i_size, son_inode->i_blocks);
+            }
+        }
+#endif
 
         next_snap = NULL;
         ret = f2fs_cow(pra_inode,

@@ -5847,6 +5847,39 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 		for (j = 0; j < magic_info->redo_info->nr_slots; j++)
 			mutex_init(&magic_info->redo_info->slot_locks[j]);
 
+	/* === Batch Redo Initialization === */
+	magic_info->redo_info->batch_mode = true;  /* 启用 batch redo 模式 */
+	magic_info->redo_info->batch_slot_blocks = SNAPFS_BATCH_SLOT_BLOCKS;
+	magic_info->redo_info->batch_nr_slots = SNAPFS_BATCH_MAX_FILE_SLOTS;
+
+	/* 分配 batch slot 位图 */
+	magic_info->redo_info->batch_slot_inuse_bitmap = bitmap_zalloc(
+		magic_info->redo_info->batch_nr_slots, GFP_KERNEL);
+	if (!magic_info->redo_info->batch_slot_inuse_bitmap)
+		return -ENOMEM;
+
+	/* 分配 batch slot generation 数组 */
+	magic_info->redo_info->batch_slot_gens = kcalloc(
+		magic_info->redo_info->batch_nr_slots,
+		sizeof(u32), GFP_KERNEL);
+	if (!magic_info->redo_info->batch_slot_gens)
+		return -ENOMEM;
+
+	/* 分配 batch slot 信息数组 */
+	magic_info->redo_info->batch_slot_infos = kcalloc(
+		magic_info->redo_info->batch_nr_slots,
+		sizeof(struct snapfs_batch_slot_info), GFP_KERNEL);
+	if (!magic_info->redo_info->batch_slot_infos)
+		return -ENOMEM;
+
+	/* 初始化等待队列 */
+	init_waitqueue_head(&magic_info->redo_info->batch_slot_wq);
+	atomic_set(&magic_info->redo_info->batch_waiting_count, 0);
+
+	pr_info("[snapfs batch] batch redo initialized: %u slots x %u blocks each\n",
+	        magic_info->redo_info->batch_nr_slots,
+	        magic_info->redo_info->batch_slot_blocks);
+
 	err = rebuild_snap_index(sbi);
 	if(err){
 		pr_err("rebuild_snap_index failed...\n");

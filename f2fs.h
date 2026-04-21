@@ -1183,6 +1183,184 @@ struct snap_redo_info {
 	u64 overwrite_redo_commits;
 	u64 overwrite_redo_replays;
 	u64 overwrite_redo_conflicts;
+
+	/* === Batch Redo Fields === */
+	bool batch_mode;                       /* 是否使用 batch redo 模式 */
+	unsigned int batch_nr_slots;           /* batch 文件槽数量 (默认 11) */
+	unsigned int batch_slot_blocks;         /* 每个文件槽占用的 blocks (默认 43) */
+	unsigned long *batch_slot_inuse_bitmap; /* batch 文件槽使用位图 */
+	u32 *batch_slot_gens;                  /* batch 文件槽 generation 数组 */
+	struct snapfs_batch_slot_info *batch_slot_infos;  /* batch 槽元信息数组 */
+	wait_queue_head_t batch_slot_wq;       /* 等待可用槽的队列 */
+	atomic_t batch_waiting_count;          /* 等待槽的进程数 */
+};
+
+/* === Batch Redo Structures === */
+
+/*
+ * Batch Redo 常量定义
+ * 每个文件槽占用的 redo blocks 数
+ *
+ * 设计规格（按 node block 作为 batch 单位）:
+ * - batch 上限: 1018 个数据块（与当前位图上限对齐）
+ * - 首个 redo 数据块容量: 最多记录 23 个数据块的 redo 项
+ * - 后续 redo 数据块容量: 每个最多额外记录 24 个数据块的 redo 项
+ * - 完整 batch 的最大 redo 代价: 43 个 redo 数据块即可覆盖 1018 个数据块
+ */
+#define SNAPFS_BATCH_SLOT_BLOCKS      43      /* 每个文件槽占用的 redo blocks 数 */
+#define SNAPFS_BATCH_MAX_FILE_SLOTS   11      /* 最大并发文件槽数 */
+#define SNAPFS_BATCH_REDO_BLOCKS      (SNAPFS_BATCH_SLOT_BLOCKS * SNAPFS_BATCH_MAX_FILE_SLOTS)
+                                                /* 用于并发文件槽的 redo blocks 数 = 473 */
+
+/*
+ * 单个 redo data block 中的项数（基于紧凑 batch entry）
+ * snapfs_batch_entry 大小约 40 bytes
+ * 每个 block 可存储约 100 个条目
+ *
+ * 按设计规格:
+ * - 首块存储 23 个条目 + batch header
+ * - 后续块每块存储 24 个条目
+ */
+#define SNAPFS_BATCH_ENTRIES_FIRST    23      /* 首块存储的 redo 项数 */
+#define SNAPFS_BATCH_ENTRIES_REST     24      /* 后续块每块存储的 redo 项数 */
+
+/*
+ * Batch Redo 状态机
+ */
+enum snapfs_batch_state {
+    SNAPFS_BATCH_EMPTY = 0,       /* 槽位从未使用或可被覆盖 */
+    SNAPFS_BATCH_PREPARING = 1,   /* 正在生成 redo blocks，尚未 durable */
+    SNAPFS_BATCH_COMMITTED = 2,    /* redo 已 durable，可开始 COW apply */
+    SNAPFS_BATCH_APPLYING = 3,    /* 正在按 bitmap 逐块 apply */
+    SNAPFS_BATCH_APPLIED = 4,     /* batch 全部完成，可被覆盖 */
+};
+
+/*
+ * Batch redo 条目标志
+ */
+#define SNAPFS_BATCH_ENTRY_HAS_MULREF  (1 << 0)
+#define SNAPFS_BATCH_ENTRY_HAS_SUMMARY (1 << 1)
+#define SNAPFS_BATCH_ENTRY_HAS_SIT     (1 << 2)
+#define SNAPFS_BATCH_ENTRY_NEED_SECOND_ALLOC (1 << 3)  /* 普通块转 mulref，需要在 apply 阶段分配第二个 entry */
+
+/*
+ * Batch redo 条目（紧凑格式）
+/*
+ * Batch redo 条目
+ * 存储单个数据块的 mulref/summary/SIT 操作
+ * 大小: 2 + 2 + 4 + 20 + 4 + 15 + 4 + 1 + 3 = ~55 bytes
+ * 可在 4KB block 中存储约 74 个条目
+ */
+struct snapfs_batch_entry {
+    __le16 bitno;                    /* bitmap 中的位置 */
+    __le16 flags;                    /* SNAPFS_BATCH_ENTRY_HAS_* 标志 */
+    __le32 data_blkaddr;            /* 数据块物理地址 */
+    struct snap_redo_mulref_op mulref;  /* mulref 操作 */
+    struct snap_redo_summary_op sum;     /* summary 操作 */
+    __le32 sit_blkaddr;             /* SIT 涉及的块地址 */
+    __u8 sit_set;                   /* SIT mulref flag: 1=set, 0=clear */
+    __u8 reserved[3];
+} __packed;
+
+/*
+ * Batch redo header block 结构
+ * 占用每个文件槽的首个 block
+ */
+struct snapfs_batch_header {
+    __le32 magic;                 /* SNAP_REDO_MAGIC */
+    __le16 version;               /* 结构版本 */
+    __le16 state;                 /* SNAPFS_BATCH_* 状态 */
+    __le64 txid;                  /* 事务 ID */
+    __le32 batch_id;              /* batch 唯一标识 */
+    __le32 src_ino;               /* 源文件 inode */
+    __le32 snap_ino;              /* 快照 inode */
+    __le32 node_nid;              /* 当前处理的 node nid */
+    __le16 node_ofs;               /* node offset */
+    __le16 valid_bits;            /* 有效 bit 数 */
+    __u8 bitmap[SNAPFS_PROGRESS_BITMAP_BYTES];  /* apply 进度 bitmap */
+    __u8 prepared;                 /* PREPARING 完成标志：1=可恢复，0=丢弃 */
+    __u8 reserved0;
+    __le16 reserved1;
+
+    /* Redo 项（首块 20 项，使用紧凑 batch entry） */
+    struct snapfs_batch_entry entries[SNAPFS_BATCH_ENTRIES_FIRST];
+
+    __le32 crc;                   /* CRC 校验 */
+} __packed;
+
+/*
+ * Batch redo continuation block 结构
+ * 占用每个文件槽的后续 blocks
+ */
+struct snapfs_batch_continuation {
+    __le32 magic;                 /* SNAP_REDO_MAGIC */
+    __le16 version;               /* 结构版本 */
+    __u8 reserved0;
+    __u8 state;                   /* SNAPFS_BATCH_* 状态 */
+    __le32 batch_id;              /* 与 header 的 batch_id 一致 */
+    __le32 slot_id;               /* 文件槽 ID */
+    __le16 seq_no;                /* 序号：0=header, 1..N=continuation */
+    __le16 entry_count;           /* 本 block 中的 redo 项数 */
+
+    /* Redo 项（紧凑 batch entry） */
+    struct snapfs_batch_entry entries[SNAPFS_BATCH_ENTRIES_REST];
+
+    __le32 crc;                   /* CRC 校验 */
+} __packed;
+
+/*
+ * Batch redo 文件槽元信息（内存中）
+ */
+struct snapfs_batch_slot_info {
+    __le32 batch_id;              /* 当前槽的 batch ID */
+    __le16 state;                 /* SNAPFS_BATCH_* 状态 */
+    __le32 src_ino;               /* 源文件 inode */
+    __le32 snap_ino;              /* 快照 inode */
+    __le32 node_nid;              /* 当前处理的 node nid */
+    __le16 node_ofs;               /* node offset */
+    __le16 valid_bits;            /* 有效 bit 数 */
+    __u8 bitmap[SNAPFS_PROGRESS_BITMAP_BYTES];  /* apply 进度 bitmap */
+};
+
+/*
+ * Batch redo 条目标志
+ */
+#define SNAPFS_BATCH_ENTRY_HAS_MULREF  (1 << 0)
+#define SNAPFS_BATCH_ENTRY_HAS_SUMMARY (1 << 1)
+#define SNAPFS_BATCH_ENTRY_HAS_SIT     (1 << 2)
+#define SNAPFS_BATCH_ENTRY_NEED_SECOND_ALLOC (1 << 3)  /* 普通块转 mulref，需要在 apply 阶段分配第二个 entry */
+
+/*
+ * Batch redo 内存上下文（用于批量收集 redo 项）
+ */
+struct snapfs_batch_context {
+    struct f2fs_sb_info *sbi;
+    u32 slot_id;                  /* 分配的文件槽 ID */
+    u32 batch_id;                 /* 当前 batch ID */
+    u32 src_ino;                  /* 源文件 inode */
+    u32 snap_ino;                 /* 快照 inode */
+    u32 node_nid;                 /* 当前 node nid */
+    u16 node_ofs;                 /* node offset */
+    u16 valid_bits;               /* 有效 bit 数 */
+    u16 current_bit;              /* 正在处理的 bit */
+    u8 state;                     /* SNAPFS_BATCH_* 状态 */
+
+    /* Bitmap */
+    __u8 bitmap[SNAPFS_PROGRESS_BITMAP_BYTES];
+
+    /* Redo 项收集 */
+    struct snapfs_batch_entry entries[SNAPFS_PROGRESS_BITMAP_BITS];
+    u16 entry_count;              /* 已收集的 redo 项数 */
+    u16 entry_capacity;          /* 最大容量 */
+
+    /* Dirty Page 追踪（用于批量 flush） */
+    struct page *dirty_mr_page;          /* mulref dirty page（去重） */
+    struct page *dirty_sum_pages[512];   /* summary dirty pages（去重，segno 作为 key） */
+    u16 dirty_sum_count;
+    struct page *dirty_sit_pages[256];   /* SIT dirty pages（去重） */
+    u16 dirty_sit_count;
+    u16 dirty_sum_segno[512];            /* 追踪对应的 segno */
+    block_t dirty_sit_blkaddr[256];      /* 追踪对应的 sit blkaddr */
 };
 
 struct f2fs_magic_info {
@@ -2862,7 +3040,7 @@ static inline struct page *f2fs_pagecache_get_page(
 
 static inline void f2fs_put_page(struct page *page, int unlock)
 {
-	if (!page)
+	if (!page || IS_ERR(page))
 		return;
 
 	if (unlock) {

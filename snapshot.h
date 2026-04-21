@@ -68,6 +68,25 @@ int snapfs_recover_journal(struct f2fs_sb_info *sbi);
 int snapfs_resume_all_cow_slots(struct f2fs_sb_info *sbi);
 int snapfs_resume_cow_from_slot(struct f2fs_sb_info *sbi, u32 snap_ino);
 
+/* === Batch Redo Functions === */
+int snapfs_batch_alloc_slot(struct f2fs_sb_info *sbi, u32 src_ino, u32 snap_ino,
+                            u32 node_nid, u16 node_ofs, u16 valid_bits,
+                            u32 *ret_slot_id, struct snapfs_batch_context **ret_ctx);
+void snapfs_batch_free_slot(struct f2fs_sb_info *sbi, u32 slot_id);
+int snapfs_batch_begin(struct f2fs_sb_info *sbi, u32 slot_id,
+                       struct snapfs_batch_context *ctx);
+int snapfs_batch_stage_redo(struct snapfs_batch_context *ctx,
+                            block_t mr_blkaddr, u16 mr_idx,
+                            bool valid, struct f2fs_mulref_entry *entry);
+int snapfs_batch_commit(struct f2fs_sb_info *sbi, struct snapfs_batch_context *ctx);
+int snapfs_batch_apply_one(struct f2fs_sb_info *sbi, struct snapfs_batch_context *ctx,
+                           u16 bitno);
+int snapfs_batch_flush_all(struct f2fs_sb_info *sbi, struct snapfs_batch_context *ctx);
+int snapfs_batch_mark_applied(struct f2fs_sb_info *sbi, struct snapfs_batch_context *ctx);
+int snapfs_batch_recover_slot(struct f2fs_sb_info *sbi, u32 slot_id);
+int snapfs_batch_wait_for_slot(struct f2fs_sb_info *sbi);
+void snapfs_batch_init_slot_info(struct snapfs_batch_slot_info *info, u32 slot_id);
+
 /* mulref compact thread */
 int f2fs_start_mulref_compact_thread(struct f2fs_sb_info *sbi);
 void f2fs_stop_mulref_compact_thread(struct f2fs_sb_info *sbi);

@@ -1,5 +1,7 @@
 umount /mnt
-modprobe f2fs 
+modprobe f2fs
+make -j16
+rmmod snapfs.ko
 insmod snapfs.ko
 ./f2fs-tools/mkfs/mkfs.f2fs -f /dev/nvme1n1
 mount -t snapfs -o mode=lfs  /dev/nvme1n1 /mnt
