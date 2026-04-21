@@ -33,6 +33,7 @@ struct snapfs_txn {
 	u32 tx_seq;
 	bool slot_valid;
 	bool bypass_redo;
+	bool holds_overwrite_lock;     /* 标记是否持有 overwrite_slot_lock */
 	__le16 state;
 	__le32 src_ino;
 	__le32 snap_ino;
@@ -264,11 +265,63 @@ static bool snapfs_summary_equal(const struct f2fs_summary *a,
 		a->version == b->version;
 }
 
+/*
+ * 检查 overwrite slot 的当前状态
+ * 返回：SNAPFS_OVERWRITE_APPLIED 或其他状态值
+ */
+static u16 snapfs_get_overwrite_slot_state(struct f2fs_sb_info *sbi)
+{
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+	struct snap_redo_slot *slot;
+	struct page *page;
+	u16 state;
+
+	page = f2fs_get_meta_page(sbi,
+		snapfs_redo_slot_blkaddr(sbi, redo->overwrite_slot));
+	if (IS_ERR(page))
+		return SNAPFS_OVERWRITE_EMPTY;  /* 出错时视为可覆盖 */
+
+	slot = (struct snap_redo_slot *)page_address(page);
+	if (!snapfs_redo_slot_valid(slot))
+		state = SNAPFS_OVERWRITE_EMPTY;
+	else
+		state = le16_to_cpu(slot->state);
+	f2fs_put_page(page, 1);
+
+	return state;
+}
+
+/*
+ * 等待 overwrite slot 变为 APPLIED 状态
+ * 调用前必须已持有 overwrite_slot_lock
+ */
+static void snapfs_wait_overwrite_slot_applied(struct f2fs_sb_info *sbi)
+{
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+	u16 state;
+
+	/* 如果 slot 已经是 APPLIED，无需等待 */
+	state = snapfs_get_overwrite_slot_state(sbi);
+	if (state == SNAPFS_OVERWRITE_APPLIED)
+		return;
+
+	/* 等待直到状态变为 APPLIED 或被唤醒 */
+	wait_event(redo->overwrite_slot_wq,
+		(snapfs_get_overwrite_slot_state(sbi) == SNAPFS_OVERWRITE_APPLIED));
+}
+
 static void snapfs_txn_bind_overwrite_slot(struct snapfs_txn *txn,
 				   struct f2fs_summary *old_sum)
 {
 	struct snap_redo_info *redo = txn->sbi->magic_info->redo_info;
 
+	/* 1. 串行化：获取锁，确保同一时刻只有一个操作使用 overwrite slot */
+	mutex_lock(&redo->overwrite_slot_lock);
+
+	/* 2. 等待直到 slot 状态为 APPLIED */
+	snapfs_wait_overwrite_slot_applied(txn->sbi);
+
+	/* 3. 绑定到 overwrite slot */
 	txn->slot_idx = redo->overwrite_slot;
 	txn->slot_gen = redo->slot_gens[redo->overwrite_slot];
 	txn->slot_valid = true;
@@ -278,6 +331,7 @@ static void snapfs_txn_bind_overwrite_slot(struct snapfs_txn *txn,
 	txn->old_sum_nid = old_sum->nid;
 	txn->old_sum_ofs = old_sum->ofs_in_node;
 	txn->old_sum_ver = old_sum->version;
+	txn->holds_overwrite_lock = true;  /* 标记：持有 overwrite_slot_lock */
 
 	mutex_lock(&redo->alloc_lock);
 	__set_bit(redo->overwrite_slot, redo->slot_inuse_bitmap);
@@ -324,6 +378,12 @@ static int snapfs_redo_stage_mulref_op(struct snapfs_txn *txn,
 
 static void snapfs_redo_release_txn(struct snapfs_txn *txn)
 {
+	/* 如果持有 overwrite_slot_lock，释放它 */
+	if (txn->holds_overwrite_lock) {
+		struct snap_redo_info *redo = txn->sbi->magic_info->redo_info;
+		mutex_unlock(&redo->overwrite_slot_lock);
+		txn->holds_overwrite_lock = false;
+	}
 	txn->mulref_count = 0;
 	txn->flags = 0;
 }
@@ -534,15 +594,16 @@ static int snapfs_redo_clear_slot(struct f2fs_sb_info *sbi, u32 slot_idx)
 	return snapfs_redo_write_slot(sbi, slot_idx, &slot);
 }
 
-static int snapfs_redo_mark_overwrite_empty(struct f2fs_sb_info *sbi, u32 slot_idx)
+static int snapfs_redo_mark_overwrite_applied(struct f2fs_sb_info *sbi, u32 slot_idx)
 {
 	struct snap_redo_slot slot;
 	u32 crc;
+	int ret;
 
 	memset(&slot, 0, sizeof(slot));
 	slot.magic = cpu_to_le32(SNAP_REDO_MAGIC);
 	slot.version = cpu_to_le16(SNAP_REDO_VERSION);
-	slot.state = cpu_to_le16(SNAPFS_OVERWRITE_EMPTY);
+	slot.state = cpu_to_le16(SNAPFS_OVERWRITE_APPLIED);
 	slot.slot_id = cpu_to_le32(slot_idx);
 	slot.slot_gen = cpu_to_le32(sbi->magic_info->redo_info->slot_gens[slot_idx]);
 	slot.tx_seq = cpu_to_le32(sbi->magic_info->redo_info->slot_tx_seq[slot_idx]);
@@ -551,7 +612,14 @@ static int snapfs_redo_mark_overwrite_empty(struct f2fs_sb_info *sbi, u32 slot_i
 		    sizeof(slot) - offsetof(struct snap_redo_slot, version) - sizeof(slot.crc));
 	slot.crc = cpu_to_le32(crc);
 
-	return snapfs_redo_write_slot(sbi, slot_idx, &slot);
+	ret = snapfs_redo_write_slot(sbi, slot_idx, &slot);
+
+	/* 唤醒等待 overwrite slot 的线程 */
+	if (!ret) {
+		wake_up_all(&sbi->magic_info->redo_info->overwrite_slot_wq);
+	}
+
+	return ret;
 }
 
 static int snapfs_redo_begin_with_policy(struct f2fs_sb_info *sbi,
@@ -2244,7 +2312,7 @@ static int snapfs_redo_complete(struct snapfs_txn *txn)
 	if (!txn->slot_valid)
 		return -EINVAL;
 	if (txn->record_type == SNAPFS_REDO_REC_OVERWRITE)
-		ret = snapfs_redo_mark_overwrite_empty(txn->sbi, txn->slot_idx);
+		ret = snapfs_redo_mark_overwrite_applied(txn->sbi, txn->slot_idx);
 	else
 		ret = snapfs_redo_clear_slot(txn->sbi, txn->slot_idx);
 	if (!ret)
@@ -2670,6 +2738,7 @@ static int snapfs_replay_overwrite_slot(struct f2fs_sb_info *sbi,
 	struct f2fs_summary old_sum;
 	int ret;
 	unsigned int i;
+	u16 state;
 
 	if (!snapfs_redo_slot_valid(slot))
 		return -ENOENT;
@@ -2681,9 +2750,12 @@ static int snapfs_replay_overwrite_slot(struct f2fs_sb_info *sbi,
 		sbi->magic_info->redo_info->slot_gens[slot_idx] = le32_to_cpu(slot->slot_gen);
 	if (le32_to_cpu(slot->tx_seq) > sbi->magic_info->redo_info->slot_tx_seq[slot_idx])
 		sbi->magic_info->redo_info->slot_tx_seq[slot_idx] = le32_to_cpu(slot->tx_seq);
-	if (le16_to_cpu(slot->state) == SNAPFS_OVERWRITE_EMPTY)
-		return -ENOENT;
-	if (le16_to_cpu(slot->state) != SNAPFS_OVERWRITE_TXN_COMMITTED)
+
+	state = le16_to_cpu(slot->state);
+	/* 已应用完成，无需 replay */
+	if (state == SNAPFS_OVERWRITE_EMPTY || state == SNAPFS_OVERWRITE_APPLIED)
+		return 0;
+	if (state != SNAPFS_OVERWRITE_TXN_COMMITTED)
 		return -ENOENT;
 
 	ret = f2fs_get_summary_by_addr(sbi, le32_to_cpu(slot->data_blkaddr), &cur_sum);
@@ -2724,7 +2796,8 @@ static int snapfs_replay_overwrite_slot(struct f2fs_sb_info *sbi,
 	if (ret)
 		return ret;
 
-	ret = snapfs_redo_mark_overwrite_empty(sbi, slot_idx);
+	/* 恢复时标记为 APPLIED 并唤醒等待者 */
+	ret = snapfs_redo_mark_overwrite_applied(sbi, slot_idx);
 	if (!ret) {
 		sbi->magic_info->redo_info->overwrite_redo_replays++;
 		snapfs_redo_free_slot(sbi, slot_idx);

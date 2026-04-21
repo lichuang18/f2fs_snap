@@ -5876,6 +5876,10 @@ int f2fs_build_segment_manager(struct f2fs_sb_info *sbi)
 	init_waitqueue_head(&magic_info->redo_info->batch_slot_wq);
 	atomic_set(&magic_info->redo_info->batch_waiting_count, 0);
 
+	/* === Overwrite Redo Serialization === */
+	mutex_init(&magic_info->redo_info->overwrite_slot_lock);
+	init_waitqueue_head(&magic_info->redo_info->overwrite_slot_wq);
+
 	pr_info("[snapfs batch] batch redo initialized: %u slots x %u blocks each\n",
 	        magic_info->redo_info->batch_nr_slots,
 	        magic_info->redo_info->batch_slot_blocks);

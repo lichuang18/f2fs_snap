@@ -1118,6 +1118,7 @@ enum snapfs_progress_state {
 	SNAPFS_PROGRESS_BLOCK_TXN_COMMITTED = 2,
 	SNAPFS_OVERWRITE_EMPTY = 3,
 	SNAPFS_OVERWRITE_TXN_COMMITTED = 4,
+	SNAPFS_OVERWRITE_APPLIED = 5,       /* overwrite 已应用完成，可被新操作覆盖 */
 };
 
 enum snapfs_redo_record_type {
@@ -1183,6 +1184,10 @@ struct snap_redo_info {
 	u64 overwrite_redo_commits;
 	u64 overwrite_redo_replays;
 	u64 overwrite_redo_conflicts;
+
+	/* === Overwrite Redo Serialization === */
+	struct mutex overwrite_slot_lock;      /* 串行化锁，确保同一时刻只有一个操作使用 overwrite slot */
+	wait_queue_head_t overwrite_slot_wq;   /* 等待 slot 变为 APPLIED 状态的队列 */
 
 	/* === Batch Redo Fields === */
 	bool batch_mode;                       /* 是否使用 batch redo 模式 */
