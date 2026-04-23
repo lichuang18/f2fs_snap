@@ -3568,6 +3568,10 @@ void f2fs_cow_update_inode(struct inode *src_inode,struct inode *snap_inode){
 	snap_inode->dirtied_when = src_inode->dirtied_when;
 	snap_inode->dirtied_time_when = src_inode->dirtied_time_when;
     snap_inode->i_count = src_inode->i_count;
+
+	/* 复制 inode 扩展属性 */
+	F2FS_I(snap_inode)->i_projid = F2FS_I(src_inode)->i_projid;
+	F2FS_I(snap_inode)->i_pino = F2FS_I(src_inode)->i_pino;
 }
 
 static void __maybe_unused __add_sum_entry(struct f2fs_sb_info *sbi, int type,
@@ -8210,6 +8214,11 @@ int f2fs_cow(struct inode *pra_inode,
             pr_err("[snapfs cow2]: failed to create new inode: %d\n", ret);
             goto next_free;
         }
+
+        /* 复制 inode 扩展属性：i_projid 和 i_pino */
+        F2FS_I(tmp_inode)->i_projid = F2FS_I(son_inode)->i_projid;
+        F2FS_I(tmp_inode)->i_pino = F2FS_I(son_inode)->i_pino;
+
         if (!test_opt(sbi, DISABLE_EXT_IDENTIFY))
             // snapfs_set_file_temperature(sbi, tmp_inode, d_name->name);
             snapfs_set_file_temperature(sbi, tmp_inode, filename);
@@ -8288,10 +8297,10 @@ int f2fs_cow(struct inode *pra_inode,
                     pr_err("[snapfs cow2]: get src_page[%lu] failed\n", son_inode->i_ino);
                     goto next_free;
                 }
-                new_ipage = f2fs_get_node_page(sbi, snap_inode->i_ino);
+                new_ipage = f2fs_get_node_page(sbi, tmp_inode->i_ino);
                 if (IS_ERR(new_ipage)) {
-                    pr_err("[snapfs cow2]: get snap page[%lu] failed\n", snap_inode->i_ino);
-                    f2fs_put_page(new_ipage, 1);
+                    pr_err("[snapfs cow2]: get snap page[%lu] failed\n", tmp_inode->i_ino);
+                    f2fs_put_page(son_ipage, 1);
                     goto next_free;
                 }
                 inline_dentry = inline_data_addr(son_inode, son_ipage);
@@ -8299,12 +8308,12 @@ int f2fs_cow(struct inode *pra_inode,
                 f2fs_truncate_inline_inode(tmp_inode, new_ipage, 0);
                 memcpy(inline_dentry2, inline_dentry, MAX_INLINE_DATA(son_inode));
                 // 更新.和..
-                make_dentry_ptr_inline(snap_inode, &d, inline_dentry2);
+                make_dentry_ptr_inline(tmp_inode, &d, inline_dentry2);
                 /* update dirent of "." */
-                f2fs_update_dentry(snap_inode->i_ino, snap_inode->i_mode, &d, &dot, 0, 0);
+                f2fs_update_dentry(tmp_inode->i_ino, tmp_inode->i_mode, &d, &dot, 0, 0);
                 /* update dirent of ".." */
-                f2fs_update_dentry(snap_inode->i_ino, snap_inode->i_mode, &d, &dotdot, 0, 1);
-                tmp_inode->i_size = son_inode->i_size;
+                f2fs_update_dentry(tmp_inode->i_ino, tmp_inode->i_mode, &d, &dotdot, 0, 1);
+                tmp_inode->i_size = le64_to_cpu(F2FS_INODE(son_ipage)->i_size);
                 set_page_dirty(new_ipage);
                 f2fs_put_page(new_ipage, 1);
                 f2fs_put_page(son_ipage, 1);
