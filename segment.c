@@ -2499,6 +2499,10 @@ int f2fs_sync_meta_page(struct f2fs_sb_info *sbi, struct page *page,
 		return 0;
 	}
 
+	/* Ensure page is locked before clear_page_dirty_for_io -> page_mkclean */
+	if (!PageLocked(page))
+		lock_page(page);
+
 	if (unlikely(!clear_page_dirty_for_io(page))) {
 		unlock_page(page);
 		return 0;
