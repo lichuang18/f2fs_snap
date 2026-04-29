@@ -5007,11 +5007,13 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		start = ktime_get_ns();
 		if(!f2fs_snapshot_cow(inode)){ // 返回0。说明处理了cow
 			if(SNAPFS_DEBUG) pr_info("[snapfs write]: write with cow\n");
+			F2FS_I(inode)->i_flags |= F2FS_COWED_FL;
 			end = ktime_get_ns();
 			pr_info("write cow cost = %lld ns\n", end - start);
 			// size_t i_count = iov_iter_count(from);
 			// pr_info("ki_pos: %u, iov_count: %u\n",iocb->ki_pos, i_count);
 		}else{
+			// check cost print
 			// end = ktime_get_ns();
 			// pr_info("write check cost = %lld ns\n", end - start);
 			// size_t i_count = iov_iter_count(from);

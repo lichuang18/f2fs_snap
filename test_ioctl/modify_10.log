@@ -1,0 +1,13 @@
+{
+  "file": "/mnt/test3/testfile",
+  "file_size_bytes": 21474836480,
+  "ratio_percent": 100.0,
+  "block_size_bytes": 4096,
+  "total_blocks": 5242880,
+  "unique_blocks_modified": 5242880,
+  "actual_bytes_modified": 21474836480,
+  "seed": 100,
+  "fsync": true,
+  "sync": true,
+  "duration_seconds": 25.117929458618164
+}

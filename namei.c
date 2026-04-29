@@ -591,6 +591,7 @@ static int f2fs_unlink(struct inode *dir, struct dentry *dentry)
 		if (!f2fs_snapshot_cow_nolock(inode)) { /* 返回0，说明处理了cow */
 			if (SNAPFS_DEBUG)
 				pr_info("[snapfs unlink]: unlink with cow\n");
+			F2FS_I(inode)->i_flags |= F2FS_COWED_FL;
 			end = ktime_get_ns();
 			pr_info("unlink cow cost = %lld ns\n", end - start);
 		}

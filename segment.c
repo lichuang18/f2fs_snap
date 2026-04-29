@@ -3590,6 +3590,7 @@ skip_normal_addsum:
     } else{
         // mulref process.   多引用转单引用
         // 因为旧块还被其他快照引用，不能减少计数，所以需要增加全局计数
+		percpu_counter_add(&sbi->alloc_valid_block_count, 1);
         spin_lock(&sbi->stat_lock);
         sbi->total_valid_block_count++;
         spin_unlock(&sbi->stat_lock);
