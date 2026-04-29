@@ -4452,8 +4452,8 @@ static int f2fs_cow_node_block_batch(struct inode *inode, u32 src_ino,
 							     SNAPFS_BATCH_ENTRY_NEED_SECOND_ALLOC;
 
 			/* 构建 summary op - 指向第一个 mulref entry */
-			new_sum.nid = cpu_to_le16(blkaddr1);
-			new_sum.ofs_in_node = eidx;
+			new_sum.nid = cpu_to_le32(blkaddr1);
+			new_sum.ofs_in_node = cpu_to_le16(eidx);
 			new_sum.version = old_sum.version;
 
 			batch_ctx->entries[entry_idx].sum.data_blkaddr = cpu_to_le32(old_blkaddr);
