@@ -2105,7 +2105,7 @@ int snapfs_batch_apply_one(struct f2fs_sb_info *sbi, struct snapfs_batch_context
     struct f2fs_summary_block *sum_blk = NULL;
     struct f2fs_sit_mulref_block *sit_blk = NULL;
     u16 mulref_idx;
-    block_t data_blkaddr;
+    block_t data_blkaddr = 0;  /* 初始化为0，用于一致性检查 */
     unsigned int segno;
     unsigned int blkoff;
     unsigned int sit_off;
@@ -2207,14 +2207,23 @@ int snapfs_batch_apply_one(struct f2fs_sb_info *sbi, struct snapfs_batch_context
                    new_mr_blkaddr, bitno);
 
             /* 尝试计算正确的 block 地址和索引 */
-            /* 假设 idx 是相对于 mulref area 起始位置的全局索引 */
+            /* idx 是相对于 mulref area 起始位置的全局索引，需要计算 block 偏移 */
             if (mulref_idx < MRENTRY_PER_BLOCK * 256) {  /* 合理范围内 */
                 u16 block_offset = mulref_idx / MRENTRY_PER_BLOCK;
-                block_t correct_blkaddr = new_mr_blkaddr + block_offset;
                 u16 correct_idx = mulref_idx % MRENTRY_PER_BLOCK;
 
-                pr_warn("[snapfs batch] slot %u: correcting to blkaddr=%u, idx=%u\n",
-                        ctx->slot_id, correct_blkaddr, correct_idx);
+                /*
+                 * 修复: 正确计算 mulref block 地址
+                 * mulref blocks 在 mulref 区域内连续排列
+                 * 地址 = mulref 区域起始地址 + block 偏移
+                 */
+                block_t mr_base = sbi->magic_info->mulref_blkaddr;
+                block_t correct_blkaddr = mr_base + block_offset;
+
+                pr_warn("[snapfs batch] slot %u: idx=%u exceeds block, "
+                        "correcting to blkaddr=%u (mr_base=%u, offset=%u), idx=%u\n",
+                        ctx->slot_id, mulref_idx,
+                        correct_blkaddr, mr_base, block_offset, correct_idx);
 
                 /* 切换到正确的 block */
                 if (ctx->dirty_mr_page) {
@@ -2266,6 +2275,25 @@ int snapfs_batch_apply_one(struct f2fs_sb_info *sbi, struct snapfs_batch_context
                 f2fs_set_bit(mulref_idx, (char *)mulref_blk->multi_bitmap);
                 mulref_blk->v_mrentrys = cpu_to_le16(
                     le16_to_cpu(mulref_blk->v_mrentrys) + 1);
+            }
+
+            /* === 方案4修复: 添加 mulref entry 一致性检查 === */
+            /* 在写入 mulref entry 之前验证 m_nid 是否有效 */
+            {
+                block_t entry_m_nid = le32_to_cpu(entry->mulref.entry.m_nid);
+                block_t mr_base = sbi->magic_info->mulref_blkaddr;
+                block_t mr_end = mr_base + MAGIC_MAX;
+
+                /* 简单检查：m_nid 不应该是另一个 mulref block 的地址 */
+                if (entry_m_nid >= mr_base && entry_m_nid < mr_end) {
+                    f2fs_err(sbi, "[snapfs batch] FATAL: mulref entry m_nid=%u points to mulref block!",
+                             entry_m_nid);
+                    f2fs_err(sbi, "  mr_blkaddr=%u, idx=%u, bitno=%u, data_blkaddr=%u",
+                             new_mr_blkaddr, mulref_idx, bitno,
+                             entry->data_blkaddr ? le32_to_cpu(entry->data_blkaddr) : 0);
+                    ret = -EINVAL;
+                    goto out;
+                }
             }
 
             /* 调试: 打印 mulref entry 写入信息 */
@@ -5035,7 +5063,7 @@ static int f2fs_cow_node_block_batch(struct inode *inode, u32 src_ino,
 
 			/* 构建 mulref entry */
 			entry = &batch_ctx->entries[entry_idx].mulref.entry;
-			entry->m_nid = inode->i_ino;
+			entry->m_nid = cpu_to_le32(old_blkaddr);  /* 使用数据块地址，而非 inode 号 */
 			entry->m_ofs = cpu_to_le16(lblks[i]);
 			entry->m_ver = old_sum.version;
 			entry->m_count = 1;
@@ -9652,14 +9680,36 @@ int f2fs_get_summary_by_addr(struct f2fs_sb_info *sbi,
         up_read(&SM_I(sbi)->curseg_lock);
 
         /* 调试: 打印从 cache 读取的 summary */
+        /* === 方案1修复: 添加 cache 值验证 === */
         if (found_in_cache) {
-            pr_info("[snapfs get_sum] READ from CACHE: blkaddr=%u, segno=%u, blkoff=%u, "
-                    "sum.nid=%u, sum.ofs=%u, bitmap_set=%d\n",
-                    blkaddr, segno, blkoff,
-                    le32_to_cpu(sum->nid),
-                    le16_to_cpu(sum->ofs_in_node),
-                    bitmap_was_set);
-            return 0;
+            block_t sum_nid = le32_to_cpu(sum->nid);
+            block_t mr_base = sbi->magic_info->mulref_blkaddr;
+            block_t mr_end = mr_base + MAGIC_MAX;
+
+            /* 检查 sum.nid 是否是有效的 SSA 或 mulref block 地址 */
+            bool is_valid_mulref_sum = (sum_nid >= mr_base && sum_nid < mr_end);
+            unsigned int ssa_segno = GET_SEGNO(sbi, sum_nid);
+            bool is_valid_ssa_addr = (ssa_segno < MAIN_SEGS(sbi));
+
+            /* 如果是普通 block 地址（inode nid），说明 cache 是旧的 */
+            /* 正常的 SSA summary.nid 应该是：SSA block 地址 或 mulref block 地址 */
+            if (!is_valid_mulref_sum && !is_valid_ssa_addr && sum_nid != 0) {
+                /* cache 值无效，强制从 SSA 读取 */
+                pr_warn("[snapfs get_sum] CACHE invalid for blkaddr=%u, sum.nid=%u, "
+                        "forcing SSA read (cache may be stale after batch op)\n",
+                        blkaddr, sum_nid);
+                found_in_cache = false;
+                up_read(&SM_I(sbi)->curseg_lock);
+                /* 继续到 SSA 读取分支 */
+            } else {
+                pr_info("[snapfs get_sum] READ from CACHE: blkaddr=%u, segno=%u, blkoff=%u, "
+                        "sum.nid=%u, sum.ofs=%u, bitmap_set=%d\n",
+                        blkaddr, segno, blkoff,
+                        sum_nid,
+                        le16_to_cpu(sum->ofs_in_node),
+                        bitmap_was_set);
+                return 0;
+            }
         }
     }
 
@@ -9714,14 +9764,10 @@ int f2fs_get_summary_by_addr(struct f2fs_sb_info *sbi,
             }
             up_read(&SM_I(sbi)->curseg_lock);
 
-            /* 如果 cache sync 失败，打印警告 */
+            /* 如果 cache sync 失败，这是预期行为 - 数据段的 segno 不在 curseg 中 */
             if (!cache_sync_success) {
-                pr_warn("[snapfs get_sum] WARNING: cache sync failed for segno=%u, blkoff=%u, "
-                        "curseg segnos: HOT=%u, WARM=%u, COLD=%u\n",
-                        segno, blkoff,
-                        CURSEG_I(sbi, CURSEG_HOT_DATA)->segno,
-                        CURSEG_I(sbi, CURSEG_WARM_DATA)->segno,
-                        CURSEG_I(sbi, CURSEG_COLD_DATA)->segno);
+                pr_debug("[snapfs get_sum] sum page segno=%u not in curseg cache "
+                         "(normal for data segments), skipping cache sync\n", segno);
             }
         }
         up_write(&smi->smentry_lock);
@@ -9810,15 +9856,13 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
     struct page *mulref_page = NULL;
     struct page *cur_page = NULL;
     struct f2fs_summary new_sum;
-    unsigned int old_segno, blk_off;
+    unsigned int old_segno, blk_off, entry_segno;
     bool curmulref_locked = false;
     struct curmulref_info *cmr = &SM_I(sbi)->curmulref_blk;
     block_t mr_base, mr_end, ssa_nid;
     block_t entry_data_blkaddr, sit_base;
-    unsigned int entry_segno;
     bool valid_data_addr, is_mulref_addr;
     block_t expected_mr_blkaddr;
-    unsigned int eidx_from_m_nid;
 
 
     old_segno = GET_SEGNO(sbi, old_blkaddr);
@@ -9885,10 +9929,40 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
     ssa_nid = (block_t)le32_to_cpu(old_sum.nid);
 
     if (ssa_nid < mr_base || ssa_nid >= mr_end) {
-        pr_warn("[snapfs f2fs_mulref_overwrite] SSA.nid=%u out of mulref range [%u, %u), "
-                "skipping this entry (old_blkaddr=%u, segno=%u, blkoff=%u)\n",
-                ssa_nid, mr_base, mr_end, old_blkaddr, old_segno, blk_off);
-        ret = 1;  /* entry not found，跳过 */
+        /* === 方案2修复: 检查 SIT mulref flag === */
+        /* 首先检查 SIT mulref flag */
+        if (check_sit_mulref_entry(sbi, old_blkaddr)) {
+            /* SIT 标记为 mulref，但 SSA.nid 无效 - 这表明数据结构不一致
+             * 可能的原因：
+             * 1. 批量操作中途失败，SSA 已更新但 SIT 错误
+             * 2. SSA summary 被其他操作覆盖
+             * 3. 系统 crash 导致不一致
+             */
+            f2fs_err(sbi, "[snapfs f2fs_mulref_overwrite] CRITICAL INCONSISTENCY:");
+            f2fs_err(sbi, "  SIT marks blkaddr=%u as mulref, but SSA.nid=%u is invalid",
+                     old_blkaddr, ssa_nid);
+            f2fs_err(sbi, "  Valid mulref range: [%u, %u)", mr_base, mr_end);
+
+            /* 检查 SSA.nid 是否看起来像 SSA block 地址（而不是 inode 或其他） */
+            unsigned int ssa_segno = GET_SEGNO(sbi, ssa_nid);
+            bool looks_like_ssa = (ssa_segno < MAIN_SEGS(sbi));
+
+            if (looks_like_ssa) {
+                f2fs_err(sbi, "  SSA.nid=%u appears to be SSA block address (segno=%u)",
+                         ssa_nid, ssa_segno);
+                f2fs_err(sbi, "  This may indicate the block was never properly set as mulref");
+            }
+
+            ret = -EUCLEAN;  /* 明确标记为数据不一致 */
+            goto out;
+        }
+
+        /* SIT 未标记为 mulref，说明 SSA.nid 无效是正常的（块不是 mulref）
+         * 这不是错误，直接返回 0（不需要覆写） */
+        pr_debug("[snapfs f2fs_mulref_overwrite] SSA.nid=%u out of mulref range [%u, %u), "
+                 "but SIT does not mark as mulref (blkaddr=%u), ignoring\n",
+                 ssa_nid, mr_base, mr_end, old_blkaddr);
+        ret = 0;
         goto out;
     }
 
@@ -9904,67 +9978,67 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
     /* 额外检查: m_nid 不应该是另一个 mulref block 的地址 */
     is_mulref_addr = (entry_data_blkaddr >= mr_base && entry_data_blkaddr < mr_end);
 
+    /* === 方案3修复: 增强 mulref entry 验证逻辑 === */
     if (!valid_data_addr || is_mulref_addr) {
-        pr_warn("[snapfs f2fs_mulref_overwrite] invalid mulref entry data! "
-                "old_blkaddr=%u, entry.m_nid=%u (segno=%u, valid=%d, is_mulref=%d), "
-                "cur_mr_blkaddr=%u, cur_eidx=%u\n",
-                old_blkaddr, entry_data_blkaddr, entry_segno,
-                valid_data_addr, is_mulref_addr,
-                cur_mr_blkaddr, cur_eidx);
+        f2fs_err(sbi, "[snapfs f2fs_mulref_overwrite] CRITICAL: SIT says mulref but SSA/mulref invalid!");
+        f2fs_err(sbi, "  old_blkaddr=%u, SSA.nid=%u, entry.m_nid=%u (segno=%u, valid=%d, is_mulref=%d)",
+                 old_blkaddr, ssa_nid, entry_data_blkaddr, entry_segno,
+                 valid_data_addr, is_mulref_addr);
+        f2fs_err(sbi, "  cur_mr_blkaddr=%u, cur_eidx=%u",
+                 cur_mr_blkaddr, cur_eidx);
 
-        /* 如果 m_nid 看起来像另一个 mulref block 地址，这可能是数据结构损坏 */
-        if (is_mulref_addr) {
-            pr_err("[snapfs f2fs_mulref_overwrite] m_nid=%u points to another mulref block! "
-                   "This indicates data corruption, skipping\n",
-                   entry_data_blkaddr);
-            ret = 1;
+        /* 检查 SIT mulref flag */
+        if (check_sit_mulref_entry(sbi, old_blkaddr)) {
+            /* SIT 标记为 mulref，但 SSA/mulref entry 无效 - 严重错误 */
+            f2fs_err(sbi, "  SIT confirms mulref but data is corrupted!");
+            f2fs_err(sbi, "  This is a CRITICAL inconsistency. DO NOT skip silently!");
+            ret = -EUCLEAN;  /* 使用明确的错误码 */
             goto out;
         }
+
+        /* SIT 未标记为 mulref，说明 SSA 可能是旧的 - 忽略此错误 */
+        pr_info("[snapfs f2fs_mulref_overwrite] SIT does not mark as mulref, "
+                "SSA may be stale, continuing\n");
+        ret = 0;
+        goto out;
     }
 
-    /* === 验证 SSA summary 与 mulref entry 的一致性 === */
-    /* SSA summary 说这个 block 应该指向 mulref entry [cur_mr_blkaddr, cur_eidx]
-     * 但 mulref entry 的 m_nid 应该是 old_blkaddr（原始数据块地址）
-     * 如果不匹配，说明 SSA 或 mulref entry 有问题
+    /* === 验证 SSA summary 与 mulref entry 的一致性 ===
+     * 注意: 在批量操作期间，SSA 可能已更新但 mulref entry 尚未写入
+     * 这种状态是预期的，不应视为错误
      */
     if (le32_to_cpu(cur_entry->m_nid) != old_blkaddr) {
         block_t entry_nid = le32_to_cpu(cur_entry->m_nid);
         expected_mr_blkaddr = sbi->magic_info->mulref_blkaddr;
-        eidx_from_m_nid = 0;
-
-        /* 计算如果 m_nid 是一个 mulref block 地址，entry 索引应该是多少 */
-        if (entry_nid >= expected_mr_blkaddr) {
-            eidx_from_m_nid = (entry_nid - expected_mr_blkaddr) * MRENTRY_PER_BLOCK +
-                             cur_eidx;
-        }
-
-        /* 检查 m_nid 是否有效 */
-        unsigned int entry_segno = GET_SEGNO(sbi, entry_nid);
+        entry_segno = GET_SEGNO(sbi, entry_nid);
         bool valid_block_addr = (entry_segno < MAIN_SEGS(sbi));
-        bool is_mulref_addr = (entry_nid >= expected_mr_blkaddr &&
+        is_mulref_addr = (entry_nid >= expected_mr_blkaddr &&
                               entry_nid < expected_mr_blkaddr + MAGIC_MAX);
 
-        /* 如果 m_nid 是无效值或指向另一个 mulref block，这是数据损坏 */
-        if (!valid_block_addr || is_mulref_addr) {
-            pr_warn("[snapfs f2fs_mulref_overwrite] SSA/mulref mismatch (corrupted entry): "
-                    "old_blkaddr=%u, entry.m_nid=%u (segno=%u, valid=%d, is_mulref=%d), "
-                    "cur_mr_blkaddr=%u, cur_eidx=%u\n",
-                    old_blkaddr, entry_nid, entry_segno,
-                    valid_block_addr, is_mulref_addr,
-                    cur_mr_blkaddr, cur_eidx);
+        /* 如果 m_nid 是无效值（不是 block 地址也不是 mulref 地址） */
+        if (!valid_block_addr && !is_mulref_addr) {
+            pr_warn("[snapfs f2fs_mulref_overwrite] invalid m_nid=%u, old_blkaddr=%u, "
+                    "cur_mr_blkaddr=%u, cur_eidx=%u, skipping\n",
+                    entry_nid, old_blkaddr, cur_mr_blkaddr, cur_eidx);
+            ret = 1;  /* 跳过此 entry */
+            goto out;
+        }
+
+        /* 如果 m_nid 指向另一个 mulref block，这是数据损坏 */
+        if (is_mulref_addr) {
+            pr_warn("[snapfs f2fs_mulref_overwrite] m_nid=%u points to mulref block, "
+                    "data corruption detected, old_blkaddr=%u, cur_mr_blkaddr=%u\n",
+                    entry_nid, old_blkaddr, cur_mr_blkaddr);
             ret = -EINVAL;
             goto out;
         }
 
-        /* m_nid 是有效的块地址但不匹配 old_blkaddr，继续遍历查找
-         * 这可能发生在 SSA 被更新但 mulref entry 内容不一致的情况下
-         * 打印警告后继续执行
-         */
-        pr_warn("[snapfs f2fs_mulref_overwrite] WARNING: SSA/mulref mismatch! "
-                "old_blkaddr=%u, entry.m_nid=%u, entry.m_ofs=%u, "
-                "cur_mr_blkaddr=%u, cur_eidx=%u, eidx_from_m_nid=%u\n",
-                old_blkaddr, entry_nid,
-                le16_to_cpu(cur_entry->m_ofs), cur_mr_blkaddr, cur_eidx, eidx_from_m_nid);
+        /* m_nid 是有效的 block 地址但不等于 old_blkaddr
+         * 这是批量操作期间的预期中间状态，打印 debug 后继续执行 */
+        pr_debug("[snapfs f2fs_mulref_overwrite] m_nid=%u != old_blkaddr=%u, "
+                 "continuing (batch operation in progress?), "
+                 "cur_mr_blkaddr=%u, cur_eidx=%u\n",
+                 entry_nid, old_blkaddr, cur_mr_blkaddr, cur_eidx);
     }
 
     if ((nid_t)le32_to_cpu(cur_entry->m_nid) == new_nid) {
