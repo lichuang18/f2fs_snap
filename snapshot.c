@@ -506,6 +506,9 @@ static int snapfs_stage_sit_page_change(struct f2fs_sb_info *sbi,
 	return 0;
 }
 
+/* 前向声明 */
+static void mark_sum_page_dirty(struct f2fs_sb_info *sbi, unsigned int segno);
+
 static int snapfs_stage_summary_page_change(struct f2fs_sb_info *sbi,
 					   block_t data_blkaddr,
 					   const struct f2fs_summary *sum,
@@ -523,6 +526,10 @@ static int snapfs_stage_summary_page_change(struct f2fs_sb_info *sbi,
 	sum_blk = (struct f2fs_summary_block *)page_address(sum_page);
 	sum_blk->entries[blkoff] = *sum;
 	set_page_dirty(sum_page);
+
+	/* 标记该 summary page 为脏，确保后续读取从 SSA 而非 curseg cache */
+	mark_sum_page_dirty(sbi, segno);
+
 	*sum_pagep = sum_page;
 	return 0;
 }
@@ -588,37 +595,47 @@ static int snapfs_redo_write_slot(struct f2fs_sb_info *sbi, u32 slot_idx,
 
 static int snapfs_redo_clear_slot(struct f2fs_sb_info *sbi, u32 slot_idx)
 {
-	struct snap_redo_slot slot;
+	struct snap_redo_slot *slot;
+	int ret;
 
-	memset(&slot, 0, sizeof(slot));
-	return snapfs_redo_write_slot(sbi, slot_idx, &slot);
+	slot = kzalloc(sizeof(*slot), GFP_NOFS);
+	if (!slot)
+		return -ENOMEM;
+
+	ret = snapfs_redo_write_slot(sbi, slot_idx, slot);
+	kfree(slot);
+	return ret;
 }
 
 static int snapfs_redo_mark_overwrite_applied(struct f2fs_sb_info *sbi, u32 slot_idx)
 {
-	struct snap_redo_slot slot;
+	struct snap_redo_slot *slot;
 	u32 crc;
 	int ret;
 
-	memset(&slot, 0, sizeof(slot));
-	slot.magic = cpu_to_le32(SNAP_REDO_MAGIC);
-	slot.version = cpu_to_le16(SNAP_REDO_VERSION);
-	slot.state = cpu_to_le16(SNAPFS_OVERWRITE_APPLIED);
-	slot.slot_id = cpu_to_le32(slot_idx);
-	slot.slot_gen = cpu_to_le32(sbi->magic_info->redo_info->slot_gens[slot_idx]);
-	slot.tx_seq = cpu_to_le32(sbi->magic_info->redo_info->slot_tx_seq[slot_idx]);
-	slot.record_type = SNAPFS_REDO_REC_OVERWRITE;
-	crc = crc32(~0, (unsigned char *)&slot + offsetof(struct snap_redo_slot, version),
-		    sizeof(slot) - offsetof(struct snap_redo_slot, version) - sizeof(slot.crc));
-	slot.crc = cpu_to_le32(crc);
+	slot = kzalloc(sizeof(*slot), GFP_NOFS);
+	if (!slot)
+		return -ENOMEM;
 
-	ret = snapfs_redo_write_slot(sbi, slot_idx, &slot);
+	slot->magic = cpu_to_le32(SNAP_REDO_MAGIC);
+	slot->version = cpu_to_le16(SNAP_REDO_VERSION);
+	slot->state = cpu_to_le16(SNAPFS_OVERWRITE_APPLIED);
+	slot->slot_id = cpu_to_le32(slot_idx);
+	slot->slot_gen = cpu_to_le32(sbi->magic_info->redo_info->slot_gens[slot_idx]);
+	slot->tx_seq = cpu_to_le32(sbi->magic_info->redo_info->slot_tx_seq[slot_idx]);
+	slot->record_type = SNAPFS_REDO_REC_OVERWRITE;
+	crc = crc32(~0, (unsigned char *)slot + offsetof(struct snap_redo_slot, version),
+		    sizeof(*slot) - offsetof(struct snap_redo_slot, version) - sizeof(slot->crc));
+	slot->crc = cpu_to_le32(crc);
+
+	ret = snapfs_redo_write_slot(sbi, slot_idx, slot);
 
 	/* 唤醒等待 overwrite slot 的线程 */
 	if (!ret) {
 		wake_up_all(&sbi->magic_info->redo_info->overwrite_slot_wq);
 	}
 
+	kfree(slot);
 	return ret;
 }
 
@@ -1028,7 +1045,24 @@ int snapfs_batch_begin(struct f2fs_sb_info *sbi, u32 slot_id,
 
 	f2fs_put_page(page, 1);
 
-	pr_debug("[snapfs batch] slot %u: PREPARING started, batch_id=%u, valid_bits=%u\n",
+	/* 清空 dirty_sum 相关数组，确保每次 batch 开始时状态干净 */
+	ctx->dirty_sum_count = 0;
+	memset(ctx->dirty_sum_pages, 0, sizeof(ctx->dirty_sum_pages));
+	memset(ctx->dirty_sum_segno, 0, sizeof(ctx->dirty_sum_segno));
+
+	/* 清空 SIT 相关数组 */
+	ctx->dirty_sit_count = 0;
+	memset(ctx->dirty_sit_pages, 0, sizeof(ctx->dirty_sit_pages));
+	memset(ctx->dirty_sit_blkaddr, 0, sizeof(ctx->dirty_sit_blkaddr));
+
+	/* 清空 dirty_mr_page */
+	if (ctx->dirty_mr_page) {
+		f2fs_put_page(ctx->dirty_mr_page, 1);
+		ctx->dirty_mr_page = NULL;
+	}
+	ctx->cur_mr_blkaddr = 0;  /* 初始化当前 mulref block 地址 */
+
+	pr_info("[snapfs batch] slot %u: PREPARING started, batch_id=%u, valid_bits=%u\n",
 	         slot_id, ctx->batch_id, ctx->valid_bits);
 
 	return 0;
@@ -1159,9 +1193,59 @@ int snapfs_batch_mark_applied(struct f2fs_sb_info *sbi, struct snapfs_batch_cont
 	if (!ret)
 		ctx->state = SNAPFS_BATCH_APPLIED;
 
-	pr_debug("[snapfs batch] slot %u: marked APPLIED\n", ctx->slot_id);
+	pr_info("[snapfs batch] slot %u: marked APPLIED\n", ctx->slot_id);
 
 	return ret;
+}
+
+/*
+ * 清理可能阻塞的 overwrite slot
+ *
+ * 问题：Batch CoW 和 Overwrite 操作使用同一个 overwrite_slot_lock 和 overwrite_slot_wq。
+ * 如果 Overwrite 操作失败或被中断，overwrite slot 可能处于 COMMITTED 状态，
+ * 导致后续 Overwrite 操作在 snapfs_wait_overwrite_slot_applied() 中永远等待。
+ *
+ * 解决方案：Batch 完成后，清理可能阻塞的 Overwrite slot。
+ *
+ * 关键：使用 mutex_trylock 避免死锁。
+ * 如果无法获取锁，说明有其他操作正在使用该 slot（可能正在等待），
+ * 此时跳过清理，让等待操作有机会完成。
+ */
+static void snapfs_batch_clear_stale_overwrite(struct f2fs_sb_info *sbi)
+{
+	struct snap_redo_info *redo = sbi->magic_info->redo_info;
+	u16 state;
+
+	if (!redo)
+		return;
+
+	/* 先检查状态（无锁快速路径） */
+	state = snapfs_get_overwrite_slot_state(sbi);
+	if (state != SNAPFS_OVERWRITE_TXN_COMMITTED)
+		return;
+
+	/* 使用 try_lock 避免死锁 */
+	if (!mutex_trylock(&redo->slot_locks[redo->overwrite_slot])) {
+		/* 锁被占用，说明有操作正在使用该 slot
+		 * 跳过清理，让等待操作有机会完成
+		 */
+		pr_warn("[snapfs batch] skip clearing overwrite slot: lock held by another operation\n");
+		return;
+	}
+
+	/* 双重检查状态（持有锁后） */
+	state = snapfs_get_overwrite_slot_state(sbi);
+	if (state == SNAPFS_OVERWRITE_TXN_COMMITTED) {
+		pr_warn("[snapfs batch] clearing stale overwrite slot state=%d\n", state);
+
+		/* 清理 slot */
+		snapfs_redo_clear_slot(sbi, redo->overwrite_slot);
+
+		/* 唤醒所有等待该 slot 的线程 */
+		wake_up_all(&redo->overwrite_slot_wq);
+	}
+
+	mutex_unlock(&redo->slot_locks[redo->overwrite_slot]);
 }
 
 /*
@@ -1256,7 +1340,7 @@ int snapfs_batch_commit(struct f2fs_sb_info *sbi, struct snapfs_batch_context *c
 	if (ctx->state != SNAPFS_BATCH_PREPARING)
 		return -EINVAL;
 
-	pr_debug("[snapfs batch] slot %u: committing %u entries\n",
+	pr_info("[snapfs batch] slot %u: committing %u entries\n",
 	         ctx->slot_id, ctx->entry_count);
 
 	entries_first_block = SNAPFS_BATCH_ENTRIES_FIRST;
@@ -1357,6 +1441,46 @@ int snapfs_batch_commit(struct f2fs_sb_info *sbi, struct snapfs_batch_context *c
 		return ret;
 	}
 
+	/* === 步骤 2.5: 从 entries 收集所有 segno 到 dirty_sum_segno[] ===
+	 * 这是关键的修复：staging 阶段设置了 entry->sum，但没有填充 dirty_sum_segno[]
+	 * 现在我们需要从 entries 中收集所有 segno，以便 apply 阶段能找到对应的 sum page
+	 */
+	{
+		unsigned int segno;
+		unsigned int j;
+		bool found;
+		u16 k;
+
+		ctx->dirty_sum_count = 0;
+		for (j = 0; j < ctx->entry_count; j++) {
+			struct snapfs_batch_entry *e = &ctx->entries[j];
+			block_t data_blkaddr = le32_to_cpu(e->data_blkaddr);
+
+			if (data_blkaddr == 0)
+				continue;
+
+			segno = GET_SEGNO(sbi, data_blkaddr);
+
+			/* 检查是否已存在（去重） */
+			found = false;
+			for (k = 0; k < ctx->dirty_sum_count; k++) {
+				if (ctx->dirty_sum_segno[k] == segno) {
+					found = true;
+					break;
+				}
+			}
+
+			if (!found && ctx->dirty_sum_count < 512) {
+				ctx->dirty_sum_segno[ctx->dirty_sum_count] = segno;
+				pr_info("[snapfs batch] commit: SET dirty_sum[%u]=%u from entry %u\n",
+				         ctx->dirty_sum_count, segno, j);
+				ctx->dirty_sum_count++;
+			}
+		}
+		pr_info("[snapfs batch] commit: collected %u unique segnos from %u entries\n",
+		        ctx->dirty_sum_count, ctx->entry_count);
+	}
+
 	/* === 步骤 3: 设置 header 状态为 COMMITTED === */
 	blkaddr = redo->journal_blkaddr + ctx->slot_id * redo->batch_slot_blocks;
 	page = f2fs_get_meta_page(sbi, blkaddr);
@@ -1386,7 +1510,7 @@ int snapfs_batch_commit(struct f2fs_sb_info *sbi, struct snapfs_batch_context *c
 	f2fs_put_page(page, 0);
 
 	ctx->state = SNAPFS_BATCH_COMMITTED;
-	pr_debug("[snapfs batch] slot %u: COMMITTED, %u redo blocks durable\n",
+	pr_info("[snapfs batch] slot %u: COMMITTED, %u redo blocks durable\n",
 	         ctx->slot_id, blocks_written);
 
 	return ret;
@@ -1707,6 +1831,54 @@ batch_resume_from_bitmap: {
 		__set_bit(slot_id, redo->batch_slot_inuse_bitmap);
 		ctx_ptr->state = SNAPFS_BATCH_APPLYING;
 
+		/* 清空 dirty 数组（ctx_ptr 是 kzalloc 分配的，理论上已是 0，但确保安全） */
+		ctx_ptr->dirty_sum_count = 0;
+		memset(ctx_ptr->dirty_sum_pages, 0, sizeof(ctx_ptr->dirty_sum_pages));
+		memset(ctx_ptr->dirty_sum_segno, 0, sizeof(ctx_ptr->dirty_sum_segno));
+		ctx_ptr->dirty_sit_count = 0;
+		memset(ctx_ptr->dirty_sit_pages, 0, sizeof(ctx_ptr->dirty_sit_pages));
+		memset(ctx_ptr->dirty_sit_blkaddr, 0, sizeof(ctx_ptr->dirty_sit_blkaddr));
+		if (ctx_ptr->dirty_mr_page) {
+			f2fs_put_page(ctx_ptr->dirty_mr_page, 1);
+			ctx_ptr->dirty_mr_page = NULL;
+		}
+
+		/* 从 entries 收集所有 segno 到 dirty_sum_segno[]（与 commit 路径相同的修复） */
+		{
+			unsigned int segno;
+			unsigned int j;
+			bool found;
+			u16 k;
+
+			for (j = 0; j < ctx_ptr->entry_count; j++) {
+				struct snapfs_batch_entry *e = &ctx_ptr->entries[j];
+				block_t data_blkaddr = le32_to_cpu(e->data_blkaddr);
+
+				if (data_blkaddr == 0)
+					continue;
+
+				segno = GET_SEGNO(sbi, data_blkaddr);
+
+				/* 检查是否已存在（去重） */
+				found = false;
+				for (k = 0; k < ctx_ptr->dirty_sum_count; k++) {
+					if (ctx_ptr->dirty_sum_segno[k] == segno) {
+						found = true;
+						break;
+					}
+				}
+
+				if (!found && ctx_ptr->dirty_sum_count < 512) {
+					ctx_ptr->dirty_sum_segno[ctx_ptr->dirty_sum_count] = segno;
+					pr_info("[snapfs batch] recovery: SET dirty_sum[%u]=%u from entry %u\n",
+					         ctx_ptr->dirty_sum_count, segno, j);
+					ctx_ptr->dirty_sum_count++;
+				}
+			}
+			pr_info("[snapfs batch] recovery: collected %u unique segnos from %u entries\n",
+			        ctx_ptr->dirty_sum_count, ctx_ptr->entry_count);
+		}
+
 		/* 循环遍历所有 entries，进行比对和恢复 */
 		for (i = 0; i < ctx_ptr->valid_bits; i++) {
 			struct snapfs_batch_entry *entry = &ctx_ptr->entries[i];
@@ -1832,6 +2004,8 @@ batch_resume_from_bitmap: {
 			pr_info("[snapfs batch] slot %u: all %u entries match redo, no restore needed\n",
 			        slot_id, ctx_ptr->valid_bits);
 			ret = snapfs_batch_mark_applied(sbi, ctx_ptr);
+			/* 关键修复：清理可能阻塞的 overwrite slot */
+			snapfs_batch_clear_stale_overwrite(sbi);
 			__clear_bit(slot_id, redo->batch_slot_inuse_bitmap);
 			snapfs_batch_free_slot(sbi, slot_id);
 			kfree(ctx_ptr);
@@ -1844,8 +2018,12 @@ batch_resume_from_bitmap: {
 recovery_error:
 		/* 清理收集的 dirty pages */
 		if (ctx_ptr->dirty_mr_page) {
-			f2fs_put_page(ctx_ptr->dirty_mr_page, 1);
+			/* 关键修复：先检查 page 是否已锁定，避免 double-unlock */
+			if (PageLocked(ctx_ptr->dirty_mr_page))
+				unlock_page(ctx_ptr->dirty_mr_page);
+			put_page(ctx_ptr->dirty_mr_page);  /* 使用 put_page 而非 f2fs_put_page(..., 1) */
 			ctx_ptr->dirty_mr_page = NULL;
+			ctx_ptr->cur_mr_blkaddr = 0;  /* 重置当前 mulref block 地址 */
 		}
 		for (i = 0; i < ctx_ptr->dirty_sum_count; i++) {
 			if (ctx_ptr->dirty_sum_pages[i]) {
@@ -1868,6 +2046,8 @@ recovery_error:
 			pr_err("[snapfs batch] slot %u: flush all failed: %d\n",
 			       slot_id, ret);
 			snapfs_batch_mark_applied(sbi, ctx_ptr);
+			/* 关键修复：清理可能阻塞的 overwrite slot */
+			snapfs_batch_clear_stale_overwrite(sbi);
 			__clear_bit(slot_id, redo->batch_slot_inuse_bitmap);
 			snapfs_batch_free_slot(sbi, slot_id);
 			kfree(ctx_ptr);
@@ -1882,6 +2062,8 @@ recovery_error:
 		pr_info("[snapfs batch] slot %u: all %u bits applied and flushed, marking APPLIED\n",
 		        slot_id, ctx_ptr->valid_bits);
 		ret = snapfs_batch_mark_applied(sbi, ctx_ptr);
+		/* 关键修复：清理可能阻塞的 overwrite slot */
+		snapfs_batch_clear_stale_overwrite(sbi);
 
 		/* 释放 slot */
 		__clear_bit(slot_id, redo->batch_slot_inuse_bitmap);
@@ -1939,6 +2121,31 @@ int snapfs_batch_apply_one(struct f2fs_sb_info *sbi, struct snapfs_batch_context
     if (bitno >= ctx->valid_bits)
         return -EINVAL;
 
+    /* 清空 dirty 数组，避免残留数据导致不一致 */
+    /* 关键修复：即使 snapfs_batch_begin() 已经清空，
+     * 在 recovery 路径中 ctx 可能是从磁盘读取的，需要确保干净状态 */
+    if (bitno == 0) {
+        ctx->dirty_sum_count = 0;
+        memset(ctx->dirty_sum_pages, 0, sizeof(ctx->dirty_sum_pages));
+        memset(ctx->dirty_sum_segno, 0, sizeof(ctx->dirty_sum_segno));
+
+        ctx->dirty_sit_count = 0;
+        memset(ctx->dirty_sit_pages, 0, sizeof(ctx->dirty_sit_pages));
+        memset(ctx->dirty_sit_blkaddr, 0, sizeof(ctx->dirty_sit_blkaddr));
+
+        if (ctx->dirty_mr_page) {
+            set_page_dirty(ctx->dirty_mr_page);
+            /* 关键修复：先检查 page 是否已锁定，避免 double-unlock */
+            if (PageLocked(ctx->dirty_mr_page))
+                unlock_page(ctx->dirty_mr_page);
+            put_page(ctx->dirty_mr_page);  /* 使用 put_page 而非 f2fs_put_page(..., 1) */
+            ctx->dirty_mr_page = NULL;
+        }
+        ctx->cur_mr_blkaddr = 0;
+
+        pr_info("[snapfs batch] slot %u: cleared dirty arrays at bitno=0\n", ctx->slot_id);
+    }
+
     /* 在 entries 中查找 bitno 对应的项 */
     for (i = 0; i < ctx->entry_count; i++) {
         if (i == bitno) {
@@ -1953,38 +2160,144 @@ int snapfs_batch_apply_one(struct f2fs_sb_info *sbi, struct snapfs_batch_context
         return 0;  /* 没有 redo 项，跳过 */
     }
 
-    pr_debug("[snapfs batch] slot %u: applying bit %u, mr_blkaddr=%u\n",
+    pr_info("[snapfs batch] slot %u: applying bit %u, mr_blkaddr=%u\n",
              ctx->slot_id, bitno, le32_to_cpu(entry->mulref.mr_blkaddr));
 
-    /* 1. 执行 mulref 更新（去重：整个 batch 共享一个 dirty_mr_page） */
-    if (!ctx->dirty_mr_page) {
-        ctx->dirty_mr_page = f2fs_get_meta_page(sbi,
-            le32_to_cpu(entry->mulref.mr_blkaddr));
-        if (IS_ERR(ctx->dirty_mr_page)) {
-            ret = PTR_ERR(ctx->dirty_mr_page);
-            ctx->dirty_mr_page = NULL;
-            return ret;
-        }
-    }
-    mulref_blk = (struct f2fs_mulref_block *)page_address(ctx->dirty_mr_page);
-    mulref_idx = le16_to_cpu(entry->mulref.idx);
+    /* ================================================================ */
+    /* 1. 执行 mulref 更新（需要处理跨页情况）                           */
+    /* 参考 curmulref_alloc_entry() 的换页逻辑                            */
+    /* ================================================================ */
+    {
+        block_t new_mr_blkaddr = le32_to_cpu(entry->mulref.mr_blkaddr);
+        mulref_idx = le16_to_cpu(entry->mulref.idx);
 
-    if (entry->mulref.valid) {
-        bool was_valid = f2fs_test_bit(mulref_idx, (char *)mulref_blk->multi_bitmap);
-        if (!was_valid) {
-            f2fs_set_bit(mulref_idx, (char *)mulref_blk->multi_bitmap);
-            mulref_blk->v_mrentrys = cpu_to_le16(
-                le16_to_cpu(mulref_blk->v_mrentrys) + 1);
+        /* === 检查是否需要切换 mulref page === */
+        if (!ctx->dirty_mr_page || ctx->cur_mr_blkaddr != new_mr_blkaddr) {
+            /* 需要切换到新的 mulref block */
+            if (ctx->dirty_mr_page) {
+                /* 刷新并释放旧的 page */
+                set_page_dirty(ctx->dirty_mr_page);
+                /* 关键修复：先检查 page 是否已锁定，避免 double-unlock
+                 * 在 out: 标签处可能已解锁 dirty_mr_page，所以这里需要检查 */
+                if (PageLocked(ctx->dirty_mr_page))
+                    unlock_page(ctx->dirty_mr_page);
+                put_page(ctx->dirty_mr_page);  /* 使用 put_page 而非 f2fs_put_page(..., 1) */
+                ctx->dirty_mr_page = NULL;
+            }
+
+            pr_info("[snapfs batch] slot %u: switching to new mr_blkaddr=%u (old=%u)\n",
+                    ctx->slot_id, new_mr_blkaddr, ctx->cur_mr_blkaddr);
+            ctx->dirty_mr_page = f2fs_get_meta_page(sbi, new_mr_blkaddr);
+            if (IS_ERR(ctx->dirty_mr_page)) {
+                ret = PTR_ERR(ctx->dirty_mr_page);
+                ctx->dirty_mr_page = NULL;
+                ctx->cur_mr_blkaddr = 0;
+                return ret;
+            }
+            ctx->cur_mr_blkaddr = new_mr_blkaddr;
         }
-        mulref_blk->mrentries[mulref_idx] = entry->mulref.entry;
-    } else {
-        mulref_mark_invalid(mulref_blk, mulref_idx);
-        memset(&mulref_blk->mrentries[mulref_idx], 0,
-               sizeof(struct f2fs_mulref_entry));
+
+        /* === 检查 mulref_idx 是否在有效范围内 === */
+        /* 关键修复：如果 idx >= MRENTRY_PER_BLOCK，说明 entry 数据可能损坏，
+         * 或者这是一个跨页的 entry，需要重新计算 block 地址 */
+        if (mulref_idx >= MRENTRY_PER_BLOCK) {
+            pr_err("[snapfs batch] slot %u: BUG mulref_idx=%u >= MRENTRY_PER_BLOCK=%u, "
+                   "mr_blkaddr=%u, entry_idx=%u\n",
+                   ctx->slot_id, mulref_idx, MRENTRY_PER_BLOCK,
+                   new_mr_blkaddr, bitno);
+
+            /* 尝试计算正确的 block 地址和索引 */
+            /* 假设 idx 是相对于 mulref area 起始位置的全局索引 */
+            if (mulref_idx < MRENTRY_PER_BLOCK * 256) {  /* 合理范围内 */
+                u16 block_offset = mulref_idx / MRENTRY_PER_BLOCK;
+                block_t correct_blkaddr = new_mr_blkaddr + block_offset;
+                u16 correct_idx = mulref_idx % MRENTRY_PER_BLOCK;
+
+                pr_warn("[snapfs batch] slot %u: correcting to blkaddr=%u, idx=%u\n",
+                        ctx->slot_id, correct_blkaddr, correct_idx);
+
+                /* 切换到正确的 block */
+                if (ctx->dirty_mr_page) {
+                    set_page_dirty(ctx->dirty_mr_page);
+                    /* 关键修复：先检查 page 是否已锁定，避免 double-unlock */
+                    if (PageLocked(ctx->dirty_mr_page))
+                        unlock_page(ctx->dirty_mr_page);
+                    put_page(ctx->dirty_mr_page);  /* 使用 put_page 而非 f2fs_put_page(..., 1) */
+                    ctx->dirty_mr_page = NULL;
+                }
+
+                ctx->dirty_mr_page = f2fs_get_meta_page(sbi, correct_blkaddr);
+                if (IS_ERR(ctx->dirty_mr_page)) {
+                    ret = PTR_ERR(ctx->dirty_mr_page);
+                    ctx->dirty_mr_page = NULL;
+                    ctx->cur_mr_blkaddr = 0;
+                    return ret;
+                }
+                ctx->cur_mr_blkaddr = correct_blkaddr;
+                mulref_idx = correct_idx;
+            } else {
+                /* idx 超出合理范围，数据损坏 */
+                pr_err("[snapfs batch] slot %u: mulref_idx=%u out of reasonable range, "
+                       "skipping entry\n", ctx->slot_id, mulref_idx);
+                return -EINVAL;
+            }
+        }
+
+        /* 检查 dirty_mr_page 是否有效（适用于所有情况） */
+        if (IS_ERR(ctx->dirty_mr_page) || !ctx->dirty_mr_page) {
+            pr_err("[snapfs batch] slot %u: FAILED to get mr_page for blkaddr=%u\n",
+                   ctx->slot_id, new_mr_blkaddr);
+            return -EIO;
+        }
+
+        mulref_blk = (struct f2fs_mulref_block *)page_address(ctx->dirty_mr_page);
+        if (!mulref_blk) {
+            pr_err("[snapfs batch] slot %u: page_address returned NULL for mr_page\n",
+                   ctx->slot_id);
+            return -EIO;
+        }
+
+        /* === 执行 mulref 更新 === */
+        if (entry->mulref.valid) {
+            bool was_valid = f2fs_test_bit(mulref_idx, (char *)mulref_blk->multi_bitmap);
+            struct f2fs_mulref_entry old_entry = mulref_blk->mrentries[mulref_idx];
+
+            if (!was_valid) {
+                f2fs_set_bit(mulref_idx, (char *)mulref_blk->multi_bitmap);
+                mulref_blk->v_mrentrys = cpu_to_le16(
+                    le16_to_cpu(mulref_blk->v_mrentrys) + 1);
+            }
+
+            /* 调试: 打印 mulref entry 写入信息 */
+            pr_info("[snapfs batch] WRITE mulref: bitno=%u, mr_blkaddr=%u, idx=%u, "
+                    "new.m_nid=%u, new.m_ofs=%u, new.m_count=%u, new.next=%u, "
+                    "old.m_nid=%u, old.m_ofs=%u, old.m_count=%u, old.next=%u, "
+                    "was_valid=%d\n",
+                    bitno, new_mr_blkaddr, mulref_idx,
+                    le32_to_cpu(entry->mulref.entry.m_nid),
+                    le16_to_cpu(entry->mulref.entry.m_ofs),
+                    entry->mulref.entry.m_count,
+                    le32_to_cpu(entry->mulref.entry.next),
+                    le32_to_cpu(old_entry.m_nid),
+                    le16_to_cpu(old_entry.m_ofs),
+                    old_entry.m_count,
+                    le32_to_cpu(old_entry.next),
+                    was_valid);
+
+            mulref_blk->mrentries[mulref_idx] = entry->mulref.entry;
+        } else {
+            mulref_mark_invalid(mulref_blk, mulref_idx);
+            memset(&mulref_blk->mrentries[mulref_idx], 0,
+                   sizeof(struct f2fs_mulref_entry));
+        }
+        /* 注意：不在这里 set_page_dirty，延后到 flush 或切换 page 时 */
+        /* set_page_dirty(ctx->dirty_mr_page); */
     }
-    set_page_dirty(ctx->dirty_mr_page);
 
     /* 2. 处理 summary 和 SIT（检查是否需要获取新 page） */
+    pr_info("[snapfs batch] apply_one: entry->data_blkaddr=%u, entry->flags=0x%x\n",
+            entry->data_blkaddr, entry->flags);
+
     if (entry->data_blkaddr != 0) {
         data_blkaddr = le32_to_cpu(entry->data_blkaddr);
         segno = GET_SEGNO(sbi, data_blkaddr);
@@ -1993,15 +2306,23 @@ int snapfs_batch_apply_one(struct f2fs_sb_info *sbi, struct snapfs_batch_context
             (GET_SEGNO(sbi, data_blkaddr) / SIT_MR_I(sbi)->sments_per_block);
 
         /* 检查 summary page 是否已在 dirty list 中（按 segno 去重） */
-        for (i = 0; i < ctx->dirty_sum_count; i++) {
-            if (ctx->dirty_sum_segno[i] == segno) {
-                /* 已存在，使用该 page */
-                break;
+        /* 关键修复：直接遍历 dirty_sum_segno[] 数组检查，因为该数组在 apply_one 过程中
+         * 会逐步填充正确的 segno 值。dirty_sum_pages_bitmap 是用于 lazy reload 的，
+         * 不能作为去重的依据（因为它在 apply_one 开始时可能不包含当前 batch 的数据） */
+        {
+            bool already_have = false;
+
+            /* 遍历 dirty_sum_segno[] 检查是否已有该 segno */
+            for (i = 0; i < ctx->dirty_sum_count; i++) {
+                if (ctx->dirty_sum_segno[i] == segno) {
+                    already_have = true;
+                    break;
+                }
             }
-        }
-        if (i >= ctx->dirty_sum_count) {
-            /* 需要获取新的 sum page */
-            need_sum_page = true;
+
+            if (!already_have) {
+                need_sum_page = true;
+            }
         }
 
         /* 检查 SIT page 是否已在 dirty list 中（按 sit_blkaddr 去重） */
@@ -2028,6 +2349,9 @@ int snapfs_batch_apply_one(struct f2fs_sb_info *sbi, struct snapfs_batch_context
                     unlock_page(ctx->dirty_mr_page);
                 goto out;
             }
+            /* 关键调试：打印 dirty_sum_segno[] 写入时的详细信息 */
+            pr_info("[snapfs batch] SET dirty_sum[%u]=%u (bitno=%u, src=%u, snap=%u)\n",
+                    ctx->dirty_sum_count, segno, bitno, ctx->src_ino, ctx->snap_ino);
             ctx->dirty_sum_pages[ctx->dirty_sum_count] = sum_page;
             ctx->dirty_sum_segno[ctx->dirty_sum_count] = segno;
             ctx->dirty_sum_count++;
@@ -2070,14 +2394,76 @@ out:
         return ret;
 
     /* 3. 执行 summary 和 SIT 的修改（对所有已收集的 dirty pages） */
-    /* Summary 修改 */
-    for (i = 0; i < ctx->dirty_sum_count; i++) {
-        if (ctx->dirty_sum_segno[i] == segno) {
-            sum_blk = (struct f2fs_summary_block *)
-                page_address(ctx->dirty_sum_pages[i]);
-            sum_blk->entries[blkoff] = entry->sum.sum;
-            set_page_dirty(ctx->dirty_sum_pages[i]);
-            break;
+    /* Summary 修改 - 找到对应的 sum page 并写入 */
+    {
+        struct sit_mulref_info *smi = SIT_MR_I(sbi);
+        bool found = false;
+
+        for (i = 0; i < ctx->dirty_sum_count; i++) {
+            block_t page_segno = ctx->dirty_sum_segno[i];
+
+            /* 安全检查：segno 必须在有效范围内 */
+            if (page_segno >= MAIN_SEGS(sbi)) {
+                pr_warn("[snapfs batch] WARN: dirty_sum[%u]=%u out of range (max=%u)\n",
+                        i, page_segno, MAIN_SEGS(sbi) - 1);
+                continue;
+            }
+
+            /* 匹配条件（双重检查） */
+            bool segno_match = (page_segno == segno);
+            /* 关键修复：检查 segno（正确值）是否在 bitmap 中，而不是 page_segno（垃圾值） */
+            bool bitmap_match = (smi && smi->dirty_sum_pages_bitmap &&
+                                 test_bit(segno, smi->dirty_sum_pages_bitmap));
+
+            if (segno_match || bitmap_match) {
+                struct f2fs_summary old_sum_in_ssa;
+                sum_blk = (struct f2fs_summary_block *)
+                    page_address(ctx->dirty_sum_pages[i]);
+
+                /* 保存写入前的 SSA 值（用于调试） */
+                old_sum_in_ssa = sum_blk->entries[blkoff];
+
+                /* 调试: 打印即将写入的 summary 值 */
+                pr_info("[snapfs batch] WRITE sum: bitno=%u, segno=%u, blkoff=%u, "
+                        "entry->sum.sum.nid=%u, entry->sum.sum.ofs=%u, "
+                        "entry->mulref.mr_blkaddr=%u, entry->mulref.idx=%u, "
+                        "match=%s, old_ssa.nid=%u, old_ssa.ofs=%u\n",
+                        bitno, segno, blkoff,
+                        le32_to_cpu(entry->sum.sum.nid),
+                        le16_to_cpu(entry->sum.sum.ofs_in_node),
+                        le32_to_cpu(entry->mulref.mr_blkaddr),
+                        le16_to_cpu(entry->mulref.idx),
+                        segno_match ? "segno" : "bitmap",
+                        le32_to_cpu(old_sum_in_ssa.nid),
+                        le16_to_cpu(old_sum_in_ssa.ofs_in_node));
+
+                sum_blk->entries[blkoff] = entry->sum.sum;
+                set_page_dirty(ctx->dirty_sum_pages[i]);
+                /* 标记该 summary page 为脏，确保后续读取从 SSA */
+                mark_sum_page_dirty(sbi, segno);
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            bool bitmap_set = smi && smi->dirty_sum_pages_bitmap &&
+                             test_bit(segno, smi->dirty_sum_pages_bitmap);
+            pr_err("[snapfs batch] FATAL: SSA write skipped for segno=%u, blkoff=%u, "
+                   "data_blkaddr=%u, bitno=%u, dirty_sum_count=%u, bitmap_set=%d\n",
+                   segno, blkoff, data_blkaddr, bitno, ctx->dirty_sum_count, bitmap_set);
+
+            /* 调试：打印 dirty_sum_segno[] 的内容 */
+            pr_err("[snapfs batch] dirty_sum_segno[] contents (%u entries):\n",
+                   ctx->dirty_sum_count);
+            for (i = 0; i < ctx->dirty_sum_count && i < 32; i++) {
+                pr_err("  dirty_sum[%u] = %u\n", i, ctx->dirty_sum_segno[i]);
+            }
+
+            /* 返回错误，让调用者知道 SSA 写入失败 */
+            ret = -EIO;
+            /* 注意：这里不直接 goto out，因为 sum_page 可能需要清理
+             * 调用者会处理错误 */
         }
     }
 
@@ -2106,11 +2492,137 @@ out:
         }
     }
 
-    pr_debug("[snapfs batch] slot %u: bit %u collected, dirty_mr=%p, dirty_sum=%u, dirty_sit=%u\n",
-             ctx->slot_id, bitno, ctx->dirty_mr_page,
-             ctx->dirty_sum_count, ctx->dirty_sit_count);
+    /* 关键调试：每次 apply 完成时打印 dirty_sum_count 和前几个值 */
+    if (bitno == 0 || bitno == 100 || bitno == 200 || bitno == 400 ||
+        bitno == 600 || bitno == 800 || bitno >= ctx->entry_count - 1) {
+        pr_info("[snapfs batch] APPLY done: bitno=%u, dirty_sum_count=%u, "
+                "dirty_sum[0]=%u, dirty_sum[1]=%u, dirty_sum[2]=%u\n",
+                bitno, ctx->dirty_sum_count,
+                ctx->dirty_sum_count > 0 ? ctx->dirty_sum_segno[0] : 0,
+                ctx->dirty_sum_count > 1 ? ctx->dirty_sum_segno[1] : 0,
+                ctx->dirty_sum_count > 2 ? ctx->dirty_sum_segno[2] : 0);
+    }
 
-    return 0;
+    return ret;  /* 返回错误码（如果 SSA 写入被跳过）*/
+}
+
+/*
+ * 标记 sit page 为脏（需要重新加载）
+ * 调用点: snapfs_batch_flush_all() 成功后
+ */
+static void mark_sit_page_dirty(struct f2fs_sb_info *sbi, block_t sit_blkaddr)
+{
+    struct sit_mulref_info *smi = SIT_MR_I(sbi);
+    unsigned int page_idx;
+
+    if (!smi || !smi->dirty_sit_pages_bitmap)
+        return;
+
+    /* 安全检查: 防止下溢 */
+    if (sit_blkaddr < smi->base_addr)
+        return;
+    page_idx = sit_blkaddr - smi->base_addr;
+    if (page_idx >= smi->sit_mulref_blocks)
+        return;
+
+    down_write(&smi->smentry_lock);
+    if (!test_bit(page_idx, smi->dirty_sit_pages_bitmap)) {
+        set_bit(page_idx, smi->dirty_sit_pages_bitmap);
+        smi->dirty_sit_pages_count++;
+    }
+    up_write(&smi->smentry_lock);
+}
+
+/*
+ * 标记 summary page 为脏（需要重新加载）
+ * 调用点: snapfs_batch_flush_all() 成功后
+ */
+static void mark_sum_page_dirty(struct f2fs_sb_info *sbi, unsigned int segno)
+{
+    struct sit_mulref_info *smi = SIT_MR_I(sbi);
+
+    if (!smi || !smi->dirty_sum_pages_bitmap)
+        return;
+
+    /* 边界检查 */
+    if (segno >= MAIN_SEGS(sbi))
+        return;
+
+    down_write(&smi->smentry_lock);
+    if (!test_bit(segno, smi->dirty_sum_pages_bitmap)) {
+        set_bit(segno, smi->dirty_sum_pages_bitmap);
+        smi->dirty_sum_pages_count++;
+    }
+    up_write(&smi->smentry_lock);
+}
+
+/*
+ * 从 sit page 重新加载多引用状态到 smentries
+ * 调用点: check_sit_mulref_entry() 检测到脏标记时
+ */
+static void reload_smentries_from_sit_page(struct f2fs_sb_info *sbi,
+    block_t sit_blkaddr)
+{
+    struct sit_mulref_info *smi = SIT_MR_I(sbi);
+    struct f2fs_sit_mulref_block *sit_blk;
+    struct page *page;
+    unsigned int page_idx;
+    unsigned int sments_per_block;
+    unsigned int start_segno, end_segno;
+    unsigned int i;
+
+    if (!smi || !smi->dirty_sit_pages_bitmap)
+        return;
+
+    /* 安全检查 */
+    if (sit_blkaddr < smi->base_addr)
+        return;
+    page_idx = sit_blkaddr - smi->base_addr;
+    if (page_idx >= smi->sit_mulref_blocks)
+        return;
+
+    /* 检查是否确实需要重新加载 */
+    if (!test_bit(page_idx, smi->dirty_sit_pages_bitmap))
+        return;
+
+    /* 获取 sit page (可能阻塞，但不持有 smentry_lock) */
+    page = f2fs_get_meta_page(sbi, sit_blkaddr);
+    if (IS_ERR(page))
+        return;
+
+    sit_blk = (struct f2fs_sit_mulref_block *)page_address(page);
+    sments_per_block = smi->sments_per_block;
+
+    /* 计算 segno 范围 */
+    start_segno = page_idx * sments_per_block;
+    end_segno = min(start_segno + sments_per_block, MAIN_SEGS(sbi));
+
+    /* 获取写锁后再次检查 (double-checked locking) */
+    down_write(&smi->smentry_lock);
+
+    if (!test_bit(page_idx, smi->dirty_sit_pages_bitmap)) {
+        up_write(&smi->smentry_lock);
+        f2fs_put_page(page, 1);
+        return;
+    }
+
+    /* 复制 smentries */
+    for (i = 0; i < end_segno - start_segno; i++) {
+        struct sit_mulref_entry *sme = &smi->smentries[start_segno + i];
+        struct f2fs_sit_mulref_entry *disk_entry = &sit_blk->entries[i];
+
+        memcpy(sme->mvalid_map, disk_entry->mvalid_map, SIT_VBLOCK_MAP_SIZE);
+        sme->mblocks = disk_entry->mblocks;
+        sme->m_mtime = disk_entry->m_mtime;
+    }
+
+    /* 清除脏标记 */
+    clear_bit(page_idx, smi->dirty_sit_pages_bitmap);
+    smi->dirty_sit_pages_count--;
+
+    /* 先释放锁，再释放 page (避免在持锁时触发 page I/O) */
+    up_write(&smi->smentry_lock);
+    f2fs_put_page(page, 1);
 }
 
 /*
@@ -2163,6 +2675,7 @@ int snapfs_batch_flush_all(struct f2fs_sb_info *sbi, struct snapfs_batch_context
         }
         f2fs_put_page(page, 0);
         ctx->dirty_mr_page = NULL;
+        ctx->cur_mr_blkaddr = 0;  /* 重置当前 mulref block 地址 */
     }
 
     /* 2. Flush sum pages */
@@ -2194,6 +2707,9 @@ int snapfs_batch_flush_all(struct f2fs_sb_info *sbi, struct snapfs_batch_context
             }
             f2fs_put_page(page, 0);
             ctx->dirty_sum_pages[i] = NULL;
+
+            /* === 新增: 标记该 summary page 为脏（需要重新加载）=== */
+            mark_sum_page_dirty(sbi, ctx->dirty_sum_segno[i]);
         }
     }
     ctx->dirty_sum_count = 0;
@@ -2227,6 +2743,9 @@ int snapfs_batch_flush_all(struct f2fs_sb_info *sbi, struct snapfs_batch_context
             }
             f2fs_put_page(page, 0);
             ctx->dirty_sit_pages[i] = NULL;
+
+            /* === 新增: 标记该 sit page 为脏（需要重新加载）=== */
+            mark_sit_page_dirty(sbi, ctx->dirty_sit_blkaddr[i]);
         }
     }
     ctx->dirty_sit_count = 0;
@@ -2283,24 +2802,31 @@ static int snapfs_apply_sit_op(struct f2fs_sb_info *sbi,
 
 static int snapfs_redo_commit(struct snapfs_txn *txn)
 {
-	struct snap_redo_slot slot;
-
+	struct snap_redo_slot *slot;
 	struct snap_redo_info *redo = txn->sbi->magic_info->redo_info;
+	int ret;
 
 	if (txn->bypass_redo)
 		return 0;
 	if (!txn->slot_valid)
 		return -EINVAL;
+
+	slot = kzalloc(sizeof(*slot), GFP_NOFS);
+	if (!slot)
+		return -ENOMEM;
+
 	mutex_lock(&redo->alloc_lock);
 	txn->slot_gen = redo->slot_gens[txn->slot_idx];
 	txn->tx_seq = ++redo->slot_tx_seq[txn->slot_idx];
 	mutex_unlock(&redo->alloc_lock);
-	snapfs_redo_slot_init(&slot, txn);
+	snapfs_redo_slot_init(slot, txn);
 	if (txn->record_type == SNAPFS_REDO_REC_OVERWRITE)
 		redo->overwrite_redo_commits++;
 	else
 		redo->cow_redo_commits++;
-	return snapfs_redo_write_slot(txn->sbi, txn->slot_idx, &slot);
+	ret = snapfs_redo_write_slot(txn->sbi, txn->slot_idx, slot);
+	kfree(slot);
+	return ret;
 }
 
 static int snapfs_redo_complete(struct snapfs_txn *txn)
@@ -3641,6 +4167,8 @@ static int __f2fs_update_summary_locked(struct f2fs_sb_info *sbi, block_t blkadd
         sum_blk->entries[blkoff].ofs_in_node = new_sum->ofs_in_node;
         sum_blk->entries[blkoff].version = new_sum->version;
         set_page_dirty(sum_page);
+        /* 新增: 标记该 summary page 为脏，确保后续读取从 SSA */
+        mark_sum_page_dirty(sbi, old_segno);
         snapfs_put_meta_page_auto(sum_page);
     }
 
@@ -4128,6 +4656,7 @@ bool check_sit_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr)
     struct sit_mulref_entry *me;
     unsigned int segno;
     unsigned int blkoff;
+    unsigned int sit_page_idx;
     bool result = false;
 
     /* 1. 安全检查 */
@@ -4140,33 +4669,37 @@ bool check_sit_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr)
     segno = GET_SEGNO(sbi, blkaddr);
     blkoff = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
 
-    /* 3. 验证段号和块偏移是否有效（加锁前检查）*/
-    if (segno >= MAIN_SEGS(sbi)) {
-        f2fs_err(sbi, "ERROR: segno=%u >= total_segments=%u, blkaddr=%u",
-                 segno, MAIN_SEGS(sbi), blkaddr);
+    /* 3. 验证边界 */
+    if (segno >= MAIN_SEGS(sbi) || blkoff >= sbi->blocks_per_seg) {
+        f2fs_err(sbi, "ERROR: invalid segno=%u or blkoff=%u, blkaddr=%u",
+                 segno, blkoff, blkaddr);
         return false;
     }
 
-    if (blkoff >= sbi->blocks_per_seg) {
-        f2fs_err(sbi, "ERROR: blkoff=%u >= blocks_per_seg=%u, blkaddr=%u",
-                 blkoff, sbi->blocks_per_seg, blkaddr);
-        return false;
+    /* 4. 计算对应的 sit page index */
+    sit_page_idx = segno / smi->sments_per_block;
+
+    /* 5. 检查脏标记 (无锁快速路径) */
+    if (smi->dirty_sit_pages_bitmap &&
+        test_bit(sit_page_idx, smi->dirty_sit_pages_bitmap)) {
+        block_t sit_blkaddr = smi->base_addr + sit_page_idx;
+        reload_smentries_from_sit_page(sbi, sit_blkaddr);
     }
 
-    /* 4. 加读锁保护并发访问 */
+    /* 6. 加读锁保护并发访问 */
     down_read(&smi->smentry_lock);
 
-    /* 5. 再次检查smentries是否仍然有效 */
+    /* 7. 再次检查smentries是否仍然有效 */
     if (unlikely(!smi->smentries)) {
         up_read(&smi->smentry_lock);
         f2fs_err(sbi, "smentries became NULL after lock");
         return false;
     }
 
-    /* 6. 获取对应的段多引用条目 */
+    /* 8. 获取对应的段多引用条目 */
     me = &smi->smentries[segno];
 
-    /* 7. 检查bitmap指针是否有效 */
+    /* 9. 检查bitmap指针是否有效 */
     if (unlikely(!me->mvalid_map)) {
         up_read(&smi->smentry_lock);
         f2fs_err(sbi, "mvalid_map is NULL for segno=%u", segno);
@@ -4342,6 +4875,8 @@ static int f2fs_cow_node_block_batch(struct inode *inode, u32 src_ino,
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	struct f2fs_sm_info *sm = SM_I(sbi);
 	struct snapfs_batch_context *batch_ctx = NULL;
+	pr_info("[snapfs batch] f2fs_cow_node_block_batch ENTER: inode=%u, src_ino=%u, node_nid=%u, node_ofs=%u, nr_data_blks=%d\n",
+	        inode->i_ino, src_ino, node_nid, node_ofs, nr_data_blks);
 	struct snap_redo_info *redo = sbi->magic_info->redo_info;
 	struct curmulref_info *cmr = &sm->curmulref_blk;
 	u32 slot_id;
@@ -4392,8 +4927,16 @@ static int f2fs_cow_node_block_batch(struct inode *inode, u32 src_ino,
 	for (i = 0; i < nr_data_blks; i++) {
 		old_blkaddr = data_blks[i];
 
-		if (!__is_valid_data_blkaddr(old_blkaddr))
+		if (!__is_valid_data_blkaddr(old_blkaddr)) {
 			continue;
+		}
+
+		/* 只在关键节点打印进度（每 100 个块） */
+		if (i == 0 || i == 100 || i == 200 || i == 300 || i == 400 ||
+		    i == 500 || i == 600 || i == 700 || i == 800 || i == nr_data_blks - 1) {
+			pr_info("[snapfs batch] staging: i=%d/%d, old_blkaddr=%u\n",
+			        i, nr_data_blks, old_blkaddr);
+		}
 
 		/* 获取 old summary */
 		ret = f2fs_get_summary_by_addr(sbi, old_blkaddr, &old_sum);
@@ -4420,6 +4963,9 @@ static int f2fs_cow_node_block_batch(struct inode *inode, u32 src_ino,
 		batch_ctx->entries[entry_idx].bitno = lblks[i];
 		batch_ctx->entries[entry_idx].data_blkaddr = cpu_to_le32(old_blkaddr);
 		batch_ctx->entries[entry_idx].flags = 0;
+
+		pr_info("[snapfs batch] staging: entry_idx=%d, data_blkaddr=%u, flags=0\n",
+		        entry_idx, old_blkaddr);
 
 		if (!is_mulref) {
 			/* 普通块首次转 mulref：分配第一个 entry
@@ -4460,6 +5006,16 @@ static int f2fs_cow_node_block_batch(struct inode *inode, u32 src_ino,
 			batch_ctx->entries[entry_idx].sum.sum = new_sum;
 			batch_ctx->entries[entry_idx].flags |= SNAPFS_BATCH_ENTRY_HAS_SUMMARY;
 
+			/* 调试: 打印 staging 阶段的 summary 信息 */
+			pr_info("[snapfs batch] staging: !is_mulref: entry_idx=%d, SUM SET, "
+			        "new_sum.nid=%u, new_sum.ofs=%u, new_sum.ver=%u, "
+			        "mr_blkaddr=%u, eidx=%u\n",
+			        entry_idx,
+			        le32_to_cpu(new_sum.nid),
+			        le16_to_cpu(new_sum.ofs_in_node),
+			        le16_to_cpu(new_sum.version),
+			        blkaddr1, eidx);
+
 			/* 暂存 SIT op (set mulref) */
 			batch_ctx->entries[entry_idx].sit_blkaddr = cpu_to_le32(sit_blkaddr);
 			batch_ctx->entries[entry_idx].sit_set = 1;
@@ -4467,6 +5023,9 @@ static int f2fs_cow_node_block_batch(struct inode *inode, u32 src_ino,
 
 		} else {
 			/* 已经是 mulref：追加引用，分配 1 个 entry */
+			pr_info("[snapfs batch] staging: is_mulref=true branch, entry_idx=%d\n",
+			        entry_idx);
+
 			ret = curmulref_alloc_entry(sbi, &eidx);
 			if (ret) {
 				pr_err("[snapfs batch] alloc entry failed for mulref\n");
@@ -4488,19 +5047,31 @@ static int f2fs_cow_node_block_batch(struct inode *inode, u32 src_ino,
 			batch_ctx->entries[entry_idx].flags |= SNAPFS_BATCH_ENTRY_HAS_MULREF;
 
 			/* 暂存 summary op */
-			new_sum.nid = cpu_to_le16(blkaddr);
-			new_sum.ofs_in_node = eidx;
+			new_sum.nid = cpu_to_le32(blkaddr);
+			new_sum.ofs_in_node = cpu_to_le16(eidx);
 			new_sum.version = old_sum.version;
 
 			batch_ctx->entries[entry_idx].sum.data_blkaddr = cpu_to_le32(old_blkaddr);
 			batch_ctx->entries[entry_idx].sum.sum = new_sum;
 			batch_ctx->entries[entry_idx].flags |= SNAPFS_BATCH_ENTRY_HAS_SUMMARY;
 
+			/* 调试: 打印 is_mulref=true 时的 summary 信息 */
+			pr_info("[snapfs batch] staging: is_mulref=true: entry_idx=%d, SUM SET, "
+			        "new_sum.nid=%u, new_sum.ofs=%u, new_sum.ver=%u, "
+			        "mr_blkaddr=%u, eidx=%u\n",
+			        entry_idx,
+			        le32_to_cpu(new_sum.nid),
+			        le16_to_cpu(new_sum.ofs_in_node),
+			        le16_to_cpu(new_sum.version),
+			        blkaddr, eidx);
+
 			/* 已经是 mulref，不需要更新 SIT */
 		}
 
 		batch_ctx->entry_count++;
 	}
+
+	pr_info("[snapfs batch] staging: ALL DONE, entry_count=%d\n", batch_ctx->entry_count);
 
 	/* 步骤 3：写入 batch header，进入 PREPARING 状态 */
 	ret = snapfs_batch_begin(sbi, batch_ctx->slot_id, batch_ctx);
@@ -4542,6 +5113,9 @@ static int f2fs_cow_node_block_batch(struct inode *inode, u32 src_ino,
 		pr_err("[snapfs batch] mark applied failed: %d\n", ret);
 		goto out_free_slot;
 	}
+
+	/* 关键修复：清理可能阻塞的 overwrite slot */
+	snapfs_batch_clear_stale_overwrite(sbi);
 
 	/*
 	pr_info("[snapfs batch] node block (%u,%u): %d entries applied, batch completed\n",
@@ -4703,6 +5277,8 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
                 sum_blk = (struct f2fs_summary_block *)page_address(sum_page);
                 sum_blk->entries[blk_off] = sum;
                 set_page_dirty(sum_page);
+                /* 新增: 标记该 summary page 为脏，确保后续读取从 SSA */
+                mark_sum_page_dirty(sbi, old_segno);
 
                 ret = snapfs_stage_sit_page_change(sbi, old_blkaddr, true, &sit_page);
                 if (ret) {
@@ -4807,8 +5383,8 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
             mgentry->m_ver = old_sum.version;
             mgentry->m_count += 2;
             mgentry->next = cpu_to_le32((blkaddr2 - start_addr) * MRENTRY_PER_BLOCK + eidx2);
-            sum.nid = blkaddr1;
-            sum.ofs_in_node = eidx1;
+            sum.nid = cpu_to_le32(blkaddr1);
+            sum.ofs_in_node = cpu_to_le16(eidx1);
             sum.version = old_sum.version;	
             // pr_info("[snapfs cow2222]: debug alloc (diff blk) cmr->blkaddr [%u]\n",cmr->blkaddr);
         
@@ -4838,6 +5414,8 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
                 sum_blk = (struct f2fs_summary_block *)page_address(sum_page);
                 sum_blk->entries[blk_off] = sum;
                 set_page_dirty(sum_page);
+                /* 新增: 标记该 summary page 为脏，确保后续读取从 SSA */
+                mark_sum_page_dirty(sbi, old_segno);
 
                 ret = snapfs_stage_sit_page_change(sbi, old_blkaddr, true, &sit_page);
                 if (ret) {
@@ -5004,6 +5582,8 @@ int f2fs_alloc_mulref_entry(struct f2fs_sb_info *sbi,
             sum_blk = (struct f2fs_summary_block *)page_address(sum_page);
             sum_blk->entries[blk_off] = sum;
             set_page_dirty(sum_page);
+            /* 新增: 标记该 summary page 为脏，确保后续读取从 SSA */
+            mark_sum_page_dirty(sbi, old_segno);
 
             ret = snapfs_stage_sit_page_change(sbi, old_blkaddr, true, &sit_page);
             if (ret) {
@@ -6124,10 +6704,13 @@ static int __f2fs_cow_inode_direct_batch(struct inode *inode, u32 src_ino,
 	}
 
 	if (nr_data_blks == 0) {
-		pr_debug("[snapfs batch] inode direct [%ld-%ld]: no valid data blocks\n",
-			 start, end);
+		pr_info("[snapfs batch] inode direct [%ld-%ld]: no valid data blocks, nr_data_blks=%d\n",
+			 start, end, nr_data_blks);
 		goto out;
 	}
+
+	pr_info("[snapfs batch] calling f2fs_cow_node_block_batch: nr_data_blks=%d, data_blks[0]=%u\n",
+	        nr_data_blks, data_blks[0]);
 
 	/* 调用批量 redo 函数处理 inode 直接地址区 */
 	ret = f2fs_cow_node_block_batch(inode, src_ino, 0, 0,
@@ -6147,13 +6730,11 @@ static int __f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino,
 					 struct snapfs_cow_progress *resume_progress)
 {
 	/* 调试日志：跟踪 __f2fs_set_mulref_blocks 调用 */
-#if 0
-	pr_err("[snapfs mulref] ====== __f2fs_set_mulref_blocks ENTER ======\n");
-	pr_err("[snapfs mulref] inode=%u, src_ino=%u, i_size=%llu, i_blocks=%lu\n",
+	pr_info("[snapfs mulref] ====== __f2fs_set_mulref_blocks ENTER ======\n");
+	pr_info("[snapfs mulref] inode=%u, src_ino=%u, i_size=%llu, i_blocks=%lu\n",
 	       inode->i_ino, src_ino, inode->i_size, inode->i_blocks);
-	pr_err("[snapfs mulref] resume_progress=%s\n",
+	pr_info("[snapfs mulref] resume_progress=%s\n",
 	       (resume_progress && resume_progress->active) ? "active" : "NULL");
-#endif
 
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	struct snapfs_cow_progress progress;
@@ -7320,6 +7901,8 @@ out:
 
 int f2fs_set_mulref_blocks(struct inode *inode, u32 src_ino)
 {
+    pr_info("[snapfs mulref] f2fs_set_mulref_blocks ENTER: inode=%u, src_ino=%u\n",
+            inode->i_ino, src_ino);
     return __f2fs_set_mulref_blocks(inode, src_ino, NULL);
 }
 
@@ -9040,29 +9623,110 @@ int f2fs_get_summary_by_addr(struct f2fs_sb_info *sbi,
     struct curseg_info *curseg;
     struct f2fs_summary_block *sum_blk;
     struct page *sum_page;
+    struct sit_mulref_info *smi = SIT_MR_I(sbi);
+    bool force_ssa = false;
+    bool bitmap_was_set = false;
 
-    down_read(&SM_I(sbi)->curseg_lock);
-    /* 1. 先查 curseg cache */
-    for (type = CURSEG_HOT_DATA; type <= CURSEG_COLD_DATA; type++) {
-        curseg = CURSEG_I(sbi, type);
-        if (curseg->segno == segno && curseg->sum_blk) {
-            mutex_lock(&curseg->curseg_mutex);
-            *sum = curseg->sum_blk->entries[blkoff];
-            mutex_unlock(&curseg->curseg_mutex);
-            up_read(&SM_I(sbi)->curseg_lock);
+    /* === 调试: 检查脏标记 === */
+    if (smi && smi->dirty_sum_pages_bitmap &&
+        test_bit(segno, smi->dirty_sum_pages_bitmap)) {
+        force_ssa = true;
+        bitmap_was_set = true;
+    }
+
+    /* 1. 先查 curseg cache (除非被标记为脏) */
+    if (!force_ssa) {
+        /* 调试: 记录从 cache 读取的情况 */
+        bool found_in_cache = false;
+        down_read(&SM_I(sbi)->curseg_lock);
+        for (type = CURSEG_HOT_DATA; type <= CURSEG_COLD_DATA; type++) {
+            curseg = CURSEG_I(sbi, type);
+            if (curseg->segno == segno && curseg->sum_blk) {
+                mutex_lock(&curseg->curseg_mutex);
+                *sum = curseg->sum_blk->entries[blkoff];
+                mutex_unlock(&curseg->curseg_mutex);
+                found_in_cache = true;
+                break;
+            }
+        }
+        up_read(&SM_I(sbi)->curseg_lock);
+
+        /* 调试: 打印从 cache 读取的 summary */
+        if (found_in_cache) {
+            pr_info("[snapfs get_sum] READ from CACHE: blkaddr=%u, segno=%u, blkoff=%u, "
+                    "sum.nid=%u, sum.ofs=%u, bitmap_set=%d\n",
+                    blkaddr, segno, blkoff,
+                    le32_to_cpu(sum->nid),
+                    le16_to_cpu(sum->ofs_in_node),
+                    bitmap_was_set);
             return 0;
         }
     }
-    up_read(&SM_I(sbi)->curseg_lock);
 
-    /* 2. 不在 cache → 查 SSA */
+    /* 2. 不在 cache 或被标记为脏 → 查 SSA */
     sum_page = f2fs_get_sum_page(sbi, segno);
     if (IS_ERR(sum_page))
         return PTR_ERR(sum_page);
 
     sum_blk = (struct f2fs_summary_block *)page_address(sum_page);
     *sum = sum_blk->entries[blkoff];
+
+    /* 调试: 打印从 SSA 读取的 summary */
+    pr_info("[snapfs get_sum] READ from SSA: blkaddr=%u, segno=%u, blkoff=%u, "
+            "sum.nid=%u, sum.ofs=%u, bitmap_set=%d, cache_synced=%s\n",
+            blkaddr, segno, blkoff,
+            le32_to_cpu(sum->nid),
+            le16_to_cpu(sum->ofs_in_node),
+            bitmap_was_set,
+            (force_ssa && bitmap_was_set) ? "YES" : "NO");
+
     snapfs_put_meta_page_auto(sum_page);
+
+    /* === 清除脏标记 + 同步更新 curseg cache === */
+    if (force_ssa && smi && smi->dirty_sum_pages_bitmap) {
+        bool cache_sync_success = false;
+
+        down_write(&smi->smentry_lock);
+
+        /* 再次检查 dirty bit（double-checked locking） */
+        if (test_bit(segno, smi->dirty_sum_pages_bitmap)) {
+            /* 清除脏标记 */
+            clear_bit(segno, smi->dirty_sum_pages_bitmap);
+            smi->dirty_sum_pages_count--;
+
+            /* === 关键修复: 同步更新 curseg cache === */
+            /* 确保后续从 curseg cache 读取时也能获取正确数据 */
+            down_read(&SM_I(sbi)->curseg_lock);
+            for (type = CURSEG_HOT_DATA; type <= CURSEG_COLD_DATA; type++) {
+                struct curseg_info *curseg = CURSEG_I(sbi, type);
+                if (curseg->segno == segno && curseg->sum_blk) {
+                    mutex_lock(&curseg->curseg_mutex);
+                    curseg->sum_blk->entries[blkoff] = *sum;
+                    mutex_unlock(&curseg->curseg_mutex);
+                    cache_sync_success = true;
+                    pr_info("[snapfs get_sum] cache synced: segno=%u, blkoff=%u, "
+                            "sum.nid=%u, sum.ofs=%u\n",
+                            segno, blkoff,
+                            le32_to_cpu(sum->nid),
+                            le16_to_cpu(sum->ofs_in_node));
+                    break;
+                }
+            }
+            up_read(&SM_I(sbi)->curseg_lock);
+
+            /* 如果 cache sync 失败，打印警告 */
+            if (!cache_sync_success) {
+                pr_warn("[snapfs get_sum] WARNING: cache sync failed for segno=%u, blkoff=%u, "
+                        "curseg segnos: HOT=%u, WARM=%u, COLD=%u\n",
+                        segno, blkoff,
+                        CURSEG_I(sbi, CURSEG_HOT_DATA)->segno,
+                        CURSEG_I(sbi, CURSEG_WARM_DATA)->segno,
+                        CURSEG_I(sbi, CURSEG_COLD_DATA)->segno);
+            }
+        }
+        up_write(&smi->smentry_lock);
+    }
+
     return 0;
 }
 
@@ -9149,7 +9813,13 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
     unsigned int old_segno, blk_off;
     bool curmulref_locked = false;
     struct curmulref_info *cmr = &SM_I(sbi)->curmulref_blk;
-    
+    block_t mr_base, mr_end, ssa_nid;
+    block_t entry_data_blkaddr, sit_base;
+    unsigned int entry_segno;
+    bool valid_data_addr, is_mulref_addr;
+    block_t expected_mr_blkaddr;
+    unsigned int eidx_from_m_nid;
+
 
     old_segno = GET_SEGNO(sbi, old_blkaddr);
     blk_off = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
@@ -9157,6 +9827,13 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
     ret = f2fs_get_summary_by_addr(sbi, old_blkaddr, &old_sum);
     if (ret)
         return ret;
+
+    pr_info("[snapfs f2fs_mulref_overwrite] READ sum: blkaddr=%u, segno=%u, blkoff=%u, "
+            "sum.nid=%u, sum.ofs=%u, sum.ver=%u\n",
+            old_blkaddr, old_segno, blk_off,
+            le32_to_cpu(old_sum.nid),
+            le16_to_cpu(old_sum.ofs_in_node),
+            le16_to_cpu(old_sum.version));
 
     // pr_info("[snapfs READ] blkaddr=%u, summary says: mr_blkaddr=%u, eidx=%u\n",
     //       old_blkaddr,
@@ -9189,9 +9866,107 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
     cur_blk = head_blk;
     /* 检查第一个节点是否就是要找的 */
     cur_entry = &cur_blk->mrentries[cur_eidx];
-    // pr_info("cur_eidx %u\n",cur_eidx);
-    // pr_info("cur_mr_blkaddr %u\n",cur_mr_blkaddr);
-    // pr_info("mulref entry nid [%u], sum nid [%u]\n",(nid_t)le32_to_cpu(cur_entry->m_nid),new_nid);
+
+    /* 调试: 打印读取到的 mulref entry 内容 */
+    pr_info("[snapfs f2fs_mulref_overwrite] READ mulref entry: "
+            "mr_blkaddr=%u, eidx=%u, entry.m_nid=%u, entry.m_ofs=%u, "
+            "entry.m_ver=%u, entry.m_count=%u, entry.next=%u\n",
+            cur_mr_blkaddr, cur_eidx,
+            le32_to_cpu(cur_entry->m_nid),
+            le16_to_cpu(cur_entry->m_ofs),
+            cur_entry->m_ver,
+            cur_entry->m_count,
+            le32_to_cpu(cur_entry->next));
+
+    /* === 新增: SSA.nid 有效性检查 === */
+    /* 检查 SSA.nid 是否在有效的 mulref block 地址范围内 */
+    mr_base = sbi->magic_info->mulref_blkaddr;
+    mr_end = mr_base + MAGIC_MAX;
+    ssa_nid = (block_t)le32_to_cpu(old_sum.nid);
+
+    if (ssa_nid < mr_base || ssa_nid >= mr_end) {
+        pr_warn("[snapfs f2fs_mulref_overwrite] SSA.nid=%u out of mulref range [%u, %u), "
+                "skipping this entry (old_blkaddr=%u, segno=%u, blkoff=%u)\n",
+                ssa_nid, mr_base, mr_end, old_blkaddr, old_segno, blk_off);
+        ret = 1;  /* entry not found，跳过 */
+        goto out;
+    }
+
+    /* === 新增: mulref entry.m_nid 有效性检查 === */
+    /* 检查 mulref entry 的 m_nid 是否是有效的数据块地址 */
+    entry_data_blkaddr = (block_t)le32_to_cpu(cur_entry->m_nid);
+    entry_segno = GET_SEGNO(sbi, entry_data_blkaddr);
+    sit_base = SIT_I(sbi)->sit_base_addr;
+
+    /* 有效的数据块地址应该: 1) 在 main segs 范围内，或 2) >= sit_base (可能是 SSA 块) */
+    valid_data_addr = (entry_segno < MAIN_SEGS(sbi)) || (entry_data_blkaddr >= sit_base);
+
+    /* 额外检查: m_nid 不应该是另一个 mulref block 的地址 */
+    is_mulref_addr = (entry_data_blkaddr >= mr_base && entry_data_blkaddr < mr_end);
+
+    if (!valid_data_addr || is_mulref_addr) {
+        pr_warn("[snapfs f2fs_mulref_overwrite] invalid mulref entry data! "
+                "old_blkaddr=%u, entry.m_nid=%u (segno=%u, valid=%d, is_mulref=%d), "
+                "cur_mr_blkaddr=%u, cur_eidx=%u\n",
+                old_blkaddr, entry_data_blkaddr, entry_segno,
+                valid_data_addr, is_mulref_addr,
+                cur_mr_blkaddr, cur_eidx);
+
+        /* 如果 m_nid 看起来像另一个 mulref block 地址，这可能是数据结构损坏 */
+        if (is_mulref_addr) {
+            pr_err("[snapfs f2fs_mulref_overwrite] m_nid=%u points to another mulref block! "
+                   "This indicates data corruption, skipping\n",
+                   entry_data_blkaddr);
+            ret = 1;
+            goto out;
+        }
+    }
+
+    /* === 验证 SSA summary 与 mulref entry 的一致性 === */
+    /* SSA summary 说这个 block 应该指向 mulref entry [cur_mr_blkaddr, cur_eidx]
+     * 但 mulref entry 的 m_nid 应该是 old_blkaddr（原始数据块地址）
+     * 如果不匹配，说明 SSA 或 mulref entry 有问题
+     */
+    if (le32_to_cpu(cur_entry->m_nid) != old_blkaddr) {
+        block_t entry_nid = le32_to_cpu(cur_entry->m_nid);
+        expected_mr_blkaddr = sbi->magic_info->mulref_blkaddr;
+        eidx_from_m_nid = 0;
+
+        /* 计算如果 m_nid 是一个 mulref block 地址，entry 索引应该是多少 */
+        if (entry_nid >= expected_mr_blkaddr) {
+            eidx_from_m_nid = (entry_nid - expected_mr_blkaddr) * MRENTRY_PER_BLOCK +
+                             cur_eidx;
+        }
+
+        /* 检查 m_nid 是否有效 */
+        unsigned int entry_segno = GET_SEGNO(sbi, entry_nid);
+        bool valid_block_addr = (entry_segno < MAIN_SEGS(sbi));
+        bool is_mulref_addr = (entry_nid >= expected_mr_blkaddr &&
+                              entry_nid < expected_mr_blkaddr + MAGIC_MAX);
+
+        /* 如果 m_nid 是无效值或指向另一个 mulref block，这是数据损坏 */
+        if (!valid_block_addr || is_mulref_addr) {
+            pr_warn("[snapfs f2fs_mulref_overwrite] SSA/mulref mismatch (corrupted entry): "
+                    "old_blkaddr=%u, entry.m_nid=%u (segno=%u, valid=%d, is_mulref=%d), "
+                    "cur_mr_blkaddr=%u, cur_eidx=%u\n",
+                    old_blkaddr, entry_nid, entry_segno,
+                    valid_block_addr, is_mulref_addr,
+                    cur_mr_blkaddr, cur_eidx);
+            ret = -EINVAL;
+            goto out;
+        }
+
+        /* m_nid 是有效的块地址但不匹配 old_blkaddr，继续遍历查找
+         * 这可能发生在 SSA 被更新但 mulref entry 内容不一致的情况下
+         * 打印警告后继续执行
+         */
+        pr_warn("[snapfs f2fs_mulref_overwrite] WARNING: SSA/mulref mismatch! "
+                "old_blkaddr=%u, entry.m_nid=%u, entry.m_ofs=%u, "
+                "cur_mr_blkaddr=%u, cur_eidx=%u, eidx_from_m_nid=%u\n",
+                old_blkaddr, entry_nid,
+                le16_to_cpu(cur_entry->m_ofs), cur_mr_blkaddr, cur_eidx, eidx_from_m_nid);
+    }
+
     if ((nid_t)le32_to_cpu(cur_entry->m_nid) == new_nid) {
         is_head = true;
         goto found_entry;
@@ -9231,7 +10006,7 @@ int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
 
             cur_page = f2fs_get_meta_page(sbi, cur_mr_blkaddr);
             if (IS_ERR(cur_page)){
-                pr_err("[snapfs IO]: (overwrite): f2fs_get_meta_page failed\n");
+                pr_err("[snapfs IO]: (overwrite): f2fs_get_meta_page failed(addr=%u)\n",cur_mr_blkaddr);
                 ret = -EIO;
                 goto out;
             }
@@ -9290,8 +10065,8 @@ found_entry:
                 }else{
                     // 3个引用以上，去掉head后，还是多引用
                     // 更新head信息
-                    new_sum.nid = next_mr_blkaddr;
-                    new_sum.ofs_in_node = next_eidx;
+                    new_sum.nid = cpu_to_le32(next_mr_blkaddr);
+                    new_sum.ofs_in_node = cpu_to_le16(next_eidx);
                     new_sum.version = cur_entry->m_ver;
                     cur_entry->m_count -= 1;
                     // pr_info("2 head_page=%p locked=%d writeback=%d\n",
@@ -9332,8 +10107,8 @@ found_entry:
                 }else{
                     // 3个引用以上，去掉head后，还是多引用
                     // 更新head信息
-                    new_sum.nid = next_mr_blkaddr;
-                    new_sum.ofs_in_node = next_eidx;
+                    new_sum.nid = cpu_to_le32(next_mr_blkaddr);
+                    new_sum.ofs_in_node = cpu_to_le16(next_eidx);
                     new_sum.version = cur_entry->m_ver;
                     cur_entry->m_count -= 1;
                     mulref_mark_invalid(prev_blk, cur_eidx);// 前一个块
@@ -9345,9 +10120,24 @@ found_entry:
                 }
             }
         }else{
-            pr_info("[snapfs IO]: (overwrite) orphan mulref entry, error\n");
+            pr_warn("[snapfs IO]: (overwrite) orphan mulref entry, recovery: "
+                    "old_blkaddr=%u, m_nid=%u, m_ofs=%u, "
+                    "cur_mr_blkaddr=%u, cur_eidx=%u\n",
+                    old_blkaddr, le32_to_cpu(cur_entry->m_nid),
+                    le16_to_cpu(cur_entry->m_ofs), cur_mr_blkaddr, cur_eidx);
+
+            /* 清除 mulref entry, 将 SSA 恢复为普通块格式 */
+            mulref_mark_invalid(cur_blk, cur_eidx);
+            set_page_dirty(cur_blk == head_blk ? head_page :
+                          (cur_blk == prev_blk ? prev_page : cur_page));
+            clear_mulref_flag = true;
+            new_sum.nid = cpu_to_le32(old_blkaddr);
+            new_sum.ofs_in_node = cpu_to_le16(blk_off);
+            new_sum.version = old_sum.version;
+            goto update_summary;
         }
         /* ---------- 5. 更新 summary ---------- */
+update_summary:
         {
             struct snapfs_txn txn;
             struct page *sum_page = NULL;

@@ -3531,6 +3531,12 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
             pr_info("get old sum2 failed\n");
             return ;
         }
+        pr_info("[snapfs f2fs_allocate_data_block] READ sum: blkaddr=%u, "
+                "sum.nid=%u, sum.ofs=%u, sum.ver=%u\n",
+                old_blkaddr,
+                le32_to_cpu(old_sum.nid),
+                le16_to_cpu(old_sum.ofs_in_node),
+                le16_to_cpu(old_sum.version));
     }
     
     // if(__is_valid_data_blkaddr(old_blkaddr) && !check_sit_mulref_entry(sbi,old_blkaddr)){
@@ -4715,6 +4721,22 @@ static int build_sit_mulref_info(struct f2fs_sb_info *sbi)
 			GFP_KERNEL);
 	if (!smi->smentries)
 		return -ENOMEM;
+
+	/* 新增: 分配脏页标记位图 */
+	smi->dirty_sit_pages_bitmap = f2fs_kvzalloc(sbi,
+			BITS_TO_LONGS(smi->sit_mulref_blocks) * sizeof(unsigned long),
+			GFP_KERNEL);
+	if (!smi->dirty_sit_pages_bitmap)
+		return -ENOMEM;
+	smi->dirty_sit_pages_count = 0;
+
+	/* 新增: 分配 Summary 脏页标记位图 */
+	smi->dirty_sum_pages_bitmap = f2fs_kvzalloc(sbi,
+			BITS_TO_LONGS(MAIN_SEGS(sbi)) * sizeof(unsigned long),
+			GFP_KERNEL);
+	if (!smi->dirty_sum_pages_bitmap)
+		return -ENOMEM;
+	smi->dirty_sum_pages_count = 0;
 
 	/* init lock */
 	init_rwsem(&smi->smentry_lock);

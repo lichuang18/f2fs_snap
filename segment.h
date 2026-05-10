@@ -255,6 +255,14 @@ struct sit_mulref_info { // 描述一个segment的blk情况
 	/* in-memory cache */
 	struct rw_semaphore smentry_lock;   /* protect mulref sentries */
 	struct sit_mulref_entry *smentries; /* segment-level mulref cache */
+
+	/* === 新增: 用于 lazy load 的脏页标记 === */
+	unsigned long *dirty_sit_pages_bitmap;  /* 每个 bit = 1 表示该 sit page 需要重新加载 */
+	unsigned int dirty_sit_pages_count;      /* 脏页计数 */
+
+	/* === 新增: Summary 脏页标记 === */
+	unsigned long *dirty_sum_pages_bitmap;  /* 每个 bit = 1 表示该 summary page 需要重新加载 */
+	unsigned int dirty_sum_pages_count;      /* 脏页计数 */
 };
 
 struct sit_info {

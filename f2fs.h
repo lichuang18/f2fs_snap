@@ -1360,11 +1360,12 @@ struct snapfs_batch_context {
 
     /* Dirty Page 追踪（用于批量 flush） */
     struct page *dirty_mr_page;          /* mulref dirty page（去重） */
+    block_t  cur_mr_blkaddr;            /* 当前 mulref block 地址，用于检测换页 */
     struct page *dirty_sum_pages[512];   /* summary dirty pages（去重，segno 作为 key） */
     u16 dirty_sum_count;
     struct page *dirty_sit_pages[256];   /* SIT dirty pages（去重） */
     u16 dirty_sit_count;
-    u16 dirty_sum_segno[512];            /* 追踪对应的 segno */
+    u32 dirty_sum_segno[512];          /* 追踪对应的 segno - 修正类型以容纳大 segno 值 */
     block_t dirty_sit_blkaddr[256];      /* 追踪对应的 sit blkaddr */
 };
 
