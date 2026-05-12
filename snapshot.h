@@ -12,6 +12,7 @@
 #define SNAPFS_DEBUG 0
 #define SNAPFS_DEBUG1 0
 #define SNAPFS_DEBUG_GC 0
+#define SNAPFS_LOCK_DEBUG 1
 int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,
                                u32 src_ino, u32 snap_ino, u32 *ret_entry_id);
 
@@ -42,6 +43,10 @@ bool f2fs_is_mulref_blkaddr(struct f2fs_sb_info *sbi,
 int f2fs_mulref_overwrite(struct f2fs_sb_info *sbi,
                           block_t old_blkaddr,
                           nid_t new_nid);
+
+int f2fs_mulref_overwrite_improved(struct f2fs_sb_info *sbi,
+                                   block_t old_blkaddr,
+                                   nid_t new_nid);
 
 int f2fs_clear_mulref_blocks(struct inode *inode);
 

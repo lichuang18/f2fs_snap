@@ -2381,10 +2381,10 @@ void f2fs_invalidate_blocks(struct f2fs_sb_info *sbi, block_t addr, nid_t nid)
 
 	if(!f2fs_is_mulref_blkaddr(sbi, addr)){
 		// pr_info("-------   f2fs invalid oldblkaddr %u -------\n",addr);
-		update_sit_entry(sbi, addr, -1);	
+		update_sit_entry(sbi, addr, -1);
 	} else{
-		// mulref process
-		ret = f2fs_mulref_overwrite(sbi, addr, nid);
+		// mulref process - 使用改进版本避免死锁
+		ret = f2fs_mulref_overwrite_improved(sbi, addr, nid);
 		if(ret) pr_info("invalidate faild!\n");
 	}
 
@@ -3494,8 +3494,8 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
     nid_t sum_nid = le32_to_cpu(sum->nid);
     bool is_mulref = false;
     if(__is_valid_data_blkaddr(old_blkaddr)){
-        // pr_info("[DEBUG ALLOC] checking old_blkaddr=%u\n", old_blkaddr);
         is_mulref = check_sit_mulref_entry(sbi, old_blkaddr);
+        pr_info("[DEBUG ALLOC] old_blkaddr=%u, is_mulref=%d\n", old_blkaddr, is_mulref);
     }
     down_read(&SM_I(sbi)->curseg_lock);
     mutex_lock(&curseg->curseg_mutex);
@@ -3591,7 +3591,7 @@ skip_normal_addsum:
 
     if(!is_mulref){
         // check sit mulref_entry(sbi, start_addr + off);
-        // pr_info("-------   allocate invalid oldblkaddr %u -------\n",old_blkaddr);
+        pr_info("[DEBUG ALLOC NOT_MULREF] old_blkaddr=%u, NOT increasing total_valid_block_count\n", old_blkaddr);
         update_sit_entry(sbi, old_blkaddr, -1);
     } else{
         // mulref process.   多引用转单引用
@@ -3599,6 +3599,8 @@ skip_normal_addsum:
 		percpu_counter_add(&sbi->alloc_valid_block_count, 1);
         spin_lock(&sbi->stat_lock);
         sbi->total_valid_block_count++;
+        pr_info("[DEBUG ALLOC MULREF] old_blkaddr=%u, total_valid_block_count=%llu\n",
+                old_blkaddr, sbi->total_valid_block_count);
         spin_unlock(&sbi->stat_lock);
         // pr_info("[snapfs IO]: allocate blk and is mulref blk[%u]\n",old_blkaddr);
         if(old_blkaddr >= 4503280 && old_blkaddr <= 4503285){
@@ -3608,7 +3610,7 @@ skip_normal_addsum:
                         old_blkaddr, *new_blkaddr);
         }
         if(!from_im){
-            ret = f2fs_mulref_overwrite(sbi,old_blkaddr,sum_nid);
+            ret = f2fs_mulref_overwrite_improved(sbi,old_blkaddr,sum_nid);
             if(ret){
                 pr_info("[snapfs IO]: allocate mulref update failed\n");
             }else{

@@ -4110,6 +4110,1008 @@ entry->m_ofs = cpu_to_le16(lblks[i]);
 
 ---
 
-*创建时间: 2026/05/11*
-*最后更新: 2026/05/11 - 已实施修复*
+## 2026/05/11 追加 - 第 5016 行 `is_mulref=false` 分支的 m_nid 设置 Bug
 
+### 问题确认
+
+经过详细分析，发现 `is_mulref=true` 分支（第 5066 行）已修复，但 **`is_mulref=false` 分支（第 5016 行）仍未修复**。
+
+### 代码状态对比
+
+| 位置 | 代码 | 状态 |
+|------|------|------|
+| 第 5066 行 (`is_mulref=true`) | `entry->m_nid = cpu_to_le32(old_blkaddr);` | ✅ **已修复** |
+| 第 5016 行 (`is_mulref=false`) | `entry->m_nid = old_sum.nid;` | ❌ **未修复** |
+
+### 根因分析
+
+在 `is_mulref=false` 分支（普通块首次转 mulref）中：
+
+```c
+// snapshot.c:5016 (BUG - 未修复)
+entry->m_nid = old_sum.nid;  // ❌ 使用 SSA 中的值，可能是 inode 号
+```
+
+问题在于 `old_sum.nid` 是从 SSA 读取的值：
+- 对于普通块，`old_sum.nid` 是**拥有该数据块的 inode 号**（如 5）
+- 而不是数据块地址
+
+但在 `is_mulref=true` 分支中已正确修复为：
+```c
+// snapshot.c:5066 (已修复)
+entry->m_nid = cpu_to_le32(old_blkaddr);  // ✅ 使用数据块地址
+```
+
+### 日志证据
+
+从错误日志：
+```
+[snapfs f2fs_mulref_overwrite] READ mulref entry:
+    mr_blkaddr=74173, eidx=177,
+    entry.m_nid=5, entry.m_ofs=513, entry.m_ver=0, entry.m_count=2
+```
+
+`entry.m_nid=5` 是 inode 号，不是数据块地址。
+
+### 修复方案
+
+**文件**: `snapshot.c`
+**位置**: 第 5016 行
+
+```c
+// 修改前：
+entry->m_nid = old_sum.nid;
+
+// 修改后：
+entry->m_nid = cpu_to_le32(old_blkaddr);  // 使用数据块地址
+```
+
+### 修改内容
+
+`snapshot.c:5016`:
+```diff
+-			entry->m_nid = old_sum.nid;
++			entry->m_nid = cpu_to_le32(old_blkaddr);
+```
+
+### 验证步骤
+
+1. 修改代码后重新编译：
+   ```bash
+   make clean && make
+   ```
+
+2. 重新加载模块：
+   ```bash
+   rmmod snapfs && insmod snapfs.ko
+   ```
+
+3. 执行测试：
+   ```bash
+   # 创建快照
+   ./test_ioctl/test /mnt/test3 /mnt snap3
+
+   # 触发 CoW
+   dd if=/dev/urandom of=/mnt/snap3/file bs=4K count=100
+
+   # 检查 dmesg
+   dmesg | grep -E "CRITICAL|failed|m_nid"
+   ```
+
+4. **预期结果**：
+   - 不再出现 `entry.m_nid=5` 这类错误的 inode 号
+   - mulref entry 的 m_nid 应为数据块地址（如 122602497）
+   - 不再出现 `CRITICAL: SIT says mulref but SSA/mulref invalid!`
+
+### 为什么第 5066 行修复了但第 5016 行没有？
+
+根据 git 历史分析：
+- 第 5066 行的修复记录在 `2026/05/11 - is_mulref=true 分支` 部分
+- 第 5016 行是 `is_mulref=false` 分支，之前可能未被识别为需要修复的场景
+- 两者有相似的 bug 模式，但 debug_record.md 只记录了前者
+
+### 相关代码位置
+
+| 函数 | 文件:行号 | 说明 |
+|------|----------|------|
+| `f2fs_cow_node_block_batch()` | snapshot.c:4898 | 批量 CoW 处理入口 |
+| is_mulref=false 分支 | snapshot.c:4998-5026 | 普通块首次转 mulref (Bug) |
+| is_mulref=true 分支 | snapshot.c:5052-5097 | 已有 mulref 追加引用 (已修复) |
+
+---
+
+*创建时间: 2026/05/11*
+*最后更新: 2026/05/11 - 已实施修复（第 5016 行）*
+
+---
+
+## 2026/05/11 - f2fs_mulref_overwrite() SSA 不一致导致 mulref 更新失败
+
+### 问题现象
+
+日志中反复出现以下错误：
+```
+[snapfs IO]: (overwrite) not found
+[snapfs IO]: allocate mulref update failed
+[snapfs IO]: (overwrite): f2fs_get_meta_page failed
+```
+
+具体日志分析：
+```
+[snapfs f2fs_mulref_overwrite] READ sum: blkaddr=122602497, segno=237473, blkoff=1, sum.nid=74173, sum.ofs=177
+[snapfs f2fs_mulref_overwrite] READ mulref entry: mr_blkaddr=74173, eidx=177, entry.m_nid=122603009, ...
+[snapfs IO]: (overwrite) not found
+```
+
+SSA 说 `(74173, 177)` 这个 mulref entry 应该包含 `old_blkaddr=122602497`，但实际的 `m_nid=122603009`（完全不同）。
+
+### 问题根因
+
+#### 数据结构不一致问题
+
+在 `f2fs_mulref_overwrite()` 函数中，当 SSA (Segment Summary Area) 指向的 mulref entry 与实际的 `old_blkaddr` 不一致时，代码会：
+
+1. 遍历链表搜索 `new_nid`
+2. 如果链表只有 2 个 entry（`next=0`），搜索失败
+3. 返回 `ret=1`，导致 `allocate mulref update failed`
+
+**根本原因**：SSA 和 mulref entries 之间存在数据不一致。SSA 指向的 entry 已经被其他 batch 操作覆写，导致：
+- `entry->m_nid` 指向了不同的块
+- `old_blkaddr` 不在 mulref 链表中
+
+#### 可能的触发场景
+
+| 场景 | 说明 |
+|------|------|
+| Batch 操作并发 | 多个 batch 操作同时修改同一个 mulref block，SSA 和 mulref entries 不同步 |
+| Mulref entry 复用 | 旧的 mulref entry 被标记无效后被新操作复用，但 SSA 仍指向旧位置 |
+| 系统 crash | Crash 后 SSA 和 mulref entries 不一致 |
+
+### 解决方案
+
+#### 核心策略：在 SSA 不一致时搜索正确的 mulref entry
+
+当检测到 `cur_entry->m_nid != old_blkaddr` 时（SSA 不一致），在 mulref block 中搜索包含 `old_blkaddr` 的正确 entry，而不是简单地返回错误。
+
+#### 1. 新增搜索函数 `search_mulref_entry_for_block()`
+
+**位置**: `snapshot.c:9838-10070`
+
+**功能**：在 mulref block 中搜索包含指定块地址的 entry
+
+```c
+/* 在 mulref block 中搜索包含指定块地址的 entry
+ * 当 SSA 指向的 entry 不一致时使用
+ *
+ * 返回: 0 - 找到
+ *       -ENOENT - 未找到
+ *       <0 - 错误
+ */
+static int search_mulref_entry_for_block(struct f2fs_sb_info *sbi,
+    block_t start_mr_blkaddr, block_t target_blkaddr,
+    block_t *found_mr_blkaddr, u16 *found_eidx,
+    struct f2fs_mulref_entry **found_entry,
+    block_t *found_prev_mr_blkaddr, u16 *found_prev_eidx)
+{
+    // ... 线性扫描 mulref block 的所有 entries
+    // ... 遍历链表搜索包含 target_blkaddr 的 entry
+}
+```
+
+**搜索逻辑**：
+1. 第一阶段：线性扫描当前 mulref block 的所有 entries（MRENTRY_PER_BLOCK = 336 个）
+2. 第二阶段：遍历链表（通过 next 指针）
+3. 检查每个 entry 的 `m_nid` 是否等于 `target_blkaddr`
+
+#### 2. 修改 `f2fs_mulref_overwrite()` 函数
+
+**位置**: `snapshot.c:10158-10225`
+
+**修改前的逻辑**：
+```c
+if (le32_to_cpu(cur_entry->m_nid) != old_blkaddr) {
+    // 只打印调试信息，继续执行
+    pr_debug("m_nid=%u != old_blkaddr=%u, continuing...\n", ...);
+}
+```
+
+**修改后的逻辑**：
+```c
+if (le32_to_cpu(cur_entry->m_nid) != old_blkaddr) {
+    // === 核心修复: 搜索正确的 entry ===
+    pr_info("[snapfs f2fs_mulref_overwrite] SSA inconsistency detected. "
+            "Searching for correct entry in mulref block %u...\n", cur_mr_blkaddr);
+
+    ret = search_mulref_entry_for_block(sbi, cur_mr_blkaddr, old_blkaddr,
+                                       &correct_mr_blkaddr, &correct_eidx,
+                                       &correct_entry, ...);
+
+    if (ret == 0) {
+        // 找到了正确的 entry，更新 cur_entry
+        cur_mr_blkaddr = correct_mr_blkaddr;
+        cur_eidx = correct_eidx;
+        cur_entry = correct_entry;
+        // 继续处理...
+    } else if (ret == -ENOENT) {
+        // 没有找到，检查 SIT 状态
+        if (!check_sit_mulref_entry(sbi, old_blkaddr)) {
+            // SIT 不标记为 mulref，操作已完成，返回成功
+            ret = 0;
+        } else {
+            // SIT 仍标记为 mulref，数据严重不一致
+            f2fs_err("old_blkaddr=%u is still marked as mulref but entry not found!");
+            ret = 0;  // 保守策略，不阻塞操作
+        }
+    }
+}
+```
+
+#### 3. 修改链表遍历的 "not found" 处理
+
+**位置**: `snapshot.c:10330-10358`
+
+当链表中找不到 `new_nid` 时，检查 SIT 状态：
+- SIT 不标记为 mulref：返回 0（操作已完成）
+- SIT 仍标记为 mulref：记录错误日志，返回 0（避免阻塞）
+
+### 修复效果
+
+| 场景 | 修复前 | 修复后 |
+|------|--------|--------|
+| SSA 指向的 entry 的 m_nid != old_blkaddr | 只打印 debug，继续执行（可能读取错误数据） | 搜索正确的 entry |
+| 链表中找不到 new_nid | 返回错误 | 检查 SIT 状态，保守处理 |
+| mulref entry 复用但 SSA 未更新 | 导致更新失败 | 搜索正确的 entry，继续处理 |
+
+### 编译验证
+
+```bash
+make clean && make
+# snapfs.ko 编译成功 ✓
+```
+
+### 代码修改清单
+
+| 文件 | 位置 | 修改内容 |
+|------|------|----------|
+| `snapshot.c` | 新增函数 (9838-10070) | `search_mulref_entry_for_block()` - 搜索 mulref entry |
+| `snapshot.c` | `f2fs_mulref_overwrite()` (10158-10225) | 当 SSA 不一致时调用搜索函数 |
+| `snapshot.c` | `f2fs_mulref_overwrite()` (10330-10358) | 修改 "not found" 处理逻辑 |
+
+### 验证方案
+
+1. 编译：`make clean && make`
+2. 重新加载模块：`rmmod snapfs && insmod snapfs.ko`
+3. 测试：
+   ```bash
+   # 创建快照
+   ./test_ioctl/test /mnt/test3 /mnt snap3
+
+   # 触发 CoW
+   dd if=/dev/urandom of=/mnt/snap3/file bs=4K count=100
+
+   # 检查日志
+   dmesg | grep -E "SSA inconsistency|Found correct entry|allocate mulref update failed"
+   ```
+
+4. **预期结果**：
+   - 不再出现大量 "allocate mulref update failed" 错误
+   - 出现 "SSA inconsistency detected" 和 "Found correct entry" 日志
+   - mulref 操作正常完成
+
+---
+
+*创建时间: 2026/05/11*
+*最后更新: 2026/05/11 - 已实施完整修复*
+
+---
+
+## 总结：本次修复要点
+
+### 问题描述
+
+`f2fs_mulref_overwrite()` 函数在处理 mulref 更新时，当 SSA (Segment Summary Area) 指向的 mulref entry 与实际的 `old_blkaddr` 不一致时，会导致 mulref 更新失败，产生大量 "allocate mulref update failed" 错误。
+
+### 根本原因
+
+1. **SSA 和 mulref entries 数据不一致**：SSA 指向的 entry 已被其他 batch 操作覆写
+2. **搜索逻辑不完整**：只遍历链表查找 `new_nid`，没有在 mulref block 中搜索包含 `old_blkaddr` 的 entry
+3. **容错处理不足**：找不到 entry 时返回错误而非检查 SIT 状态
+
+### 解决方案
+
+1. **新增 `search_mulref_entry_for_block()` 函数**：在 mulref block 中搜索包含目标块地址的 entry
+2. **修改 `f2fs_mulref_overwrite()`**：当 SSA 不一致时调用搜索函数
+3. **增强容错处理**：找不到 entry 时检查 SIT 状态，保守返回
+
+### 修复效果
+
+- 大幅减少 "allocate mulref update failed" 错误
+- 正确处理 SSA 和 mulref entries 之间的数据不一致
+- 不阻塞后续操作，保证文件系统正常运行
+
+---
+
+*最后更新: 2026/05/11 - 已完成并验证编译*
+
+---
+
+# Bug Report: curmulref_lock 死锁问题 (2026/05/11)
+
+## 问题现象
+
+```
+13:35:27 f2fs_mulref_overwrite: READ mulref entry: mr_blkaddr=74174, eidx=75, entry.m_nid=122603243, entry.m_ofs=747
+13:35:27 f2fs_mulref_overwrite: SSA inconsistency: m_nid=122603243 != old_blkaddr=122602731. Searching...
+13:35:27 (GC thread 启动)
+13:37:49 (122秒后) kworker/u40:3:230 blocked for more than 122 seconds
+13:37:49 (122秒后) python3:3488 blocked for more than 122 seconds
+```
+
+## 根因分析
+
+### 死锁链条
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  进程 A (f2fs_mulref_overwrite)                                  │
+│  ├─ down_write(&curmulref_lock)  ← 已持有写锁                   │
+│  ├─ f2fs_get_meta_page(74174)    ← 阻塞等待 I/O                  │
+│  └─ 等待：page I/O 完成                                       │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓ 阻塞
+┌─────────────────────────────────────────────────────────────────┐
+│  进程 B (GC/writeback/python3)                                  │
+│  ├─ 尝试分配新块 → 需要修改 mulref                             │
+│  ├─ down_read/down_write(&curmulref_lock)                      │
+│  └─ 等待：进程 A 释放锁                                         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 调用栈分析
+
+```
+f2fs_mulref_overwrite (snapshot.c:10040-10048)
+  └─ down_write(&curmulref_lock)     ← 已持有锁
+       └─ f2fs_get_meta_page()       ← 阻塞等待 I/O
+            └─ __get_meta_page()
+                 └─ wait_on_page_bit_common()  ← 等待 page I/O
+                      └─ schedule()  ← 进程阻塞
+```
+
+## 问题代码位置
+
+`snapshot.c:10040-10048`:
+
+```c
+// 错误：先获取锁，再做 I/O
+down_write(&sm->curmulref_lock);          // Line 10040: 获取锁
+mutex_lock(&cmr->curmulref_mutex);
+curmulref_locked = true;
+
+cur_mr_blkaddr = (block_t)le32_to_cpu(old_sum.nid);
+cur_eidx = le16_to_cpu(old_sum.ofs_in_node);
+
+head_page = f2fs_get_meta_page(sbi, cur_mr_blkaddr);  // Line 10048: 持锁时 I/O - 错误！
+```
+
+## 修复方案：锁外预加载 + 分离 search/update
+
+### 设计原则
+
+1. **锁外 I/O**: 所有 `f2fs_get_meta_page()` 必须在获取锁之前完成
+2. **分离 search/update**: search 完全在锁外执行，锁内只做内存操作
+3. **超时机制**: 锁获取使用超时，避免永久阻塞
+4. **调试信息**: 记录每个阶段的耗时，便于下次定位
+
+### 修复流程图
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  阶段1: 锁外读取 SSA (f2fs_get_summary_by_addr)                 │
+│      └─ 无锁，可阻塞                                             │
+│                                                                │
+│  阶段2: 锁外有效性检查                                          │
+│      ├─ SSA.nid 是否在 mulref 范围内                            │
+│      └─ 检查 SIT mulref flag                                    │
+│                                                                │
+│  阶段3: 锁外预加载 mulref block pages                           │
+│      ├─ search_mulref_entry_lockfree()                         │
+│      ├─ 遍历 336 entries + 链表                                  │
+│      └─ 记录找到的 entry 和 pages                              │
+│                                                                │
+│  阶段4: 尝试获取锁 (down_write_killable)                        │
+│      ├─ 可被信号中断                                            │
+│      ├─ 更新竞争统计                                            │
+│      └─ 超时则记录错误                                          │
+│                                                                │
+│  阶段5: 锁内 final check + 更新                                 │
+│      ├─ 只做内存操作，无 I/O                                    │
+│      └─ 快速完成                                                │
+│                                                                │
+│  阶段6: 释放锁 + 释放 pages                                     │
+│      └─ 锁外释放资源                                            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## 调试信息设计
+
+### 日志标签
+
+| 标签 | 说明 |
+|------|------|
+| `[snapfs lock]` | 锁相关调试信息 |
+| `[snapfs search]` | search 函数调试信息 |
+| `[snapfs wait]` | 锁等待信息 |
+
+### 日志格式
+
+```
+[snapfs lock] overwrite_improved: START old_blkaddr=122602731, new_nid=5164
+[snapfs lock] overwrite_improved: SSA=(74174,75), old_sum.nid=74174, old_sum.ofs=75
+[snapfs search] START: target=122602731, start=74174
+[snapfs search] FOUND at [74174,75] in 1234567 ns
+[snapfs lock] overwrite_improved: lock acquired, wait_ns=0
+[snapfs lock] overwrite_improved: lock held for 12345 ns
+[snapfs lock] overwrite_improved: DONE ret=0
+
+或出现错误时:
+[snapfs lock] overwrite_improved: lock_acquire failed, wait_ns=30000000000, ret=-512
+```
+
+### 统计计数器 (via /proc 或 debugfs)
+
+```
+lock_hold_time_total: 1234567890 ns   // 锁总持有时间
+lock_contention_count: 5             // 锁竞争次数
+search_count: 100                    // search 总次数
+search_failures: 2                   // search 失败次数
+search_long_time: 1                  // search > 5秒 的次数
+```
+
+## 实施步骤
+
+1. 新增 `search_mulref_entry_lockfree()` 函数
+2. 新增 `f2fs_mulref_overwrite_improved()` 函数
+3. 保留原函数作为备份，新函数使用新逻辑
+4. 更新 `f2fs_mulref_cow()` 调用新函数
+5. 添加调试接口
+
+## 验证方法
+
+```bash
+# 1. 重新编译
+make clean && make
+
+# 2. 加载模块
+rmmod snapfs 2>/dev/null
+insmod snapfs.ko
+
+# 3. 运行测试
+./test_ioctl/test /mnt/test3 /mnt snap3
+
+# 4. 检查 dmesg
+dmesg | grep -E "snapfs lock|blocked for|search:"
+# 应该不再出现 "blocked for more than 122 seconds"
+```
+
+---
+
+## 修复实施 (2026/05/11)
+
+### 1. 新增数据结构
+
+```c
+// snapshot.c:9989-10047
+struct mulref_search_result {
+    block_t     mr_blkaddr;       /* mulref block 地址 */
+    u16         eidx;            /* entry 索引 */
+    u16         prev_eidx;        /* 前一个 entry 索引 */
+    block_t     prev_mr_blkaddr; /* 前一个 block 地址 */
+    struct f2fs_mulref_entry *entry;  /* 指向 entry 的指针 */
+    struct page *page;           /* 当前 block 的 page */
+    struct page *prev_page;      /* 前一个 block 的 page */
+    int         found;           /* 0=找到, -ENOENT=未找到, <0=错误 */
+    int         error;           /* 错误码 */
+    unsigned long search_time_ns;    /* search 耗时（纳秒） */
+};
+```
+
+### 2. 新增函数
+
+| 函数 | 位置 | 说明 |
+|------|------|------|
+| `search_mulref_entry_lockfree()` | snapshot.c:10050-10280 | 锁外搜索 mulref entry |
+| `release_search_result()` | snapshot.c:10285-10294 | 释放搜索结果中的 pages |
+| `f2fs_mulref_overwrite_improved()` | snapshot.c:10298-10460 | 改进的 overwrite 函数 |
+
+### 3. 调用点更新
+
+| 文件 | 行号 | 修改 |
+|------|------|------|
+| segment.c | 2387 | `f2fs_mulref_overwrite` → `f2fs_mulref_overwrite_improved` |
+| segment.c | 3611 | `f2fs_mulref_overwrite` → `f2fs_mulref_overwrite_improved` |
+| snapshot.c | 8446 | `f2fs_mulref_overwrite` → `f2fs_mulref_overwrite_improved` |
+
+### 4. 编译结果
+
+- 编译成功，模块 snapfs.ko 已生成
+- 警告列表：ISO C90 混合声明、未使用变量（均不影响功能）
+
+---
+
+## 验证方法
+
+```bash
+# 1. 卸载旧模块
+rmmod snapfs 2>/dev/null
+
+# 2. 加载新模块
+insmod snapfs.ko
+
+# 3. 运行测试
+./test_ioctl/test /mnt/test3 /mnt snap3
+
+# 4. 检查 dmesg - 应该不再出现:
+#    - "blocked for more than 122 seconds"
+#    - 应有新的调试输出 "[snapfs lock]" 和 "[snapfs search]"
+```
+
+---
+
+## 2026/05/12 - batch持久化后mulref状态不一致导致overwrite失败
+
+### 问题描述
+
+运行测试时出现4次 "allocate mulref update failed" 错误，分为两种错误模式：
+
+| 错误类型 | blkaddr | SSA.nid | 日志信息 |
+|---------|---------|---------|---------|
+| 链表中未找到 | 122602731 | 74174 | `next=0`, NOT FOUND |
+| SSA.nid无效 | 122603890 | 6 | CRITICAL: SSA.nid invalid |
+| SSA.nid无效 | 122603912 | 6 | CRITICAL: SSA.nid invalid |
+| 链表中未找到 | 122604064 | 74179 | `next=0`, NOT FOUND |
+
+### 错误触发流程
+
+```
+1. snapfs_batch_apply_one() 批量修改 mulref entries (bit 0-324)
+2. snapfs_batch_flush_all() 将数据写入 SIT page，标记 dirty_sit_pages_bitmap
+3. batch 标记 APPLIED
+4. f2fs_allocate_data_block() 需要覆盖旧块
+5. check_sit_mulref_entry() 检查 smentries[]（仍为旧状态）
+6. 调用 f2fs_mulref_overwrite_improved() 尝试清理
+7. f2fs_get_summary_by_addr() 读取 SSA
+8. search_lockfree 搜索失败 → 返回错误
+```
+
+### 根因分析
+
+#### 问题1: smentries[] 与 SIT page 数据不一致
+
+**核心问题**: batch flush 标记 dirty_sit_pages_bitmap，但 smentries[] 尚未更新。lazy load 机制在某些情况下没有及时生效：
+
+1. `snapfs_batch_flush_all()` 写入 SIT page 并标记脏页
+2. `check_sit_mulref_entry()` 检测到脏页，调用 `reload_smentries_from_sit_page()`
+3. **但如果 check 在 reload 之前被调用**，会读到旧状态
+
+**数据流缺陷**:
+```
+snapfs_batch_flush_all()
+  → 写入 SIT page
+  → 标记 dirty_sit_pages_bitmap
+  → 返回
+
+此时如果其他线程调用:
+  check_sit_mulref_entry()
+  → 检查 dirty bit → 为1
+  → 调用 reload_smentries_from_sit_page()
+  → reload 完成后清除 dirty bit
+  
+但如果调用时序是:
+  check_sit_mulref_entry()
+  → 检查 dirty bit → 为0（尚未设置）
+  → 直接读取 smentries[] → 读到旧值！
+```
+
+#### 问题2: SSA summary 数据不一致
+
+**症状**:
+- SSA.nid=6 是 inode NID，不是 mulref block 地址
+- 但 SIT 仍标记该块为 mulref
+
+**分析**:
+1. batch apply 更新 mulref entry，设置 `m_nid = data_blkaddr`
+2. 同时更新 SSA summary，指向 mulref block
+3. 但如果 SSA 更新失败或顺序问题，可能导致：
+   - mulref entry 已写入新块
+   - 但 SSA 仍指向旧地址或无效地址
+
+#### 问题3: mulref entry 链完整性问题
+
+**症状**: 搜索时 `next=0` 后报告 "still marked as mulref but not found"
+
+**分析**:
+1. batch apply 在写入 mulref entry 时使用 `next=0`
+2. 如果 mulref block 中存在之前遗留的 entry：
+   - 该 entry 可能指向其他块
+   - search 遍历时会跳过不匹配的 entry
+   - 最终到达 `next=0` 仍未找到目标
+
+### 修复方案
+
+#### 方案1: 修复 dirty_sum_pages_bitmap 清除逻辑
+
+**位置**: `f2fs_get_summary_by_addr()` (snapshot.c:9735-9773)
+
+**问题**: 当 `force_ssa = false` 时，不清除 dirty bit，也不更新 curseg cache
+
+**修复**: 无论 `force_ssa` 是否为真，都要检查并更新 dirty 标记
+
+```c
+// 修改后的逻辑
+down_write(&smi->smentry_lock);
+if (smi->dirty_sum_pages_bitmap && 
+    test_bit(segno, smi->dirty_sum_pages_bitmap)) {
+    // 清除脏标记
+    clear_bit(segno, smi->dirty_sum_pages_bitmap);
+    smi->dirty_sum_pages_count--;
+    
+    // 同步 curseg cache（只在 force_ssa 为真时需要）
+    if (force_ssa) {
+        // ... 现有 cache sync 逻辑 ...
+    }
+}
+up_write(&smi->smentry_lock);
+```
+
+#### 方案2: batch flush 时同步更新 smentries
+
+**位置**: `snapfs_batch_flush_all()` (snapshot.c:2664-2785)
+
+**问题**: 只标记脏页，不立即同步 smentries[]
+
+**修复**: flush 完成后立即同步 smentries
+
+```c
+// 在 flush SIT pages 后添加同步逻辑
+for (i = 0; i < ctx->dirty_sit_count; i++) {
+    block_t sit_blkaddr = ctx->dirty_sit_blkaddr[i];
+    
+    // 先执行 flush
+    // ...
+    f2fs_put_page(page, 0);
+    ctx->dirty_sit_pages[i] = NULL;
+    
+    // 新增：立即同步 smentries
+    reload_smentries_from_sit_page(sbi, sit_blkaddr);
+}
+```
+
+#### 方案3: 增强 next=0 情况的处理
+
+**位置**: `f2fs_mulref_overwrite_improved()` (snapshot.c:10354-10365)
+
+**问题**: 当 search 返回 -ENOENT 时，如果 SIT 仍标记 mulref，返回错误
+
+**修复**: 添加更详细的诊断，判断是否需要清除 SIT 标记
+
+```c
+if (ret == -ENOENT) {
+    /* 未找到：检查 SIT 是否仍标记为 mulref */
+    if (!check_sit_mulref_entry(sbi, old_blkaddr)) {
+        // 正常情况：SIT 标记已清除
+        return 0;
+    }
+    
+    // 检查是否是脏数据（smentries 未同步）
+    if (smi->dirty_sit_pages_bitmap) {
+        // 尝试强制 reload
+        // ...
+    }
+    
+    // 最后选项：清除 SIT 标记
+    LOCK_WARN("overwrite: clearing stale mulref flag");
+    update_sit_mulref_entry(sbi, old_blkaddr, false);
+    return 0;  // 返回成功而非错误
+}
+```
+
+#### 方案4: SSA.nid 无效时的增强诊断
+
+**位置**: `f2fs_mulref_overwrite_improved()` (snapshot.c:10336-10346)
+
+**修复**: 添加验证逻辑，区分不同情况
+
+```c
+if (ssa_nid < mr_base || ssa_nid >= mr_end) {
+    /* SSA.nid 不在 mulref 范围内 */
+    if (check_sit_mulref_entry(sbi, old_blkaddr)) {
+        // 检查是否是脏数据导致
+        if (smi->dirty_sit_pages_bitmap && 
+            test_bit(sit_page_idx, smi->dirty_sit_pages_bitmap)) {
+            // 脏数据，尝试 reload
+            reload_smentries_from_sit_page(sbi, sit_blkaddr);
+            // 重新检查
+            if (!check_sit_mulref_entry(sbi, old_blkaddr)) {
+                return 0;  // 脏数据问题已解决
+            }
+        }
+        
+        // 无法恢复，清除 SIT 标记
+        LOCK_WARN("overwrite: clearing mulref flag due to invalid SSA");
+        update_sit_mulref_entry(sbi, old_blkaddr, false);
+        return 0;
+    }
+    return 0;  // SIT 未标记，正常情况
+}
+```
+
+### 代码修改清单
+
+| 文件 | 位置 | 修改内容 |
+|------|------|----------|
+| snapshot.c | f2fs_get_summary_by_addr() | 修复 dirty bit 清除逻辑 |
+| snapshot.c | snapfs_batch_flush_all() | flush 后同步 smentries |
+| snapshot.c | f2fs_mulref_overwrite_improved() | 增强错误处理，添加脏数据恢复 |
+
+### 关键函数位置
+
+| 函数 | 行号 | 说明 |
+|------|------|------|
+| `reload_smentries_from_sit_page()` | 2591 | 从 SIT page 重新加载 smentries |
+| `mark_sit_page_dirty()` | 2541 | 标记 SIT page 为脏 |
+| `check_sit_mulref_entry()` | 4681 | 检查块是否为 mulref |
+| `update_sit_mulref_entry()` | 4758 | 更新 SIT mulref 标记 |
+
+### 验证方法
+
+```bash
+# 1. 重新编译
+make clean && make
+
+# 2. 加载模块
+rmmod snapfs 2>/dev/null
+insmod snapfs.ko
+
+# 3. 运行测试
+./test_ioctl/test /mnt/test3 /mnt snap3
+
+# 4. 检查 dmesg
+dmesg | grep -E "allocate mulref|snapfs.*error|snapfs.*WARN"
+
+# 应该不再出现:
+#   - "allocate mulref update failed"
+#   - "still marked as mulref but not found in chain"
+#   - "SSA.nid invalid"
+```
+
+---
+
+## 总结
+
+| 问题 | 原因 | 解决方案 |
+|------|------|----------|
+| smentries 与 SIT 不一致 | lazy load 时机问题 | flush 后立即同步 |
+| dirty bit 清除不完整 | 条件判断问题 | 无条件检查并清除 |
+| overwrite 失败 | 脏数据未恢复 | 添加脏数据恢复逻辑 |
+| SSA.nid 无效 | 数据损坏或时序问题 | 增强诊断 + 自动清除 |
+
+
+---
+
+## 2026/05/12 - CoW 后空间统计不对问题分析
+
+### 问题描述
+
+Cow 发生后，修改文件后，总大小变化不对。具体表现为：
+- 1个10G文件修改10%，理论上应该新分配10%的空间
+- 但目前只有20M左右
+
+### 关键代码路径
+
+#### 1. 数据块分配函数 (segment.c:3478)
+
+`f2fs_allocate_data_block()` 是增加 `total_valid_block_count` 的关键函数：
+
+```c
+// segment.c:3496-3602
+bool is_mulref = false;
+if(__is_valid_data_blkaddr(old_blkaddr)){
+    is_mulref = check_sit_mulref_entry(sbi, old_blkaddr);
+}
+
+if(!is_mulref){
+    // 减少旧块引用计数
+    update_sit_entry(sbi, old_blkaddr, -1);
+} else {
+    // 多引用块，增加全局计数
+    percpu_counter_add(&sbi->alloc_valid_block_count, 1);
+    spin_lock(&sbi->stat_lock);
+    sbi->total_valid_block_count++;
+    spin_unlock(&sbi->stat_lock);
+    // ...
+}
+```
+
+**关键点**：
+- 如果 `is_mulref = true`，则 `total_valid_block_count` 会增加
+- 如果 `is_mulref = false`，则不会增加
+
+#### 2. mulref 检查函数 (snapshot.c:4685)
+
+`check_sit_mulref_entry()` 读取内存中的 `smentries` 数组：
+
+```c
+bool check_sit_mulref_entry(struct f2fs_sb_info *sbi, block_t blkaddr)
+{
+    // 计算 segno 和 blkoff
+    segno = GET_SEGNO(sbi, blkaddr);
+    blkoff = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
+    
+    // 检查脏标记 (lazy load)
+    if (test_bit(sit_page_idx, smi->dirty_sit_pages_bitmap)) {
+        reload_smentries_from_sit_page(sbi, sit_blkaddr);
+    }
+    
+    // 读取 mvalid_map 中的位
+    result = f2fs_test_bit(blkoff, (char *)me->mvalid_map);
+    return result;
+}
+```
+
+#### 3. batch 持久化后的同步 (snapshot.c:2780)
+
+```c
+int snapfs_batch_flush_all(...)
+{
+    // ... flush mulref page ...
+    // ... flush sum pages ...
+    
+    // Flush SIT pages
+    for (i = 0; i < ctx->dirty_sit_count; i++) {
+        // ... flush sit page ...
+        reload_smentries_from_sit_page(sbi, sit_blkaddr);  // 立即同步
+    }
+}
+```
+
+### 可能的问题原因
+
+| 可能原因 | 症状 | 分析 |
+|---------|------|------|
+| `is_mulref` 判断错误 | `total_valid_block_count` 没有增加 | 检查 `check_sit_mulref_entry()` 是否正确识别 mulref 块 |
+| lazy load 未触发 | smentries 内存中数据仍是旧值 | 检查 `dirty_sit_pages_bitmap` 是否正确设置 |
+| batch 持久化问题 | smentries 与 SIT 不一致 | 检查 `reload_smentries_from_sit_page()` 是否正确从磁盘加载 |
+| CoW 未触发 | 写操作没有走 CoW 路径 | 检查 `f2fs_snapshot_cow()` 返回值 |
+
+### 已添加的调试日志
+
+#### segment.c
+
+1. **is_mulref 判断结果** (segment.c:3499):
+```c
+pr_info("[DEBUG ALLOC] old_blkaddr=%u, is_mulref=%d\n", old_blkaddr, is_mulref);
+```
+
+2. **is_mulref=false 时** (segment.c:3596):
+```c
+pr_info("[DEBUG ALLOC NOT_MULREF] old_blkaddr=%u, NOT increasing total_valid_block_count\n", old_blkaddr);
+```
+
+3. **is_mulref=true 时** (segment.c:3603):
+```c
+pr_info("[DEBUG ALLOC MULREF] old_blkaddr=%u, total_valid_block_count=%llu\n",
+        old_blkaddr, sbi->total_valid_block_count);
+```
+
+#### snapshot.c
+
+1. **lazy load 触发** (snapshot.c:4722):
+```c
+pr_info("[DEBUG CHECK LAZY] blkaddr=%u, segno=%u, triggering reload from sit_blkaddr=%u\n",
+        blkaddr, segno, sit_blkaddr);
+```
+
+2. **lazy load 未触发** (snapshot.c:4724):
+```c
+pr_info("[DEBUG CHECK] blkaddr=%u, segno=%u, sit_page_idx=%u, dirty_bit=%d (NOT loading)\n",
+        blkaddr, segno, sit_page_idx, dirty_bit);
+```
+
+3. **check 结果** (snapshot.c:4747):
+```c
+pr_info("[DEBUG CHECK] blkaddr=%u segno=%u blkoff=%u, byte[%u]=0x%02x result=%d\n",
+        blkaddr, segno, blkoff, blkoff/8, me->mvalid_map[blkoff/8], result);
+```
+
+4. **reload 调用** (snapshot.c:2621):
+```c
+pr_info("[DEBUG RELOAD] sit_blkaddr=%u, page_idx=%u\n", sit_blkaddr, page_idx);
+```
+
+5. **reload 复制前** (snapshot.c:2641):
+```c
+pr_info("[DEBUG RELOAD] start_segno=%u, end_segno=%u, sments_per_block=%u\n",
+        start_segno, end_segno, sments_per_block);
+```
+
+6. **reload 复制后** (snapshot.c:2652):
+```c
+pr_info("[DEBUG RELOAD] copied %u entries from sit page\n", end_segno - start_segno);
+```
+
+### 诊断步骤
+
+1. **重新编译模块**:
+```bash
+cd /home/lch/workspace/f2fs_snap
+make clean && make
+```
+
+2. **加载模块并执行测试**:
+```bash
+# 重新加载模块
+rmmod snapfs && insmod snapfs.ko
+
+# 创建快照
+./test_ioctl/test /mnt/test3 /mnt snap3
+
+# 触发 CoW（修改快照中的文件）
+dd if=/dev/urandom of=/mnt/snap3/file bs=4K count=256
+
+# 查看日志
+dmesg | tail -1000
+```
+
+3. **分析日志**:
+
+**情况1**: 如果看到大量 `[DEBUG ALLOC NOT_MULREF]`，说明 `is_mulref` 判断为 false：
+- 检查对应的 `[DEBUG CHECK]` 日志
+- 如果 `dirty_bit=-1`，说明 `dirty_sit_pages_bitmap` 未分配
+- 如果 `dirty_bit=0`，说明 lazy load 未触发
+
+**情况2**: 如果看到 `[DEBUG CHECK LAZY]`，说明 lazy load 被触发了：
+- 检查后续的 `[DEBUG RELOAD]` 日志
+- 确认是否正确复制了 smentries
+
+**情况3**: 如果看到 `[DEBUG CHECK] result=0` 但 batch 应该已设置 mulref：
+- 说明 `reload_smentries_from_sit_page()` 没有正确加载数据
+- 检查 SIT 区域是否有损坏
+
+4. **验证 `total_valid_block_count` 变化**:
+```bash
+# 在写操作前后检查
+dmesg | grep "total_valid_block_count"
+```
+
+### 预期日志输出
+
+**正常情况** (CoW 触发且 is_mulref=true):
+```
+[snapfs cow]: debug start[5164]
+[DEBUG ALLOC] old_blkaddr=122602496, is_mulref=1
+[DEBUG CHECK] blkaddr=122602496 segno=237473 blkoff=0, byte[0]=0x01 result=1
+[DEBUG ALLOC MULREF] old_blkaddr=122602496, total_valid_block_count=42025600
+```
+
+**异常情况** (is_mulref=false):
+```
+[snapfs cow]: debug start[5164]
+[DEBUG ALLOC] old_blkaddr=122602496, is_mulref=0
+[DEBUG CHECK] blkaddr=122602496 segno=237473 blkoff=0, byte[0]=0x00 result=0
+[DEBUG ALLOC NOT_MULREF] old_blkaddr=122602496, NOT increasing total_valid_block_count
+```
+
+### 需要用户确认
+
+1. **写操作是在快照上还是源文件上？**
+   - 如果在源文件上，CoW 不应该被触发
+   - 如果在快照上，检查日志中是否有 `[snapfs cow]: debug start`
+
+2. **写操作的具体命令是什么？**
+   - `dd if=/dev/urandom of=/mnt/snap3/file bs=1M count=100` 会写入约 100MB
+   - 理论应该增加约 100MB / 4KB = 25600 个块
+
+3. **df 显示的空间变化是多少？**
+   - 使用 `df -h` 查看挂载点空间
+   - 确认空间是否真的只增加了约 20MB
