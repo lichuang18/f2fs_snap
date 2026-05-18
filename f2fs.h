@@ -1250,8 +1250,6 @@ enum snapfs_batch_state {
 
 /*
  * Batch redo 条目（紧凑格式）
-/*
- * Batch redo 条目
  * 存储单个数据块的 mulref/summary/SIT 操作
  * 大小: 2 + 2 + 4 + 20 + 4 + 15 + 4 + 1 + 3 = ~55 bytes
  * 可在 4KB block 中存储约 74 个条目
@@ -1281,7 +1279,9 @@ struct snapfs_batch_header {
     __le32 snap_ino;              /* 快照 inode */
     __le32 node_nid;              /* 当前处理的 node nid */
     __le16 node_ofs;               /* node offset */
-    __le16 valid_bits;            /* 有效 bit 数 */
+    __le16 valid_bits;            /* bitmap bits, kept equal to entry_count */
+    __le16 entry_count;           /* redo entry count */
+    __le16 reserved_entry_count;
     __u8 bitmap[SNAPFS_PROGRESS_BITMAP_BYTES];  /* apply 进度 bitmap */
     __u8 prepared;                 /* PREPARING 完成标志：1=可恢复，0=丢弃 */
     __u8 reserved0;

@@ -1,14 +1,15 @@
 mkdir -p /mnt/test3
 fio --name=fill \
     --filename=/mnt/test3/testfile \
-    --rw=read \
+    --rw=write \
     --bs=1M \
     --size=20G \
     --direct=1 \
     --ioengine=libaio \
     --numjobs=1 \
     --fallocate=none \
-    --iodepth=16
+    --iodepth=16 \
+    --fsync=1
 
 sync
 echo 3 > /proc/sys/vm/drop_caches
@@ -17,6 +18,8 @@ echo 3 > /proc/sys/vm/drop_caches
 smartctl -a /dev/nvme1n1  |grep "Units Written"
 df -B1 /mnt/
 
+# Force writeback immediately before snapshot creation.
+sync
 time ./a.out /mnt/test3/ /mnt/ snap
 sync
 
@@ -28,7 +31,7 @@ python3 modify_dataset.py \
     --seed 100 \
     --fsync \
     --sync \
-    --log modify_10.log
+    --log modify_100.log
 
 # fio --name=fill \
 #     --filename=/mnt/test3/testfile \

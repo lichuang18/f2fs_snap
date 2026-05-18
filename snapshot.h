@@ -9,8 +9,8 @@
 #include "f2fs.h"
 #include <linux/ktime.h>
 #include <linux/types.h>
-#define SNAPFS_DEBUG 0
-#define SNAPFS_DEBUG1 0
+#define SNAPFS_DEBUG 1
+#define SNAPFS_DEBUG1 1
 #define SNAPFS_DEBUG_GC 0
 #define SNAPFS_LOCK_DEBUG 1
 int f2fs_magic_lookup_or_alloc(struct f2fs_sb_info *sbi,

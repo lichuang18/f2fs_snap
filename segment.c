@@ -3490,16 +3490,127 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
                  (fio && fio->page && page_private_gcing(fio->page)));
     struct seg_entry *se = NULL;
     struct f2fs_summary old_sum;
-    int ret = 0;
-    nid_t sum_nid = le32_to_cpu(sum->nid);
-    bool is_mulref = false;
-    if(__is_valid_data_blkaddr(old_blkaddr)){
-        is_mulref = check_sit_mulref_entry(sbi, old_blkaddr);
-        pr_info("[DEBUG ALLOC] old_blkaddr=%u, is_mulref=%d\n", old_blkaddr, is_mulref);
-    }
-    down_read(&SM_I(sbi)->curseg_lock);
-    mutex_lock(&curseg->curseg_mutex);
-    down_write(&sit_i->sentry_lock);
+	int ret = 0;
+	nid_t sum_nid = le32_to_cpu(sum->nid);
+	bool is_mulref = false;
+	static atomic64_t dbg_alloc_total = ATOMIC64_INIT(0);
+	static atomic64_t dbg_alloc_new = ATOMIC64_INIT(0);
+	static atomic64_t dbg_alloc_null = ATOMIC64_INIT(0);
+	static atomic64_t dbg_alloc_valid = ATOMIC64_INIT(0);
+	static atomic64_t dbg_alloc_other = ATOMIC64_INIT(0);
+	static atomic64_t dbg_alloc_mulref = ATOMIC64_INIT(0);
+	static atomic64_t dbg_alloc_valid_not_mulref = ATOMIC64_INIT(0);
+	u64 dbg_seq = atomic64_inc_return(&dbg_alloc_total);
+	const char *dbg_old_class = "OTHER";
+
+	if (old_blkaddr == NEW_ADDR) {
+		dbg_old_class = "NEW_ADDR";
+		atomic64_inc(&dbg_alloc_new);
+	} else if (old_blkaddr == NULL_ADDR) {
+		dbg_old_class = "NULL_ADDR";
+		atomic64_inc(&dbg_alloc_null);
+	} else if (__is_valid_data_blkaddr(old_blkaddr)) {
+		dbg_old_class = "VALID";
+		atomic64_inc(&dbg_alloc_valid);
+	} else {
+		atomic64_inc(&dbg_alloc_other);
+	}
+
+	if(__is_valid_data_blkaddr(old_blkaddr)){
+	    is_mulref = check_sit_mulref_entry(sbi, old_blkaddr);
+	    if (is_mulref)
+	        atomic64_inc(&dbg_alloc_mulref);
+	    if (!is_mulref) {
+	        u64 dbg_notmr = atomic64_inc_return(&dbg_alloc_valid_not_mulref);
+
+	        if (dbg_notmr <= 64 || !(dbg_notmr & 0xfff)) {
+	            struct sit_mulref_info *smi = SIT_MR_I(sbi);
+	            struct f2fs_summary dbg_old_sum;
+	            unsigned int dbg_segno = GET_SEGNO(sbi, old_blkaddr);
+	            unsigned int dbg_blkoff = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
+	            unsigned int dbg_sit_page_idx = 0;
+	            unsigned int dbg_mblocks = 0;
+	            unsigned int dbg_byte_idx = dbg_blkoff / 8;
+	            unsigned int dbg_byte = 0;
+	            int dbg_dirty_bit = -1;
+	            int dbg_sum_ret = -EINVAL;
+	            u32 dbg_sum_nid = 0;
+	            u16 dbg_sum_ofs = 0;
+	            u16 dbg_sum_ver = 0;
+
+	            if (smi && smi->sments_per_block)
+	                dbg_sit_page_idx = dbg_segno / smi->sments_per_block;
+
+	            if (smi && smi->smentries &&
+	                dbg_segno < MAIN_SEGS(sbi) &&
+	                dbg_blkoff < sbi->blocks_per_seg) {
+	                down_read(&smi->smentry_lock);
+	                if (smi->smentries[dbg_segno].mvalid_map) {
+	                    dbg_mblocks = le16_to_cpu(smi->smentries[dbg_segno].mblocks);
+	                    if (dbg_byte_idx < SIT_VBLOCK_MAP_SIZE)
+	                        dbg_byte = smi->smentries[dbg_segno].mvalid_map[dbg_byte_idx];
+	                }
+	                up_read(&smi->smentry_lock);
+
+	                if (smi->dirty_sit_pages_bitmap)
+	                    dbg_dirty_bit = test_bit(dbg_sit_page_idx,
+	                                             smi->dirty_sit_pages_bitmap);
+	            }
+
+	            dbg_sum_ret = f2fs_get_summary_by_addr(sbi, old_blkaddr,
+	                                                   &dbg_old_sum);
+	            if (!dbg_sum_ret) {
+	                dbg_sum_nid = le32_to_cpu(dbg_old_sum.nid);
+	                dbg_sum_ofs = le16_to_cpu(dbg_old_sum.ofs_in_node);
+	                dbg_sum_ver = le16_to_cpu(dbg_old_sum.version);
+	            }
+
+	            pr_info("[snapfs valid-not-mulref dbg] seq=%llu old_blkaddr=%u "
+	                    "segno=%u blkoff=%u sit_page_idx=%u dirty_bit=%d "
+	                    "mblocks=%u byte[%u]=0x%02x ino=%u page_index=%lu "
+	                    "new_sum=(%u,%u,%u) old_ssa_ret=%d old_ssa=(%u,%u,%u) "
+	                    "counts valid_not_mulref=%llu valid=%lld mulref=%lld\n",
+	                    (unsigned long long)dbg_notmr, old_blkaddr,
+	                    dbg_segno, dbg_blkoff, dbg_sit_page_idx, dbg_dirty_bit,
+	                    dbg_mblocks, dbg_byte_idx, dbg_byte,
+	                    fio ? fio->ino : 0,
+	                    (fio && fio->page) ? fio->page->index : 0,
+	                    sum_nid, le16_to_cpu(sum->ofs_in_node),
+	                    le16_to_cpu(sum->version),
+	                    dbg_sum_ret, dbg_sum_nid, dbg_sum_ofs, dbg_sum_ver,
+	                    (unsigned long long)dbg_notmr,
+	                    (long long)atomic64_read(&dbg_alloc_valid),
+	                    (long long)atomic64_read(&dbg_alloc_mulref));
+	        }
+	        if (dbg_notmr <= 64 || !(dbg_notmr & 0xffff))
+	            pr_info("[ALLOC CHECK] old_blkaddr=%u, is_mulref=%d valid_not_mulref_seq=%llu\n",
+	                    old_blkaddr, is_mulref, (unsigned long long)dbg_notmr);
+	    } else {
+	        u64 dbg_mr = atomic64_read(&dbg_alloc_mulref);
+
+	        if (dbg_mr <= 64 || !(dbg_mr & 0xfff))
+	            pr_info("[ALLOC CHECK] old_blkaddr=%u, is_mulref=%d mulref_seq=%llu\n",
+	                    old_blkaddr, is_mulref, (unsigned long long)dbg_mr);
+	    }
+	}
+	if (dbg_seq <= 64 || !(dbg_seq & 0xfff)) {
+	    pr_info("[snapfs alloc dbg] seq=%llu class=%s old_blkaddr=%u is_mulref=%d "
+	            "ino=%u page_index=%lu sum_nid=%u sum_ofs=%u type=%d io_type=%d "
+	            "counts new=%lld null=%lld valid=%lld other=%lld mulref=%lld\n",
+	            (unsigned long long)dbg_seq, dbg_old_class, old_blkaddr, is_mulref,
+	            fio ? fio->ino : 0,
+	            (fio && fio->page) ? fio->page->index : 0,
+	            sum_nid, le16_to_cpu(sum->ofs_in_node), type,
+	            fio ? fio->io_type : -1,
+	            (long long)atomic64_read(&dbg_alloc_new),
+	            (long long)atomic64_read(&dbg_alloc_null),
+	            (long long)atomic64_read(&dbg_alloc_valid),
+	            (long long)atomic64_read(&dbg_alloc_other),
+	            (long long)atomic64_read(&dbg_alloc_mulref));
+	}
+	down_read(&SM_I(sbi)->curseg_lock);
+	mutex_lock(&curseg->curseg_mutex);
+	down_write(&sit_i->sentry_lock);
 
     // fio->old_blkaddr 判断旧信息
 
@@ -3591,16 +3702,19 @@ skip_normal_addsum:
 
     if(!is_mulref){
         // check sit mulref_entry(sbi, start_addr + off);
-        pr_info("[DEBUG ALLOC NOT_MULREF] old_blkaddr=%u, NOT increasing total_valid_block_count\n", old_blkaddr);
+        if (dbg_seq <= 64 || !(dbg_seq & 0xffff))
+            pr_info("[ALLOC NOT_MULREF] old_blkaddr=%u, NOT increasing total_valid_block_count seq=%llu\n",
+                    old_blkaddr, (unsigned long long)dbg_seq);
         update_sit_entry(sbi, old_blkaddr, -1);
     } else{
         // mulref process.   多引用转单引用
         // 因为旧块还被其他快照引用，不能减少计数，所以需要增加全局计数
-		percpu_counter_add(&sbi->alloc_valid_block_count, 1);
+        unsigned long long old_count = sbi->total_valid_block_count;
+        percpu_counter_add(&sbi->alloc_valid_block_count, 1);
         spin_lock(&sbi->stat_lock);
         sbi->total_valid_block_count++;
-        pr_info("[DEBUG ALLOC MULREF] old_blkaddr=%u, total_valid_block_count=%llu\n",
-                old_blkaddr, sbi->total_valid_block_count);
+        pr_info("[ALLOC MULREF] old_blkaddr=%u, total_valid_block_count %llu -> %llu\n",
+                old_blkaddr, old_count, sbi->total_valid_block_count);
         spin_unlock(&sbi->stat_lock);
         // pr_info("[snapfs IO]: allocate blk and is mulref blk[%u]\n",old_blkaddr);
         if(old_blkaddr >= 4503280 && old_blkaddr <= 4503285){
